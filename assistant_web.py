@@ -1649,11 +1649,12 @@ class AssistantHandler(BaseHTTPRequestHandler):
         
         textarea { 
             resize: none; 
-            min-height: 24px;
-            max-height: 120px;
+            min-height: 24px; /* 初始高度 */
+            max-height: 120px; /* JS会覆盖此最大高度 */
             font-family: inherit;
-            line-height: 1.5;
-            padding: 8px 0;
+            line-height: 1.5em; /* 确保 line-height 为 em 单位，方便计算 */
+            padding: 10px 0; /* 调整 padding，确保垂直居中并计算准确 */
+            overflow-y: hidden; /* 隐藏滚动条 */
         }
         
         textarea::placeholder {
@@ -2762,6 +2763,77 @@ class AssistantHandler(BaseHTTPRequestHandler):
     </div>
     
     <script>
+        // 自动扩展文本框逻辑
+        let MAX_TEXTAREA_HEIGHT = 150; // 默认最大高度（约5-6行）
+
+        function calculateMaxHeight() {
+            try {
+                const tempTextarea = document.createElement('textarea');
+                tempTextarea.style.position = 'absolute';
+                tempTextarea.style.visibility = 'hidden';
+                tempTextarea.style.height = 'auto'; // 让高度自适应
+                tempTextarea.style.width = '200px';
+                tempTextarea.style.padding = '10px 0';
+                tempTextarea.style.lineHeight = '1.5em';
+                tempTextarea.style.fontSize = '16px';
+                tempTextarea.value = '1\\n2\\n3\\n4\\n5'; // 5行
+                document.body.appendChild(tempTextarea);
+                
+                const height = tempTextarea.scrollHeight;
+                if (height > 50) { // 确保计算出的高度合理
+                    MAX_TEXTAREA_HEIGHT = height;
+                }
+                
+                document.body.removeChild(tempTextarea);
+            } catch (e) {
+                console.error('计算最大高度失败，使用默认值', e);
+            }
+        }
+
+        function autoExpandTextarea(textarea) {
+            if (!textarea) return;
+            
+            textarea.style.height = 'auto';
+            const currentScrollHeight = textarea.scrollHeight;
+            
+            // 获取 minHeight，如果获取失败则默认为 24
+            let minHeight = 24;
+            try {
+                const style = getComputedStyle(textarea);
+                minHeight = parseFloat(style.minHeight) || 24;
+            } catch (e) {}
+
+            // 确保 MAX_TEXTAREA_HEIGHT 有效
+            if (!MAX_TEXTAREA_HEIGHT || MAX_TEXTAREA_HEIGHT < minHeight) {
+                MAX_TEXTAREA_HEIGHT = minHeight * 5; 
+            }
+
+            if (currentScrollHeight <= minHeight) {
+                textarea.style.height = minHeight + 'px';
+                textarea.style.overflowY = 'hidden';
+            } else if (currentScrollHeight > MAX_TEXTAREA_HEIGHT) {
+                textarea.style.height = MAX_TEXTAREA_HEIGHT + 'px';
+                textarea.style.overflowY = 'auto';
+            } else {
+                textarea.style.height = currentScrollHeight + 'px';
+                textarea.style.overflowY = 'hidden';
+            }
+            
+            // 自动滚动到底部
+            if (textarea.scrollHeight > textarea.clientHeight) {
+                textarea.scrollTop = textarea.scrollHeight;
+            }
+        }
+
+        function showTab(evt, tabName) {
+            const tabs = document.querySelectorAll('.tab');
+            const contents = document.querySelectorAll('.tab-content');
+            tabs.forEach(t => t.classList.remove('active'));
+            contents.forEach(c => c.classList.remove('active'));
+            evt.target.classList.add('active');
+            document.getElementById(tabName).classList.add('active');
+        }
+
         // 输入历史记录管理
         let inputHistory = [];
         try {
@@ -2783,22 +2855,13 @@ class AssistantHandler(BaseHTTPRequestHandler):
             }
             
             inputHistory.push(text);
-            // 只保留最近5条（根据需求）
+            // 只保留最近5条
             if (inputHistory.length > 5) {
                 inputHistory = inputHistory.slice(inputHistory.length - 5);
             }
             
             localStorage.setItem('chatInputHistory', JSON.stringify(inputHistory));
             historyIndex = -1; // 重置索引
-        }
-
-        function showTab(evt, tabName) {
-            const tabs = document.querySelectorAll('.tab');
-            const contents = document.querySelectorAll('.tab-content');
-            tabs.forEach(t => t.classList.remove('active'));
-            contents.forEach(c => c.classList.remove('active'));
-            evt.target.classList.add('active');
-            document.getElementById(tabName).classList.add('active');
         }
         
         // AI助手 - 处理按键
@@ -4515,25 +4578,44 @@ class AssistantHandler(BaseHTTPRequestHandler):
         }
 
         window.onload = () => {
-            // 检查登录状态
-            checkLogin();
-
-            // 初始化用户菜单面板
-            initUserPanel();
-
-            // 打字机效果显示欢迎消息
-            const welcomeTextElem = document.getElementById('welcomeText');
-            if (welcomeTextElem) {
-                const username = localStorage.getItem('username') || '访客';
-                typeWriter(welcomeTextElem, `你好，${username}！我是你的私人助理，有什么可以帮你的吗？`, 80);
+            // 1. 检查登录状态 (核心功能)
+            try {
+                checkLogin();
+            } catch (e) {
+                console.error('Check login failed:', e);
             }
 
-            // 只加载存在的元素对应的数据
-            if (document.getElementById('chatList')) loadChats();
-            if (document.getElementById('planList')) loadPlans();
-            if (document.getElementById('reminderList')) loadReminders();
+            // 2. 初始化用户菜单
+            try {
+                initUserPanel();
+            } catch (e) {
+                console.error('Init user panel failed:', e);
+            }
 
-            // 加载当前AI模式
+            // 3. 计算文本框最大高度 (新功能)
+            try {
+                calculateMaxHeight();
+            } catch (e) {
+                console.error('Calculate max height failed:', e);
+            }
+
+            // 4. 打字机效果
+            try {
+                const welcomeTextElem = document.getElementById('welcomeText');
+                if (welcomeTextElem) {
+                    const username = localStorage.getItem('username') || '访客';
+                    typeWriter(welcomeTextElem, `你好，${username}！我是你的私人助理，有什么可以帮你的吗？`, 80);
+                }
+            } catch (e) {}
+
+            // 5. 加载其他数据
+            try {
+                if (document.getElementById('chatList')) loadChats();
+                if (document.getElementById('planList')) loadPlans();
+                if (document.getElementById('reminderList')) loadReminders();
+            } catch (e) {}
+
+            // 6. 加载AI模式
             fetch('/api/ai/get_mode')
                 .then(r => r.json())
                 .then(data => {
@@ -4549,39 +4631,50 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 })
                 .catch(e => console.log('加载模式失败', e));
 
-            // ========== 移动端键盘弹出优化 ==========
-            if (window.innerWidth <= 768) {
+            // 7. 初始化 aiInput 的自动扩展功能
+            try {
                 const aiInput = document.getElementById('aiInput');
-                const chatBox = document.getElementById('aiChatBox');
-                const mobileHeader = document.querySelector('.mobile-header');
+                if (aiInput) {
+                    aiInput.addEventListener('input', () => autoExpandTextarea(aiInput));
+                    // 确保页面加载时输入框高度正确
+                    setTimeout(() => autoExpandTextarea(aiInput), 100);
+                }
+            } catch (e) {
+                console.error('Init auto expand failed:', e);
+            }
 
-                if (aiInput && chatBox && mobileHeader) {
-                    // 使用visualViewport API只调整header位置
-                    if (window.visualViewport) {
-                        const updateHeaderPosition = () => {
-                            const viewport = window.visualViewport;
-                            // 只调整header位置，输入框让iOS自动处理
-                            mobileHeader.style.transform = `translateY(${viewport.offsetTop}px)`;
-                        };
+            // 8. 移动端键盘弹出优化
+            if (window.innerWidth <= 768) {
+                try {
+                    const aiInput = document.getElementById('aiInput');
+                    const chatBox = document.getElementById('aiChatBox');
+                    const mobileHeader = document.querySelector('.mobile-header');
 
-                        window.visualViewport.addEventListener('scroll', updateHeaderPosition);
-                        window.visualViewport.addEventListener('resize', updateHeaderPosition);
+                    if (aiInput && chatBox && mobileHeader) {
+                        if (window.visualViewport) {
+                            const updateHeaderPosition = () => {
+                                const viewport = window.visualViewport;
+                                mobileHeader.style.transform = `translateY(${viewport.offsetTop}px)`;
+                            };
+                            window.visualViewport.addEventListener('scroll', updateHeaderPosition);
+                            window.visualViewport.addEventListener('resize', updateHeaderPosition);
+                        }
+
+                        aiInput.addEventListener('focus', function() {
+                            setTimeout(() => {
+                                chatBox.scrollTop = chatBox.scrollHeight;
+                            }, 300);
+                        });
+
+                        aiInput.addEventListener('blur', function() {
+                            mobileHeader.style.transform = '';
+                            setTimeout(() => {
+                                window.scrollTo(0, 0);
+                            }, 100);
+                        });
                     }
-
-                    // 输入框获得焦点时，滚动聊天区域到底部
-                    aiInput.addEventListener('focus', function() {
-                        setTimeout(() => {
-                            chatBox.scrollTop = chatBox.scrollHeight;
-                        }, 300);
-                    });
-
-                    // 输入框失去焦点时，重置header位置
-                    aiInput.addEventListener('blur', function() {
-                        mobileHeader.style.transform = '';
-                        setTimeout(() => {
-                            window.scrollTo(0, 0);
-                        }, 100);
-                    });
+                } catch (e) {
+                    console.error('Mobile optimization failed:', e);
                 }
             }
         };
