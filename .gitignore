@@ -1,0 +1,66 @@
+# 敏感配置文件（保留示例文件）
+mysql_config.json
+ai_config.json
+reminder_config.json
+
+# 日志文件
+*.log
+server.log
+nohup.out
+
+# 备份文件
+*.backup
+*.backup_*
+*.bak
+*.tar.gz
+backup_*/
+ai-assistant-backup-*
+
+# 数据库备份
+*.sql
+
+# Python缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# 虚拟环境
+venv/
+env/
+ENV/
+
+# 上传文件
+uploads/
+!uploads/.gitkeep
+
+# 进程文件
+*.pid
+service.pid
+
+# 临时文件
+*.tmp
+*.temp
+.DS_Store
+*.swp
+*~
+
+# IDE文件
+.vscode/
+.idea/
+*.sublime-*
+
+# 测试文件
+test_*.py
+debug_*.py
+
+# JSON数据文件（如果使用JSON存储）
+users.json
+sessions.json
+web_*.json
+messages_all.json
+
+# CSV导出文件
+*.csv

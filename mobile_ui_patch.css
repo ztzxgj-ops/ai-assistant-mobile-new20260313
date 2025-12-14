@@ -1,0 +1,1012 @@
+/* ========================================
+   AI助理系统 - 手机端UI优化补丁
+   参照ChatGPT手机版设计
+   更新日期: 2025-12-10
+   ======================================== */
+
+/* ============ 1. 基础变量和重置 ============ */
+:root {
+    /* ChatGPT配色系统 */
+    --bg-primary: #ffffff;
+    --bg-secondary: #f7f7f8;
+    --bg-chat-alt: #f7f7f8;
+    
+    --text-primary: #1a1a1a;
+    --text-secondary: #6e6e80;
+    --text-tertiary: #8e8ea0;
+    
+    --user-msg-bg: #343541;
+    --user-msg-text: #ffffff;
+    
+    --ai-msg-bg: #f7f7f8;
+    --ai-msg-text: #1a1a1a;
+    
+    --border-light: #e5e5e5;
+    --border-medium: #d9d9e3;
+    
+    --accent-green: #10a37f;
+    --accent-green-hover: #1a7f64;
+    
+    /* 安全区域 */
+    --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-area-top: env(safe-area-inset-top, 0px);
+}
+
+/* ============ 2. 手机端专用顶部导航 ============ */
+.mobile-header {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 56px;
+    background: var(--bg-primary);
+    border-bottom: 1px solid var(--border-light);
+    padding: 0 16px;
+    align-items: center;
+    justify-content: space-between;
+    z-index: 1000;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.mobile-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.menu-btn,
+.new-chat-btn-mobile {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    background: transparent;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s;
+    font-size: 20px;
+    color: var(--text-primary);
+}
+
+.menu-btn:hover,
+.new-chat-btn-mobile:hover,
+.menu-btn:active,
+.new-chat-btn-mobile:active {
+    background: var(--bg-secondary);
+}
+
+/* ============ 3. 侧滑菜单 ============ */
+.mobile-menu {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 2000;
+}
+
+.mobile-menu.active {
+    display: block;
+}
+
+.menu-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.4);
+    animation: fadeIn 0.2s ease-out;
+}
+
+.menu-drawer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 300px;
+    max-width: 85vw;
+    background: var(--bg-primary);
+    box-shadow: 2px 0 12px rgba(0, 0, 0, 0.15);
+    animation: slideInLeft 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes slideInLeft {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(0); }
+}
+
+.menu-header {
+    padding: 24px 20px;
+    border-bottom: 1px solid var(--border-light);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.menu-user-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 20px;
+    font-weight: 600;
+}
+
+.menu-username {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.menu-items {
+    flex: 1;
+    padding: 8px 0;
+}
+
+.menu-items a {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 20px;
+    color: var(--text-primary);
+    text-decoration: none;
+    font-size: 15px;
+    transition: background 0.15s;
+    cursor: pointer;
+}
+
+.menu-items a:hover,
+.menu-items a:active {
+    background: var(--bg-secondary);
+}
+
+.menu-items hr {
+    border: none;
+    border-top: 1px solid var(--border-light);
+    margin: 8px 0;
+}
+
+/* ============ 4. 响应式布局 - 隐藏侧边栏 ============ */
+@media (max-width: 768px) {
+    /* 隐藏桌面版侧边栏 */
+    .sidebar {
+        display: none !important;
+    }
+    
+    /* 显示手机版顶栏 */
+    .mobile-header {
+        display: flex !important;
+    }
+    
+    /* 容器占满全宽 */
+    .container {
+        margin-left: 0 !important;
+        width: 100% !important;
+    }
+    
+    /* 隐藏桌面版顶部 */
+    .app-header {
+        display: none !important;
+    }
+    
+    /* 隐藏桌面版tabs */
+    .tabs {
+        display: none !important;
+    }
+    
+    header {
+        display: none !important;
+    }
+}
+
+/* ============ 5. 聊天区域优化 ============ */
+@media (max-width: 768px) {
+    body {
+        background: var(--bg-primary);
+        background-image: none;
+    }
+    
+    #aiChatBox {
+        padding: 72px 0 140px 0 !important;  /* 顶栏56px + 底部输入区 */
+        background: transparent !important;
+        gap: 0 !important;
+        margin: 0 !important;
+    }
+}
+
+/* ============ 6. 消息样式（ChatGPT风格） ============ */
+@media (max-width: 768px) {
+    .message {
+        display: flex;
+        gap: 16px;
+        padding: 20px 16px;
+        width: 100%;
+        max-width: 100%;
+        margin: 0;
+        border-radius: 0;
+        background: transparent;
+        box-shadow: none;
+        animation: none;
+    }
+    
+    .message.user {
+        align-self: stretch;
+        flex-direction: row;
+        background: transparent;
+    }
+    
+    .message.assistant {
+        align-self: stretch;
+        flex-direction: row;
+        background: var(--bg-chat-alt);
+    }
+    
+    .message-avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 16px;
+        margin-top: 4px;
+    }
+    
+    .message.user .message-avatar {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        order: 1;
+    }
+    
+    .message.assistant .message-avatar {
+        background: var(--accent-green);
+        color: white;
+        font-weight: 600;
+    }
+    
+    .message-content {
+        flex: 1;
+        background: transparent !important;
+        backdrop-filter: none !important;
+        padding: 0 !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        color: var(--text-primary) !important;
+        font-size: 15px !important;
+        line-height: 1.6 !important;
+        word-break: break-word;
+    }
+    
+    .message.user .message-content {
+        color: var(--text-primary) !important;
+        order: 0;
+    }
+    
+    .message.assistant .message-content {
+        color: var(--text-primary) !important;
+    }
+}
+
+/* ============ 7. 输入区域吸底优化 ============ */
+@media (max-width: 768px) {
+    .input-container {
+        position: fixed !important;
+        bottom: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        padding: 12px 16px calc(12px + var(--safe-area-bottom)) 16px !important;
+        background: var(--bg-primary) !important;
+        box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.1) !important;
+        z-index: 900 !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+    }
+    
+    .input-wrapper {
+        background: var(--bg-primary) !important;
+        backdrop-filter: none !important;
+        border-radius: 24px !important;
+        padding: 4px 4px 4px 16px !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        box-shadow: none !important;
+        border: 1.5px solid var(--border-medium) !important;
+        max-width: 100% !important;
+    }
+    
+    .input-wrapper textarea {
+        background: transparent !important;
+        color: var(--text-primary) !important;
+        font-size: 16px !important;  /* 防止iOS自动缩放 */
+        padding: 10px 0 !important;
+        line-height: 1.5 !important;
+        max-height: 120px !important;
+        border: none !important;
+        outline: none !important;
+        resize: none !important;
+    }
+    
+    .input-wrapper textarea::placeholder {
+        color: var(--text-tertiary) !important;
+    }
+    
+    .send-button {
+        width: 38px !important;
+        height: 38px !important;
+        min-width: 38px !important;
+        border-radius: 50% !important;
+        padding: 0 !important;
+        background: var(--accent-green) !important;
+        color: white !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        border: none !important;
+        flex-shrink: 0 !important;
+        box-shadow: none !important;
+        font-size: 18px !important;
+    }
+    
+    .send-button:hover,
+    .send-button:active {
+        background: var(--accent-green-hover) !important;
+        transform: none !important;
+    }
+    
+    .send-button:disabled {
+        background: var(--border-medium) !important;
+        opacity: 0.5 !important;
+    }
+}
+
+/* ============ 8. 欢迎消息优化 ============ */
+@media (max-width: 768px) {
+    .welcome-message {
+        padding: 60px 20px !important;
+        text-align: center !important;
+    }
+    
+    .welcome-message h3 {
+        font-size: 28px !important;
+        margin-bottom: 16px !important;
+        color: var(--text-primary) !important;
+    }
+    
+    .welcome-message p {
+        font-size: 16px !important;
+        color: var(--text-secondary) !important;
+        text-align: center !important;
+    }
+}
+
+/* ============ 9. 识别的计划卡片优化 ============ */
+@media (max-width: 768px) {
+    .detected-plans {
+        margin-top: 12px;
+        padding: 12px;
+        background: var(--bg-secondary);
+        border-radius: 12px;
+        border: 1px solid var(--border-light);
+    }
+    
+    .detected-plans h4 {
+        font-size: 14px;
+        color: var(--text-secondary);
+        margin-bottom: 8px;
+    }
+    
+    .plan-item {
+        background: var(--bg-primary);
+        padding: 12px;
+        border-radius: 8px;
+        margin-bottom: 8px;
+        border: 1px solid var(--border-light);
+    }
+    
+    .plan-item:last-child {
+        margin-bottom: 0;
+    }
+    
+    .plan-title {
+        font-size: 14px;
+        font-weight: 600;
+        margin-bottom: 4px;
+        color: var(--text-primary);
+    }
+    
+    .plan-meta {
+        font-size: 12px;
+        color: var(--text-secondary);
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    
+    .plan-save-btn {
+        margin-top: 8px;
+        width: 100%;
+        padding: 8px;
+        background: var(--accent-green);
+        color: white;
+        border: none;
+        border-radius: 6px;
+        font-size: 13px;
+        font-weight: 600;
+    }
+    
+    .plan-save-btn:active {
+        background: var(--accent-green-hover);
+    }
+    
+    .plan-save-btn.saved {
+        background: var(--border-medium);
+        color: var(--text-secondary);
+    }
+}
+
+/* ============ 10. 打字动画优化 ============ */
+.typing-indicator {
+    display: inline-flex;
+    gap: 4px;
+    padding: 4px 0;
+}
+
+.typing-indicator span {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-tertiary);
+    animation: bounce 1.4s infinite ease-in-out;
+}
+
+.typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
+.typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes bounce {
+    0%, 80%, 100% { 
+        transform: scale(0.8); 
+        opacity: 0.5; 
+    }
+    40% { 
+        transform: scale(1); 
+        opacity: 1; 
+    }
+}
+
+/* ============ 11. 滚动条优化 ============ */
+@media (max-width: 768px) {
+    #aiChatBox {
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        scroll-behavior: smooth;
+    }
+    
+    /* 隐藏滚动条但保持功能 */
+    #aiChatBox::-webkit-scrollbar {
+        display: none;
+    }
+    
+    #aiChatBox {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+    }
+}
+
+/* ============ 12. 触控优化 ============ */
+@media (max-width: 768px) {
+    * {
+        -webkit-tap-highlight-color: transparent;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
+    }
+    
+    input, textarea, [contenteditable] {
+        -webkit-user-select: text;
+        user-select: text;
+    }
+    
+    button, a, .clickable {
+        cursor: pointer;
+        -webkit-tap-highlight-color: rgba(0, 0, 0, 0.05);
+    }
+}
+
+/* ============ 13. 小屏幕手机特殊优化 ============ */
+@media (max-width: 375px) {
+    .mobile-header {
+        height: 52px !important;
+        padding: 0 12px !important;
+    }
+    
+    .mobile-title {
+        font-size: 16px !important;
+    }
+    
+    .menu-btn,
+    .new-chat-btn-mobile {
+        width: 36px !important;
+        height: 36px !important;
+        font-size: 18px !important;
+    }
+    
+    #aiChatBox {
+        padding-top: 68px !important;
+    }
+    
+    .message {
+        padding: 16px 12px !important;
+        gap: 12px !important;
+    }
+    
+    .message-content {
+        font-size: 14px !important;
+    }
+    
+    .input-container {
+        padding: 10px 12px calc(10px + var(--safe-area-bottom)) 12px !important;
+    }
+}
+
+/* ============ 14. 横屏模式优化 ============ */
+@media (max-width: 768px) and (orientation: landscape) {
+    #aiChatBox {
+        padding-top: 60px !important;
+        padding-bottom: 120px !important;
+    }
+    
+    .welcome-message {
+        padding: 40px 20px !important;
+    }
+}
+
+/* ============ 15. 加载状态 ============ */
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.3);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 3000;
+}
+
+.loading-overlay.active {
+    display: flex;
+}
+
+.loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid rgba(255, 255, 255, 0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ============ 16. iOS Safari特殊修复 ============ */
+@supports (-webkit-touch-callout: none) {
+    @media (max-width: 768px) {
+        /* 修复iOS下input自动放大问题 */
+        input, textarea, select {
+            font-size: 16px !important;
+        }
+        
+        /* 修复iOS下fixed定位问题 */
+        body {
+            position: fixed;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+        
+        .container {
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        #aiChatBox {
+            height: calc(100vh - 56px - 80px);
+            overflow-y: scroll;
+        }
+    }
+}
+
+/* ============ 17. 深色模式支持（预留） ============ */
+@media (prefers-color-scheme: dark) {
+    /* 暂时不启用，保持浅色主题 */
+}
+
+/* ============ 18. 辅助功能优化 ============ */
+@media (max-width: 768px) {
+    /* 增加对比度，便于阅读 */
+    .message-content {
+        font-weight: 400;
+    }
+    
+    /* 焦点可见性 */
+    button:focus-visible,
+    a:focus-visible,
+    input:focus-visible,
+    textarea:focus-visible {
+        outline: 2px solid var(--accent-green);
+        outline-offset: 2px;
+    }
+}
+/* ========================================
+   AI助理系统 - 手机端UI优化补丁 v2
+   新增优化：
+   1. AI头像靠左，用户头像靠右
+   2. 隐藏消息右侧的小头像
+   更新日期: 2025-12-11
+   ======================================== */
+
+/* ============ 消息布局优化（头像位置调整） ============ */
+@media (max-width: 768px) {
+    /* AI消息：头像靠左，内容留出更多空间 */
+    .message.assistant {
+        align-self: stretch;
+        flex-direction: row;
+        background: var(--bg-chat-alt, #f7f7f8);
+        padding: 20px 16px 20px 12px !important;  /* 左边距更小 */
+        justify-content: flex-start;
+    }
+    
+    .message.assistant .message-avatar {
+        margin-left: 0 !important;  /* 头像紧靠左边 */
+        margin-right: 12px !important;  /* 头像与内容间距 */
+    }
+    
+    .message.assistant .message-content {
+        margin-left: 0 !important;
+        padding-left: 0 !important;
+    }
+    
+    /* 用户消息：头像靠右，内容留出更多空间 */
+    .message.user {
+        align-self: stretch;
+        flex-direction: row-reverse;  /* 反转顺序，头像在右 */
+        background: transparent;
+        padding: 20px 12px 20px 16px !important;  /* 右边距更小 */
+        justify-content: flex-start;
+    }
+    
+    .message.user .message-avatar {
+        margin-right: 0 !important;  /* 头像紧靠右边 */
+        margin-left: 12px !important;  /* 头像与内容间距 */
+    }
+    
+    .message.user .message-content {
+        margin-right: 0 !important;
+        padding-right: 0 !important;
+        text-align: left !important;  /* 文字左对齐 */
+    }
+    
+    /* 隐藏所有消息右侧的小头像图标 */
+    .message .message-avatar:last-child {
+        display: none !important;
+    }
+    
+    /* 如果消息中有多个头像，只保留第一个 */
+    .message.assistant .message-avatar:not(:first-child) {
+        display: none !important;
+    }
+    
+    .message.user .message-avatar:not(:first-child) {
+        display: none !important;
+    }
+    
+    /* 增加消息间的视觉区分 */
+    .message {
+        gap: 0 !important;  /* 移除gap，改用margin控制 */
+    }
+    
+    .message-avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 16px;
+        align-self: flex-start;  /* 头像顶部对齐 */
+        margin-top: 0;
+    }
+}
+
+/* ============ 小屏幕优化 ============ */
+@media (max-width: 375px) {
+    .message.assistant {
+        padding: 16px 12px 16px 8px !important;
+    }
+    
+    .message.user {
+        padding: 16px 8px 16px 12px !important;
+    }
+    
+    .message.assistant .message-avatar {
+        margin-right: 10px !important;
+    }
+    
+    .message.user .message-avatar {
+        margin-left: 10px !important;
+    }
+}
+
+/* ============ 隐藏右上角头像（如果是独立元素） ============ */
+@media (max-width: 768px) {
+    /* 隐藏顶部导航栏右上角的头像（如果存在） */
+    .mobile-header .user-avatar-top,
+    .mobile-header .avatar-icon,
+    .header-avatar {
+        display: none !important;
+    }
+    
+    /* 如果右上角头像是通过其他类名实现的 */
+    .top-right-avatar,
+    .user-icon-top {
+        display: none !important;
+    }
+}
+
+/* ========================================
+   AI助理系统 - 手机端UI优化补丁 v3
+   新增优化：
+   1. 对话内容和头像更分散（AI极左，用户极右）
+   2. 隐藏右上角头像图标
+   更新日期: 2025-12-11 01:50
+   ======================================== */
+
+/* ============ 隐藏右上角的头像图标 ============ */
+@media (max-width: 768px) {
+    /* 隐藏右上角的用户头像 */
+    body > div:first-child img[src*="avatar"],
+    body > div:first-child img[src*="uploads"],
+    .user-avatar-corner,
+    .corner-avatar,
+    body > img:last-child {
+        display: none !important;
+    }
+    
+    /* 如果头像是通过背景图显示的 */
+    body > div:first-child > div:last-child,
+    .top-right-corner {
+        background-image: none !important;
+        display: none !important;
+    }
+    
+    /* 隐藏所有绝对定位在右上角的元素 */
+    [style*="position: absolute"][style*="right: 0"][style*="top: 0"],
+    [style*="position: fixed"][style*="right:"][style*="top:"] {
+        display: none !important;
+    }
+}
+
+/* ============ 消息内容更分散布局 ============ */
+@media (max-width: 768px) {
+    /* AI消息：头像极左，内容也偏左 */
+    .message.assistant {
+        padding: 20px 40px 20px 8px !important;  /* 右侧留40px空白 */
+        justify-content: flex-start;
+        align-items: flex-start;
+    }
+    
+    .message.assistant .message-avatar {
+        margin-left: 0 !important;
+        margin-right: 8px !important;  /* 缩小头像和内容间距 */
+    }
+    
+    .message.assistant .message-content {
+        max-width: calc(100% - 80px) !important;  /* 限制宽度，不要太宽 */
+        margin-left: 0 !important;
+        text-align: left !important;
+    }
+    
+    /* 用户消息：头像极右，内容也偏右 */
+    .message.user {
+        padding: 20px 8px 20px 40px !important;  /* 左侧留40px空白 */
+        justify-content: flex-end;
+        align-items: flex-start;
+    }
+    
+    .message.user .message-avatar {
+        margin-right: 0 !important;
+        margin-left: 8px !important;  /* 缩小头像和内容间距 */
+    }
+    
+    .message.user .message-content {
+        max-width: calc(100% - 80px) !important;  /* 限制宽度 */
+        margin-right: 0 !important;
+        text-align: left !important;  /* 保持左对齐 */
+    }
+    
+    /* 头像尺寸稍微小一点，更精致 */
+    .message-avatar {
+        width: 30px !important;
+        height: 30px !important;
+        font-size: 14px !important;
+    }
+}
+
+/* ============ 更激进的右上角隐藏 ============ */
+@media (max-width: 768px) {
+    /* 隐藏body直接子元素中的最后一个图片 */
+    body > img {
+        display: none !important;
+    }
+    
+    /* 隐藏右上角区域 */
+    .mobile-header + * {
+        display: none !important;
+    }
+    
+    /* 如果头像在某个div中 */
+    div[style*="position: fixed"][style*="top"] img,
+    div[style*="position: absolute"][style*="top"] img {
+        display: none !important;
+    }
+}
+
+/* ============ 小屏幕适配 ============ */
+@media (max-width: 375px) {
+    .message.assistant {
+        padding: 16px 30px 16px 6px !important;
+    }
+    
+    .message.user {
+        padding: 16px 6px 16px 30px !important;
+    }
+    
+    .message-avatar {
+        width: 28px !important;
+        height: 28px !important;
+        font-size: 13px !important;
+    }
+}
+/* ========================================
+   AI助理系统 - 手机端UI优化补丁 v3.1
+   修复：正确隐藏右上角头像
+   更新日期: 2025-12-11 10:30
+   ======================================== */
+
+/* ============ 隐藏右上角的用户头像（精确定位） ============ */
+@media (max-width: 768px) {
+    /* 隐藏mobile-header中的用户头像 */
+    .mobile-header .mobile-user-avatar {
+        display: none !important;
+    }
+    
+    /* 同时隐藏可能的其他右上角头像 */
+    .mobile-user-avatar {
+        display: none !important;
+    }
+    
+    /* 隐藏mobile-header右侧区域 */
+    .mobile-header > *:last-child {
+        display: none !important;
+    }
+    
+    /* 调整mobile-header布局为左对齐 */
+    .mobile-header {
+        justify-content: flex-start !important;
+        padding-right: 16px !important;
+    }
+}
+/* ========================================
+   AI助理系统 - 手机端UI优化补丁 v3.1
+   修复：正确隐藏右上角头像
+   更新日期: 2025-12-11 10:30
+   ======================================== */
+
+/* ============ 隐藏右上角的用户头像（精确定位） ============ */
+@media (max-width: 768px) {
+    /* 隐藏mobile-header中的用户头像 */
+    .mobile-header .mobile-user-avatar {
+        display: none !important;
+    }
+    
+    /* 同时隐藏可能的其他右上角头像 */
+    .mobile-user-avatar {
+        display: none !important;
+    }
+    
+    /* 隐藏消息旁边的额外头像图标 */
+    .message-avatar + .message-avatar {
+        display: none !important;
+    }
+    
+    /* 调整mobile-header为居中显示标题 */
+    .mobile-header {
+        justify-content: center !important;
+        padding: 0 60px !important;  /* 左右留空间给按钮 */
+    }
+    
+    /* 确保菜单按钮在左边 */
+    .mobile-menu-btn {
+        position: absolute !important;
+        left: 16px !important;
+    }
+}
+/* ========================================
+   AI助理系统 - 手机端UI优化补丁 v4 修复版
+   强制隐藏所有右上角头像
+   更新日期: 2025-12-11 11:00
+   ======================================== */
+
+/* ============ 强制隐藏右上角头像（最高优先级） ============ */
+@media (max-width: 768px) {
+    /* 方法1：通过类名隐藏 */
+    .mobile-user-avatar,
+    .mobile-header .mobile-user-avatar,
+    div.mobile-user-avatar {
+        display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        width: 0 !important;
+        height: 0 !important;
+        overflow: hidden !important;
+    }
+    
+    /* 方法2：隐藏mobile-header中最后一个子元素（如果是头像） */
+    .mobile-header > *:last-child {
+        display: none !important;
+    }
+    
+    /* 方法3：隐藏所有在右上角的圆形头像 */
+    .mobile-header div[style*="border-radius"],
+    .mobile-header div[onclick*="toggleUserPanel"],
+    .mobile-header > div:not(.mobile-menu-btn) {
+        display: none !important;
+    }
+    
+    /* 方法4：隐藏右上角绝对定位的元素 */
+    [style*="position: fixed"][style*="right"][style*="top"],
+    [style*="position: absolute"][style*="right"][style*="top"] {
+        display: none !important;
+    }
+    
+    /* 调整mobile-header布局：只显示左边的菜单按钮和中间的标题 */
+    .mobile-header {
+        justify-content: flex-start !important;
+        gap: 16px !important;
+    }
+}
+
+/* ============ 隐藏消息旁边的额外头像 ============ */
+@media (max-width: 768px) {
+    /* 隐藏消息气泡右上角的小头像 */
+    .message > img:last-child,
+    .message > .message-avatar:last-child,
+    .message-bubble + img,
+    .message-content + img {
+        display: none !important;
+    }
+}

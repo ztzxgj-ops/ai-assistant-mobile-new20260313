@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSS测试</title>
+    <style>
+        body { margin: 20px; font-family: Arial; }
+        .test { padding: 20px; margin: 10px 0; border: 2px solid #000; }
+    </style>
+    <link rel="stylesheet" href="/ai/mobile_ui_v5.css">
+</head>
+<body>
+    <h1>CSS加载测试</h1>
+    <p>时间戳: Thu Dec 11 15:40:28 CST 2025</p>
+    
+    <div class="test">
+        <h2>1. 背景颜色测试</h2>
+        <p>如果body背景是蓝色渐变，说明CSS加载了</p>
+    </div>
+    
+    <div class="message user" style="display: flex; margin: 20px 0;">
+        <div class="message-avatar" style="width: 32px; height: 32px; background: red; border-radius: 50%;">U</div>
+        <div class="message-content" style="padding: 10px; background: #ddd;">用户消息测试</div>
+    </div>
+    
+    <div class="message assistant" style="display: flex; margin: 20px 0;">
+        <div class="message-avatar" style="width: 32px; height: 32px; background: blue; border-radius: 50%;">A</div>
+        <div class="message-content" style="padding: 10px; background: #ddd;">AI消息测试</div>
+    </div>
+    
+    <div class="mobile-user-avatar" style="width: 50px; height: 50px; background: green; margin: 20px;">
+        这个应该被隐藏
+    </div>
+</body>
+</html>
