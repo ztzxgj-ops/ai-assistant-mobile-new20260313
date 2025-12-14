@@ -3727,64 +3727,97 @@ class AssistantHandler(BaseHTTPRequestHandler):
             const files = event.target.files;
             if (!files || files.length === 0) return;
             
-            // 清空之前的选择
+            // 按钮选择时，清空之前及其预览（标准文件输入行为）
             selectedImages = [];
+            document.getElementById('imagePreviewList').innerHTML = '';
+            
+            addFilesToPreview(files);
+        }
+
+        function addFilesToPreview(files) {
             const previewList = document.getElementById('imagePreviewList');
-            previewList.innerHTML = '';
             document.getElementById('imagePreviewContainer').style.display = 'block';
             
             // 处理每个选中的文件
-            Array.from(files).forEach((file, index) => {
+            Array.from(files).forEach((file) => {
+                // 如果是文件对象，处理之
                 if (!file.type.startsWith('image/')) {
-                    alert(`文件 ${file.name} 不是图片，已跳过`);
+                    console.log(`文件 ${file.name} 不是图片，已跳过`);
                     return;
+                }
+                
+                // 给截图文件命名（如果需要）
+                if (!file.name || file.name === 'image.png') {
+                    // 创建一个新的 File 对象以修改名称
+                    const newName = 'screenshot_' + new Date().toISOString().replace(/[:.]/g, '-') + '.png';
+                    file = new File([file], newName, {type: file.type});
                 }
                 
                 // 读取文件
                 const reader = new FileReader();
                 reader.onload = function(e) {
                     const imageData = e.target.result;
+                    // 添加到全局数组
                     selectedImages.push({
                         file: file,
                         data: imageData,
                         name: file.name
                     });
                     
-                    // 创建预览卡片
-                    const previewCard = document.createElement('div');
-                    previewCard.style.cssText = 'position:relative; display:inline-block;';
-                    previewCard.innerHTML = `
-                        <img src="${imageData}" style="width:120px; height:120px; object-fit:cover; border-radius:8px; border:2px solid rgba(255,255,255,0.2);">
-                        <button onclick="removeImage(${index})" style="position:absolute; top:-8px; right:-8px; width:24px; height:24px; border-radius:50%; background:#dc3545; color:white; border:none; cursor:pointer; font-size:16px; line-height:1;">×</button>
-                        <div style="font-size:11px; color:#999; margin-top:4px; text-align:center; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${file.name}</div>
-                    `;
-                    previewList.appendChild(previewCard);
+                    // 重新渲染所有预览以保证索引正确
+                    renderPreviewList();
                 };
                 reader.readAsDataURL(file);
+            });
+        }
+
+        function renderPreviewList() {
+            const previewList = document.getElementById('imagePreviewList');
+            previewList.innerHTML = '';
+            
+            if (selectedImages.length === 0) {
+                document.getElementById('imagePreviewContainer').style.display = 'none';
+                return;
+            }
+            
+            document.getElementById('imagePreviewContainer').style.display = 'block';
+            
+            selectedImages.forEach((img, index) => {
+                const previewCard = document.createElement('div');
+                previewCard.style.cssText = 'position:relative; display:inline-block;';
+                previewCard.innerHTML = `
+                    <img src="${img.data}" style="width:120px; height:120px; object-fit:cover; border-radius:8px; border:2px solid rgba(255,255,255,0.2);">
+                    <button onclick="removeImage(${index})" style="position:absolute; top:-8px; right:-8px; width:24px; height:24px; border-radius:50%; background:#dc3545; color:white; border:none; cursor:pointer; font-size:16px; line-height:1;">×</button>
+                    <div style="font-size:11px; color:#999; margin-top:4px; text-align:center; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${img.name}</div>
+                `;
+                previewList.appendChild(previewCard);
+            });
+        }
+
+        function setupPasteListener() {
+            const aiInput = document.getElementById('aiInput');
+            if (!aiInput) return;
+
+            aiInput.addEventListener('paste', function(e) {
+                const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+                const files = [];
+                
+                for (let i = 0; i < items.length; i++) {
+                    if (items[i].type.indexOf('image') !== -1) {
+                        const file = items[i].getAsFile();
+                        if (file) files.push(file);
+                    }
+                }
+                
+                if (files.length > 0) {
+                    addFilesToPreview(files);
+                }
             });
         }
         
         function removeImage(index) {
             selectedImages.splice(index, 1);
-            
-            // 重新渲染预览
-            const previewList = document.getElementById('imagePreviewList');
-            if (selectedImages.length === 0) {
-                document.getElementById('imagePreviewContainer').style.display = 'none';
-                previewList.innerHTML = '';
-            } else {
-                previewList.innerHTML = '';
-                selectedImages.forEach((img, idx) => {
-                    const previewCard = document.createElement('div');
-                    previewCard.style.cssText = 'position:relative; display:inline-block;';
-                    previewCard.innerHTML = `
-                        <img src="${img.data}" style="width:120px; height:120px; object-fit:cover; border-radius:8px; border:2px solid rgba(255,255,255,0.2);">
-                        <button onclick="removeImage(${idx})" style="position:absolute; top:-8px; right:-8px; width:24px; height:24px; border-radius:50%; background:#dc3545; color:white; border:none; cursor:pointer; font-size:16px; line-height:1;">×</button>
-                        <div style="font-size:11px; color:#999; margin-top:4px; text-align:center; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${img.name}</div>
-                    `;
-                    previewList.appendChild(previewCard);
-                });
-            }
+            renderPreviewList();
         }
         
         function clearImagePreview() {
@@ -4822,6 +4855,11 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     aiInput.addEventListener('input', () => autoExpandTextarea(aiInput));
                     // 确保页面加载时输入框高度正确
                     setTimeout(() => autoExpandTextarea(aiInput), 100);
+                    
+                    // 初始化粘贴图片功能
+                    if (typeof setupPasteListener === 'function') {
+                        setupPasteListener();
+                    }
                 }
             } catch (e) {
                 console.error('Init auto expand failed:', e);
