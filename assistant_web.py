@@ -668,6 +668,22 @@ class AssistantHandler(BaseHTTPRequestHandler):
             else:
                 self.send_json({'success': False, 'message': '更新设置失败'}, status=500)
 
+        elif self.path == '/api/user/change-password':
+            # 修改密码
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            old_password = data.get('old_password')
+            new_password = data.get('new_password')
+
+            if not old_password or not new_password:
+                self.send_json({'success': False, 'message': '密码不能为空'}, status=400)
+                return
+
+            result = user_manager.change_password(user_id, old_password, new_password)
+            self.send_json(result)
+
         # ============ 新增：提醒调度器相关API ============
 
         elif self.path == '/api/scheduler/reminder/add':
@@ -2671,6 +2687,22 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     <div><strong>注册时间：</strong><span id="settingsCreatedAt">-</span></div>
                 </div>
             </div>
+
+            <!-- 修改密码 -->
+            <div class="form-group" style="background:#f8f9fa; padding:15px; border-radius:8px; margin-bottom:20px;">
+                <div onclick="togglePasswordForm()" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <label style="font-size:1.1em; margin:0; cursor:pointer;">🔐 修改密码</label>
+                    <span id="passwordToggleIcon" style="color:#666;">▼</span>
+                </div>
+                <div id="passwordForm" style="display:none; padding-top:10px; border-top:1px solid #eee;">
+                    <input type="password" id="oldPassword" placeholder="原密码" style="width:100%; padding:10px; margin-bottom:10px; border:1px solid #ddd; border-radius:6px; background:white;">
+                    <input type="password" id="newPassword" placeholder="新密码" style="width:100%; padding:10px; margin-bottom:10px; border:1px solid #ddd; border-radius:6px; background:white;">
+                    <input type="password" id="confirmPassword" placeholder="确认新密码" style="width:100%; padding:10px; margin-bottom:10px; border:1px solid #ddd; border-radius:6px; background:white;">
+                    <button onclick="changePassword()" style="width:100%; padding:10px; background:#ffc107; color:#333; border:none; border-radius:6px; font-weight:600; cursor:pointer;">
+                        更新密码
+                    </button>
+                </div>
+            </div>
             
             <div class="form-group" style="background:#f8f9fa; padding:15px; border-radius:8px; margin-bottom:20px;">
                 <label style="font-size:1.1em; margin-bottom:15px; display:block;">🎨 聊天背景颜色</label>
@@ -2763,6 +2795,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
     </div>
     
     <script>
+        // Version: 20251215-fix-final
         // 自动扩展文本框逻辑
         let MAX_TEXTAREA_HEIGHT = 150; // 默认最大高度（约5-6行）
 
@@ -4057,6 +4090,61 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
             closeSettings();
             alert('✅ 设置已保存！');
+        }
+
+        function togglePasswordForm() {
+            const form = document.getElementById('passwordForm');
+            const icon = document.getElementById('passwordToggleIcon');
+            if (form.style.display === 'none') {
+                form.style.display = 'block';
+                icon.textContent = '▲';
+            } else {
+                form.style.display = 'none';
+                icon.textContent = '▼';
+            }
+        }
+
+        async function changePassword() {
+            const oldPassword = document.getElementById('oldPassword').value;
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+
+            if (!oldPassword || !newPassword || !confirmPassword) {
+                alert('请填写所有密码字段');
+                return;
+            }
+
+            if (newPassword !== confirmPassword) {
+                alert('两次输入的新密码不一致');
+                return;
+            }
+
+            if (newPassword.length < 6) {
+                alert('新密码长度至少需要6位');
+                return;
+            }
+
+            try {
+                const response = await fetchWithAuth('/api/user/change-password', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        old_password: oldPassword,
+                        new_password: newPassword
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    alert('✅ 密码修改成功！请重新登录');
+                    logout();
+                } else {
+                    alert('❌ 修改失败: ' + data.message);
+                }
+            } catch (e) {
+                console.error('修改密码错误:', e);
+                alert('修改密码时出错');
+            }
         }
         
         function getAssistantAvatar() {
