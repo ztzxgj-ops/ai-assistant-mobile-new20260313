@@ -12,7 +12,8 @@ from mysql_manager import (
     MemoryManagerMySQL,
     WorkPlanManagerMySQL,
     ReminderSystemMySQL,
-    ImageManagerMySQL
+    ImageManagerMySQL,
+    KeywordManager  # 新增：关键词管理器
 )
 # 导入新的提醒调度器
 from reminder_scheduler import get_global_scheduler
@@ -29,6 +30,7 @@ class AIAssistant:
         self.planner = WorkPlanManagerMySQL(self.db)
         self.reminder = ReminderSystemMySQL(self.db)
         self.image_manager = ImageManagerMySQL(self.db, 'uploads/images')
+        self.keyword_manager = KeywordManager('mysql_config.json')  # 新增：关键词管理器
 
         # 改为按用户ID存储对话历史的字典
         self.conversation_history = {}  # {user_id: [conversation_list]}
@@ -60,12 +62,8 @@ class AIAssistant:
         numbers = re.findall(r'\d+', user_message)
         keywords.extend(numbers)
 
-        important_words = [
-            '贷款', '公积金', '政策', '会议', '报告', '计划', '任务', '工作',
-            '额度', '房屋', '套数', '调整', '材料', '方案', '总结',
-            '心情', '老公', '老婆', '生气', '伯乐', '手机', '电话', '号码',
-            '高俊', '金荣莹', '名字', '叫', '今天', '昨天', '最近'
-        ]
+        # 从数据库动态加载用户可用的关键词
+        important_words = self.keyword_manager.get_keywords(user_id)
         for word in important_words:
             if word in user_message:
                 keywords.append(word)
@@ -526,6 +524,142 @@ class AIAssistant:
             else:
                 return {
                     'response': "⚠️ 请提供计划内容：计划: (标题) (截止日期) [优先级]",
+                    'detected_plans': [],
+                    'is_shortcut': True
+                }
+
+        # 检查是否是"关键词:"或"关键词："命令（兼容中英文冒号）
+        elif message.startswith('关键词:') or message.startswith('关键词：'):
+            # 移除"关键词:"或"关键词："前缀
+            if message.startswith('关键词:'):
+                content = message[4:].strip()
+            else:
+                content = message[4:].strip()
+
+            if content:
+                # 解析命令：添加/删除/查看
+                parts = content.split(maxsplit=1)
+                action = parts[0]
+
+                # 检查是否是管理员
+                is_admin = self.keyword_manager.is_admin(user_id)
+
+                if action in ['添加', '增加', '新增', '设置', 'add', 'new']:
+                    if len(parts) < 2:
+                        return {
+                            'response': "⚠️ 请提供要添加的关键词，多个关键词用逗号分隔\n例如：关键词: 添加 工资,奖金,社保",
+                            'detected_plans': [],
+                            'is_shortcut': True
+                        }
+
+                    # 支持多个关键词（逗号分隔）
+                    keywords_str = parts[1]
+                    keywords = [kw.strip() for kw in keywords_str.replace('，', ',').split(',') if kw.strip()]
+
+                    results = []
+                    for keyword in keywords:
+                        result = self.keyword_manager.add_keyword(keyword, user_id, is_admin)
+                        results.append(f"{'✅' if result['success'] else '❌'} {result['message']}")
+
+                    return {
+                        'response': '\n'.join(results),
+                        'detected_plans': [],
+                        'is_shortcut': True
+                    }
+
+                elif action in ['删除', '移除', '取消', 'delete', 'remove', 'del']:
+                    if len(parts) < 2:
+                        return {
+                            'response': "⚠️ 请提供要删除的关键词\n例如：关键词: 删除 工资",
+                            'detected_plans': [],
+                            'is_shortcut': True
+                        }
+
+                    # 支持多个关键词
+                    keywords_str = parts[1]
+                    keywords = [kw.strip() for kw in keywords_str.replace('，', ',').split(',') if kw.strip()]
+
+                    results = []
+                    for keyword in keywords:
+                        result = self.keyword_manager.delete_keyword(keyword, user_id, is_admin)
+                        results.append(f"{'✅' if result['success'] else '❌'} {result['message']}")
+
+                    return {
+                        'response': '\n'.join(results),
+                        'detected_plans': [],
+                        'is_shortcut': True
+                    }
+
+                elif action in ['查看', '列表', '显示', '全部', '显示全部', 'list', 'show', 'all']:
+                    result = self.keyword_manager.list_keywords(user_id, is_admin)
+                    if result['success']:
+                        data = result['data']
+                        response_lines = [f"📝 搜索关键词列表（共{result['total']}个）\n"]
+
+                        if data['system']:
+                            response_lines.append(f"【系统默认】({len(data['system'])}个)")
+                            # 分类显示系统关键词
+                            system_kws = [kw['keyword'] for kw in data['system']]
+
+                            # 工作类
+                            work_kws = [kw for kw in system_kws if kw in ['贷款', '公积金', '政策', '会议', '报告', '计划', '任务', '工作', '额度', '房屋', '套数', '调整', '材料', '方案', '总结']]
+                            if work_kws:
+                                response_lines.append(f"• 工作类：{', '.join(work_kws)}")
+
+                            # 个人信息类
+                            personal_kws = [kw for kw in system_kws if kw in ['生日', '出生', '年龄', '属相', '星座', '身份证']]
+                            if personal_kws:
+                                response_lines.append(f"• 个人类：{', '.join(personal_kws)}")
+
+                            # 家庭类
+                            family_kws = [kw for kw in system_kws if kw in ['父亲', '母亲', '爸爸', '妈妈', '孩子', '儿子', '女儿', '岳母', '岳父', '老公', '老婆']]
+                            if family_kws:
+                                response_lines.append(f"• 家庭类：{', '.join(family_kws)}")
+
+                            # 联系类
+                            contact_kws = [kw for kw in system_kws if kw in ['手机', '电话', '号码', '同事', '领导', '同学', '朋友']]
+                            if contact_kws:
+                                response_lines.append(f"• 联系类：{', '.join(contact_kws)}")
+
+                            # 其他
+                            other_kws = [kw for kw in system_kws if kw not in work_kws + personal_kws + family_kws + contact_kws]
+                            if other_kws:
+                                response_lines.append(f"• 其他：{', '.join(other_kws)}")
+
+                            response_lines.append("")
+
+                        if data['global']:
+                            response_lines.append(f"【全局关键词】({len(data['global'])}个)")
+                            keywords_list = ', '.join([kw['keyword'] for kw in data['global']])
+                            response_lines.append(keywords_list)
+                            response_lines.append("")
+
+                        if data['user']:
+                            response_lines.append(f"【我的关键词】({len(data['user'])}个)")
+                            keywords_list = ', '.join([kw['keyword'] for kw in data['user']])
+                            response_lines.append(keywords_list)
+
+                        return {
+                            'response': '\n'.join(response_lines),
+                            'detected_plans': [],
+                            'is_shortcut': True
+                        }
+                    else:
+                        return {
+                            'response': f"❌ {result['message']}",
+                            'detected_plans': [],
+                            'is_shortcut': True
+                        }
+
+                else:
+                    return {
+                        'response': f"⚠️ 未知操作：{action}\n\n可用操作：\n• 关键词: 添加 xxx,yyy\n• 关键词: 删除 xxx\n• 关键词: 查看",
+                        'detected_plans': [],
+                        'is_shortcut': True
+                    }
+            else:
+                return {
+                    'response': "⚠️ 请指定操作\n\n可用操作：\n• 关键词: 添加 xxx,yyy （添加搜索关键词）\n• 关键词: 删除 xxx （删除关键词" + ("" if not is_admin else "，管理员可删除任何关键词") + "）\n• 关键词: 查看 （查看关键词列表）",
                     'detected_plans': [],
                     'is_shortcut': True
                 }

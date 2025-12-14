@@ -889,3 +889,164 @@ if __name__ == '__main__':
     except Exception as e:
         print(f"❌ Database test failed: {e}")
 
+
+# ========================================
+# 关键词管理类（支持动态添加/删除搜索关键词）
+# ========================================
+class KeywordManager:
+    """搜索关键词管理器 - 支持用户自定义和权限控制"""
+
+    def __init__(self, config_file='mysql_config.json'):
+        self.db = MySQLManager(config_file)
+
+    def get_keywords(self, user_id=None):
+        """获取用户可用的所有关键词（系统+全局+用户自定义）"""
+        if user_id is None:
+            # 只返回系统默认关键词
+            sql = "SELECT keyword FROM search_keywords WHERE source='system'"
+            results = self.db.query(sql)
+        else:
+            # 返回：系统默认 + 全局关键词 + 该用户的自定义关键词
+            sql = """
+                SELECT DISTINCT keyword FROM search_keywords
+                WHERE source='system' OR source='global' OR user_id=%s
+                ORDER BY keyword
+            """
+            results = self.db.query(sql, [user_id])
+
+        return [row['keyword'] for row in results]
+
+    def add_keyword(self, keyword, user_id, is_admin=False):
+        """
+        添加关键词
+        - 普通用户：添加为user类型（仅自己可见）
+        - 管理员：添加为global类型（所有人可见）
+        """
+        keyword = keyword.strip()
+        if not keyword:
+            return {'success': False, 'message': '关键词不能为空'}
+
+        if len(keyword) > 50:
+            return {'success': False, 'message': '关键词长度不能超过50个字符'}
+
+        try:
+            if is_admin:
+                # 管理员添加全局关键词
+                sql = """
+                    INSERT INTO search_keywords (user_id, keyword, source, created_by)
+                    VALUES (NULL, %s, 'global', %s)
+                    ON DUPLICATE KEY UPDATE keyword=VALUES(keyword)
+                """
+                self.db.execute(sql, [keyword, user_id])
+                return {'success': True, 'message': f'已添加全局关键词：{keyword}', 'scope': 'global'}
+            else:
+                # 普通用户添加个人关键词
+                sql = """
+                    INSERT INTO search_keywords (user_id, keyword, source, created_by)
+                    VALUES (%s, %s, 'user', %s)
+                    ON DUPLICATE KEY UPDATE keyword=VALUES(keyword)
+                """
+                self.db.execute(sql, [user_id, keyword, user_id])
+                return {'success': True, 'message': f'已添加个人关键词：{keyword}', 'scope': 'user'}
+        except Exception as e:
+            return {'success': False, 'message': f'添加失败：{str(e)}'}
+
+    def delete_keyword(self, keyword, user_id, is_admin=False):
+        """
+        删除关键词（权限控制）
+        - 普通用户：只能删除自己添加的user类型关键词
+        - 管理员：可以删除任何关键词
+        """
+        keyword = keyword.strip()
+        if not keyword:
+            return {'success': False, 'message': '关键词不能为空'}
+
+        try:
+            if is_admin:
+                # 管理员可以删除任何关键词
+                sql = "DELETE FROM search_keywords WHERE keyword=%s"
+                affected = self.db.execute(sql, [keyword])
+                if affected > 0:
+                    return {'success': True, 'message': f'已删除关键词：{keyword}（管理员权限）'}
+                else:
+                    return {'success': False, 'message': f'关键词不存在：{keyword}'}
+            else:
+                # 普通用户只能删除自己添加的user类型关键词
+                sql = """
+                    DELETE FROM search_keywords
+                    WHERE keyword=%s AND user_id=%s AND source='user'
+                """
+                affected = self.db.execute(sql, [keyword, user_id])
+                if affected > 0:
+                    return {'success': True, 'message': f'已删除个人关键词：{keyword}'}
+                else:
+                    return {'success': False, 'message': f'无法删除：该关键词不存在或无权限（只能删除自己添加的关键词）'}
+        except Exception as e:
+            return {'success': False, 'message': f'删除失败：{str(e)}'}
+
+    def list_keywords(self, user_id=None, is_admin=False):
+        """
+        查看关键词列表
+        - 普通用户：显示系统+全局+自己的
+        - 管理员：显示所有
+        """
+        try:
+            if is_admin:
+                # 管理员查看所有（按类型分组）
+                sql = """
+                    SELECT keyword, source, user_id, created_at
+                    FROM search_keywords
+                    ORDER BY source, keyword
+                """
+                results = self.db.query(sql)
+
+                # 按类型分组
+                grouped = {'system': [], 'global': [], 'user': []}
+                for row in results:
+                    grouped[row['source']].append({
+                        'keyword': row['keyword'],
+                        'user_id': row['user_id'],
+                        'created_at': str(row['created_at'])
+                    })
+
+                return {
+                    'success': True,
+                    'data': grouped,
+                    'total': len(results),
+                    'message': f'共{len(results)}个关键词'
+                }
+            else:
+                # 普通用户查看自己可用的
+                sql = """
+                    SELECT keyword, source, created_at
+                    FROM search_keywords
+                    WHERE source='system' OR source='global' OR user_id=%s
+                    ORDER BY source, keyword
+                """
+                results = self.db.query(sql, [user_id])
+
+                # 按类型分组
+                grouped = {'system': [], 'global': [], 'user': []}
+                for row in results:
+                    grouped[row['source']].append({
+                        'keyword': row['keyword'],
+                        'created_at': str(row['created_at'])
+                    })
+
+                return {
+                    'success': True,
+                    'data': grouped,
+                    'total': len(results),
+                    'message': f'共{len(results)}个可用关键词'
+                }
+        except Exception as e:
+            return {'success': False, 'message': f'查询失败：{str(e)}'}
+
+    def is_admin(self, user_id):
+        """检查用户是否是管理员"""
+        if user_id is None:
+            return False
+        sql = "SELECT username FROM users WHERE id=%s"
+        result = self.db.query(sql, [user_id])
+        return len(result) > 0 and result[0]['username'] == 'admin'
+

@@ -174,6 +174,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     'username': user['username'],
                     'phone': user['phone'],
                     'avatar_url': user.get('avatar_url', ''),
+                    'chat_background': user.get('chat_background', ''),
                     'created_at': user.get('created_at', '').strftime('%Y-%m-%d %H:%M:%S') if hasattr(user.get('created_at', ''), 'strftime') else str(user.get('created_at', ''))
                 }
                 self.send_json({'success': True, 'user': user_profile})
@@ -642,6 +643,21 @@ class AssistantHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"头像上传错误: {e}")
                 self.send_json({'success': False, 'error': str(e)}, status=500)
+
+        elif self.path == '/api/user/settings':
+            # 更新用户设置（如背景颜色）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            chat_background = data.get('chat_background')
+            
+            success = user_manager.update_settings(user_id, chat_background=chat_background)
+            
+            if success:
+                self.send_json({'success': True, 'message': '设置已更新'})
+            else:
+                self.send_json({'success': False, 'message': '更新设置失败'}, status=500)
 
         # ============ 新增：提醒调度器相关API ============
 
@@ -2161,7 +2177,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
         @media screen and (max-width: 768px) {
             /* 修改body背景为天蓝色 */
             body {
-                background: #0099FF !important;
+                /* background: #0099FF !important; */ /* 已移除，由JS控制 */
             }
 
             /* 显示手机端顶部栏 - fixed定位 */
@@ -2638,6 +2654,19 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     <div style="margin-bottom:8px;"><strong>手机号：</strong><span id="settingsPhone">-</span></div>
                     <div><strong>注册时间：</strong><span id="settingsCreatedAt">-</span></div>
                 </div>
+            </div>
+            
+            <div class="form-group" style="background:#f8f9fa; padding:15px; border-radius:8px; margin-bottom:20px;">
+                <label style="font-size:1.1em; margin-bottom:15px; display:block;">🎨 聊天背景颜色</label>
+                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items: center;">
+                    <input type="color" id="bgColorPicker" value="#0099FF" oninput="previewBackgroundColor(this.value)" style="height:40px; width:60px; padding:0; border:none; cursor:pointer; background:none;">
+                    <button onclick="previewBackgroundColor('#0099FF'); document.getElementById('bgColorPicker').value='#0099FF'" style="padding:8px 12px; background:#0099FF; color:white; border:none; border-radius:4px; cursor:pointer;">默认蓝</button>
+                    <button onclick="previewBackgroundColor('#202124'); document.getElementById('bgColorPicker').value='#202124'" style="padding:8px 12px; background:#202124; color:white; border:none; border-radius:4px; cursor:pointer;">深邃黑</button>
+                    <button onclick="previewBackgroundColor('#1e3c72'); document.getElementById('bgColorPicker').value='#1e3c72'" style="padding:8px 12px; background:#1e3c72; color:white; border:none; border-radius:4px; cursor:pointer;">星空蓝</button>
+                    <button onclick="previewBackgroundColor('#11998e'); document.getElementById('bgColorPicker').value='#11998e'" style="padding:8px 12px; background:#11998e; color:white; border:none; border-radius:4px; cursor:pointer;">清新绿</button>
+                    <button onclick="previewBackgroundColor('#8E2DE2'); document.getElementById('bgColorPicker').value='#8E2DE2'" style="padding:8px 12px; background:#8E2DE2; color:white; border:none; border-radius:4px; cursor:pointer;">神秘紫</button>
+                </div>
+                <p style="color:#666; font-size:0.8em; margin-top:10px;">选择颜色后，点击下方保存按钮生效</p>
             </div>
             
             <div class="form-group">
@@ -3835,13 +3864,33 @@ class AssistantHandler(BaseHTTPRequestHandler):
             }
         }
         
-        function saveAssistantSettings() {
+        async function saveAssistantSettings() {
+            // 1. 保存助理类型到本地
             localStorage.setItem('assistantType', currentAssistant);
-            closeSettings();
-            alert('✅ 设置已保存！AI秘书形象已更新');
             
-            // 刷新页面让新头像生效（可选）
-            // location.reload();
+            // 2. 保存背景颜色到服务器
+            const picker = document.getElementById('bgColorPicker');
+            const bgColor = picker ? picker.value : null;
+            
+            if (bgColor) {
+                try {
+                    const response = await fetchWithAuth('/api/user/settings', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            chat_background: bgColor
+                        })
+                    });
+                    const data = await response.json();
+                    if (!data.success) {
+                        console.error('保存背景颜色失败:', data.message);
+                    }
+                } catch (e) {
+                    console.error('保存设置出错:', e);
+                }
+            }
+
+            closeSettings();
+            alert('✅ 设置已保存！');
         }
         
         function getAssistantAvatar() {
@@ -4052,6 +4101,11 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     if (menuAvatar) {
                         menuAvatar.innerHTML = `<img src="${avatarUrl}" alt="用户头像">`;
                     }
+                    
+                    // 应用用户自定义背景颜色
+                    if (data.user.chat_background) {
+                        applyBackgroundColor(data.user.chat_background);
+                    }
                 } else {
                     // 没有头像时清空全局变量
                     window.currentUserAvatar = null;
@@ -4086,6 +4140,53 @@ class AssistantHandler(BaseHTTPRequestHandler):
         }
 
         // ============ 设置相关函数 ============
+
+        function applyBackgroundColor(color) {
+            // 1. 设置 body 背景
+            document.body.style.background = color;
+            
+            // 2. 设置移动端顶部栏背景
+            const mobileHeader = document.querySelector('.mobile-header');
+            if (mobileHeader) {
+                mobileHeader.style.background = color;
+            }
+            
+            // 3. 设置移动端底部输入框背景
+            // 注意：仅在移动端应用颜色，桌面端保持透明
+            const inputContainer = document.querySelector('.input-container');
+            if (inputContainer) {
+                if (window.innerWidth <= 768) {
+                    inputContainer.style.background = color;
+                } else {
+                    inputContainer.style.background = 'transparent';
+                }
+            }
+            
+            // 如果是深色背景，调整文字颜色 (预留逻辑)
+            const isDark = color !== '#ffffff' && color !== '#f5f5f5';
+        }
+
+        // 添加窗口大小改变时的自适应处理
+        window.addEventListener('resize', function() {
+            // 获取当前 body 的背景色作为基准
+            const currentColor = document.body.style.background;
+            if (currentColor) {
+                const inputContainer = document.querySelector('.input-container');
+                if (inputContainer) {
+                    if (window.innerWidth <= 768) {
+                        inputContainer.style.background = currentColor;
+                    } else {
+                        inputContainer.style.background = 'transparent';
+                    }
+                }
+            }
+        });
+
+        function previewBackgroundColor(color) {
+            applyBackgroundColor(color);
+            const picker = document.getElementById('bgColorPicker');
+            if (picker) picker.value = color;
+        }
 
         let selectedAvatarFile = null;
 
@@ -4145,6 +4246,14 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
                     // 高亮当前选中的助理头像
                     highlightCurrentAssistantAvatar();
+                    
+                    // 初始化背景颜色选择器
+                    if (user.chat_background) {
+                        const picker = document.getElementById('bgColorPicker');
+                        if (picker) {
+                            picker.value = user.chat_background;
+                        }
+                    }
                 } else {
                     console.error('Invalid profile data:', data);
                     alert('加载用户信息失败: ' + (data.message || '未知错误'));

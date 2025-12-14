@@ -220,7 +220,7 @@ class UserManager:
         """
         try:
             sql = """
-                SELECT id, username, password_hash, phone, avatar_url, created_at, last_login
+                SELECT id, username, password_hash, phone, avatar_url, chat_background, created_at, last_login
                 FROM users
                 WHERE id = %s
             """
@@ -229,6 +229,42 @@ class UserManager:
         except Exception as e:
             print(f"查询用户失败: {e}")
             return None
+
+    def change_password(self, user_id, old_password, new_password):
+        """
+        修改用户密码
+
+        参数:
+            user_id: 用户ID
+            old_password: 原密码（明文）
+            new_password: 新密码（明文）
+
+        返回:
+            字典，包含success和message字段
+        """
+        try:
+            # 1. 验证旧密码
+            user = self.get_user_by_id(user_id)
+            if not user:
+                return {'success': False, 'message': '用户不存在'}
+
+            # 注意：数据库中的字段是password_hash，但验证时使用password
+            old_password_hash = self.hash_password(old_password)
+            if user.get('password_hash') != old_password_hash and user.get('password') != old_password_hash:
+                return {'success': False, 'message': '原密码错误'}
+
+            # 2. 更新密码
+            new_password_hash = self.hash_password(new_password)
+            sql = "UPDATE users SET password_hash=%s WHERE id=%s"
+            self.db.execute(sql, [new_password_hash, user_id])
+
+            # 3. 清除所有会话（强制重新登录）
+            self.db.execute("DELETE FROM user_sessions WHERE user_id=%s", [user_id])
+
+            return {'success': True, 'message': '密码修改成功，请重新登录'}
+        except Exception as e:
+            print(f"修改密码失败: {e}")
+            return {'success': False, 'message': f'修改密码失败: {str(e)}'}
 
     def clean_expired_sessions(self):
         """
@@ -270,3 +306,35 @@ class UserManager:
         except Exception as e:
             print(f"更新用户头像失败: {e}")
             return False
+
+    def update_settings(self, user_id, chat_background=None):
+        """
+        更新用户设置
+
+        参数:
+            user_id: 用户ID
+            chat_background: 聊天背景颜色 (十六进制代码)
+
+        返回:
+            是否成功
+        """
+        try:
+            updates = []
+            params = []
+            
+            if chat_background is not None:
+                updates.append("chat_background = %s")
+                params.append(chat_background)
+            
+            if not updates:
+                return True
+                
+            params.append(user_id)
+            sql = f"UPDATE users SET {', '.join(updates)} WHERE id = %s"
+            
+            self.db.execute(sql, tuple(params))
+            return True
+        except Exception as e:
+            print(f"更新用户设置失败: {e}")
+            return False
+
