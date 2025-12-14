@@ -2762,6 +2762,36 @@ class AssistantHandler(BaseHTTPRequestHandler):
     </div>
     
     <script>
+        // 输入历史记录管理
+        let inputHistory = [];
+        try {
+            inputHistory = JSON.parse(localStorage.getItem('chatInputHistory') || '[]');
+        } catch (e) {
+            console.error('加载输入历史失败', e);
+            inputHistory = [];
+        }
+        let historyIndex = -1; // -1 表示当前新输入状态
+        let currentDraft = ''; // 保存用户当前未发送的输入
+
+        function saveInputHistory(text) {
+            if (!text || !text.trim()) return;
+            text = text.trim();
+            
+            // 避免保存重复的连续消息
+            if (inputHistory.length > 0 && inputHistory[inputHistory.length - 1] === text) {
+                return;
+            }
+            
+            inputHistory.push(text);
+            // 只保留最近5条（根据需求）
+            if (inputHistory.length > 5) {
+                inputHistory = inputHistory.slice(inputHistory.length - 5);
+            }
+            
+            localStorage.setItem('chatInputHistory', JSON.stringify(inputHistory));
+            historyIndex = -1; // 重置索引
+        }
+
         function showTab(evt, tabName) {
             const tabs = document.querySelectorAll('.tab');
             const contents = document.querySelectorAll('.tab-content');
@@ -2771,11 +2801,54 @@ class AssistantHandler(BaseHTTPRequestHandler):
             document.getElementById(tabName).classList.add('active');
         }
         
-        // AI助手 - 处理回车键
+        // AI助手 - 处理按键
         function handleAIKeyPress(event) {
+            const input = event.target;
+            
+            // Enter键发送
             if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
                 sendAI();
+                return;
+            }
+            
+            // 上键：查看上一条历史
+            if (event.key === 'ArrowUp') {
+                // 只有当光标在开头时才触发，避免影响多行编辑
+                if (input.selectionStart === 0 && input.selectionEnd === 0) {
+                    if (historyIndex === -1) {
+                        // 如果是从新输入状态开始，先保存当前草稿
+                        // 只有当历史记录不为空时才进入历史模式
+                        if (inputHistory.length > 0) {
+                            currentDraft = input.value;
+                            historyIndex = inputHistory.length - 1;
+                            event.preventDefault(); // 阻止光标移动
+                            input.value = inputHistory[historyIndex];
+                        }
+                    } else if (historyIndex > 0) {
+                        historyIndex--;
+                        event.preventDefault();
+                        input.value = inputHistory[historyIndex];
+                    }
+                }
+            }
+            
+            // 下键：查看下一条历史
+            if (event.key === 'ArrowDown') {
+                // 只有当光标在末尾时才触发
+                if (input.selectionStart === input.value.length) {
+                    if (historyIndex !== -1) {
+                        event.preventDefault();
+                        if (historyIndex < inputHistory.length - 1) {
+                            historyIndex++;
+                            input.value = inputHistory[historyIndex];
+                        } else {
+                            // 回到最新草稿
+                            historyIndex = -1;
+                            input.value = currentDraft;
+                        }
+                    }
+                }
             }
         }
         
@@ -3634,7 +3707,10 @@ class AssistantHandler(BaseHTTPRequestHandler):
             
             if (msg) {
                 appendAI('user', msg);
+                saveInputHistory(msg);
                 input.value = '';
+                // 重置草稿
+                currentDraft = '';
             }
             
             const box = document.getElementById('aiChatBox');
