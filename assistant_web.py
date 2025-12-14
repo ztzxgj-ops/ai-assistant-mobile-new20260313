@@ -138,6 +138,15 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 return
             chats = memory.get_recent_conversations(100, user_id=user_id)
             self.send_json(chats)
+        elif self.path == '/api/chat/history':
+            # 获取最近24小时的对话历史
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+            
+            # 使用新添加的方法
+            history = memory.get_messages_last_24h(user_id)
+            self.send_json({'success': True, 'history': history})
         elif self.path == '/api/plans':
             user_id = self.require_auth()
             if user_id is None:
@@ -3966,6 +3975,8 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     if (data.success) {
                         // ✅ Token有效，显示用户信息和聊天界面
                         showUserInfo(username || data.username);
+                        // 加载历史记录
+                        loadChatHistory();
                     } else {
                         // ❌ Token无效，清除数据并重定向到登录页
                         clearLoginData();
@@ -4387,6 +4398,44 @@ class AssistantHandler(BaseHTTPRequestHandler):
             localStorage.removeItem('token');
             localStorage.removeItem('username');
             localStorage.removeItem('user_id');
+        }
+
+        async function loadChatHistory() {
+            try {
+                const token = localStorage.getItem('token');
+                const response = await fetch('/api/chat/history', {
+                    headers: token ? {'Authorization': 'Bearer ' + token} : {}
+                });
+                
+                if (!response.ok) return;
+                
+                const data = await response.json();
+                if (data.success && data.history && data.history.length > 0) {
+                    // 移除欢迎消息
+                    const box = document.getElementById('aiChatBox');
+                    const welcome = box.querySelector('.welcome-message');
+                    if (welcome) welcome.remove();
+                    
+                    // 遍历显示消息
+                    data.history.forEach(msg => {
+                        // 提取时间 HH:mm
+                        let timeStr = '';
+                        if (msg.timestamp) {
+                            const date = new Date(msg.timestamp.replace(/-/g, '/')); // 兼容性处理
+                            timeStr = date.toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'});
+                        }
+                        
+                        appendAI(msg.role, msg.content, timeStr);
+                    });
+                    
+                    // 滚动到底部
+                    setTimeout(() => {
+                        box.scrollTop = box.scrollHeight;
+                    }, 100);
+                }
+            } catch (e) {
+                console.error('加载历史记录失败:', e);
+            }
         }
 
         window.onload = () => {

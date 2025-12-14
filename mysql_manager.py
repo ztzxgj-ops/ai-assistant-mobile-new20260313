@@ -165,6 +165,35 @@ class MemoryManagerMySQL:
                 msg['timestamp'] = msg['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
 
         return list(reversed(messages))  # 返回正序
+
+    def get_messages_last_24h(self, user_id):
+        """获取最近24小时的消息"""
+        if user_id is None:
+            return []
+
+        sql = """
+            SELECT id, role, content, timestamp, tags, image_url
+            FROM messages
+            WHERE user_id = %s AND timestamp >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+            ORDER BY timestamp ASC
+        """
+        messages = self.db.query(sql, (user_id,))
+
+        # 解析JSON字段和转换日期
+        for msg in messages:
+            if msg['tags']:
+                try:
+                    msg['tags'] = json.loads(msg['tags'])
+                except:
+                    msg['tags'] = []
+            else:
+                msg['tags'] = []
+
+            # 转换datetime为字符串
+            if msg['timestamp'] and hasattr(msg['timestamp'], 'strftime'):
+                msg['timestamp'] = msg['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
+
+        return messages
     
     def search_messages(self, keyword=None, tags=None, limit=50, user_id=None):
         """搜索消息"""
