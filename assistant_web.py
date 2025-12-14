@@ -1641,6 +1641,17 @@ class AssistantHandler(BaseHTTPRequestHandler):
         .input-icon:hover {
             color: #fff;
         }
+
+        .mic-active {
+            color: #ff4444 !important;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.2); opacity: 0.7; }
+            100% { transform: scale(1); opacity: 1; }
+        }
         
         input[type="text"], select, textarea {
             width: 100%;
@@ -2423,17 +2434,17 @@ class AssistantHandler(BaseHTTPRequestHandler):
             </div>
         </div>
         
-            <!-- 输入区域 -->
-            <div class="input-container">
-                <div class="input-wrapper">
-                    <span class="input-icon" onclick="triggerImageUpload()" title="上传图片（支持多选）">📎</span>
-                    <input type="file" id="imageUpload" accept="image/*" multiple style="display:none" onchange="handleImageSelect(event)">
-                    <textarea id="aiInput" rows="1" placeholder="How can I help you?" onkeydown="handleAIKeyPress(event)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="text" data-form-type="other"></textarea>
-                    <button class="send-button" onclick="sendAI()">
-                        <span style="font-size: 20px;">🎙️</span>
-                    </button>
-        </div>
-        
+                        <!-- 输入区域 -->
+                        <div class="input-container">
+                            <div class="input-wrapper">
+                                <span class="input-icon" onclick="triggerImageUpload()" title="上传图片（支持多选）">📎</span>
+                                <span class="input-icon" id="voiceBtn" onclick="toggleVoiceInput()" title="语音输入" style="margin-left: 8px;">🎤</span>
+                                <input type="file" id="imageUpload" accept="image/*" multiple style="display:none" onchange="handleImageSelect(event)">
+                                <textarea id="aiInput" rows="1" placeholder="How can I help you?" onkeydown="handleAIKeyPress(event)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="text" data-form-type="other"></textarea>
+                                <button class="send-button" onclick="sendAI()">
+                                    <span style="font-size: 20px;">🎙️</span>
+                                </button>
+                            </div>        
                 <!-- 图片预览区域 -->
                 <div id="imagePreviewContainer" style="display:none; margin-top:15px;">
                     <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;" id="imagePreviewList">
@@ -2877,6 +2888,91 @@ class AssistantHandler(BaseHTTPRequestHandler):
         }
         let historyIndex = -1; // -1 表示当前新输入状态
         let currentDraft = ''; // 保存用户当前未发送的输入
+
+        // 语音识别变量
+        let recognition = null;
+        let isRecording = false;
+
+        function toggleVoiceInput() {
+            const btn = document.getElementById('voiceBtn');
+            const input = document.getElementById('aiInput');
+
+            // 检查浏览器支持
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                alert('抱歉，您的浏览器不支持语音识别。请尝试使用 Chrome, Edge 或 Safari。');
+                return;
+            }
+
+            if (isRecording) {
+                // 停止录音
+                if (recognition) recognition.stop();
+                return;
+            }
+
+            // 开始录音
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            recognition.lang = 'zh-CN'; // 设置为中文
+            recognition.continuous = false; // 说完一句自动停止
+            recognition.interimResults = true; // 显示临时结果
+
+            recognition.onstart = function() {
+                isRecording = true;
+                btn.classList.add('mic-active');
+                input.placeholder = "正在聆听...";
+            };
+
+            recognition.onend = function() {
+                isRecording = false;
+                btn.classList.remove('mic-active');
+                input.placeholder = "How can I help you?";
+            };
+
+            recognition.onresult = function(event) {
+                let finalTranscript = '';
+                let interimTranscript = '';
+
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript;
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
+                }
+
+                // 将结果追加到输入框（如果是临时结果，可能需要更复杂的逻辑，这里简化为只追加最终结果）
+                if (finalTranscript) {
+                    // 在光标处插入文本
+                    const startPos = input.selectionStart;
+                    const endPos = input.selectionEnd;
+                    const text = input.value;
+                    input.value = text.substring(0, startPos) + finalTranscript + text.substring(endPos, text.length);
+                    
+                    // 自动扩展
+                    if (typeof autoExpandTextarea === 'function') {
+                        autoExpandTextarea(input);
+                    }
+                    
+                    // 保存到历史草稿
+                    currentDraft = input.value;
+                }
+            };
+
+            recognition.onerror = function(event) {
+                console.error('语音识别错误:', event.error);
+                if (event.error === 'not-allowed') {
+                    alert('无法访问麦克风。请检查浏览器权限，或确认是否使用了HTTPS连接。');
+                }
+                isRecording = false;
+                btn.classList.remove('mic-active');
+            };
+
+            try {
+                recognition.start();
+            } catch (e) {
+                console.error(e);
+            }
+        }
 
         function saveInputHistory(text) {
             if (!text || !text.trim()) return;
