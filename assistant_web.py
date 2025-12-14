@@ -2288,6 +2288,12 @@ class AssistantHandler(BaseHTTPRequestHandler):
             }
         }
 
+        .message-time {
+            font-size: 0.75em;
+            margin-top: 4px;
+            text-align: right;
+            opacity: 0.7;
+        }
     </style>
 </head>
 <body>
@@ -2766,7 +2772,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
         
         // AI助手
             
-        function appendAI(role, text) {
+        function appendAI(role, text, timestamp = null) {
             const box = document.getElementById('aiChatBox');
             
             // 移除欢迎消息
@@ -2836,10 +2842,22 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 }
             }
             
+            // 生成时间戳
+            const timeStr = timestamp || new Date().toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'});
+
             const content = document.createElement('div');
             content.className = 'message-content';
-            content.style.whiteSpace = 'pre-wrap';
-            content.textContent = text;
+            
+            const textDiv = document.createElement('div');
+            textDiv.style.whiteSpace = 'pre-wrap';
+            textDiv.textContent = text;
+            
+            const timeDiv = document.createElement('div');
+            timeDiv.className = 'message-time';
+            timeDiv.textContent = timeStr;
+            
+            content.appendChild(textDiv);
+            content.appendChild(timeDiv);
             
             messageDiv.appendChild(avatar);
             messageDiv.appendChild(content);
