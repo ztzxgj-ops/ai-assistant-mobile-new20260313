@@ -27,6 +27,7 @@ user_manager = UserManager(db_manager)
 memory = ai_assistant.memory
 reminder_sys = ai_assistant.reminder
 image_manager = ai_assistant.image_manager
+file_manager = ai_assistant.file_manager
 planner = ai_assistant.planner
 
 class AssistantHandler(BaseHTTPRequestHandler):
@@ -127,6 +128,18 @@ class AssistantHandler(BaseHTTPRequestHandler):
             # 允许加载主页HTML，前端会通过checkLogin()检查Token
             # 如果Token无效会重定向到/login
             self.send_html()
+        elif self.path == '/mobile_ui_patch.css':
+            # 提供手机端CSS补丁
+            try:
+                with open('mobile_ui_patch.css', 'r', encoding='utf-8') as f:
+                    css_content = f.read()
+                self.send_response(200)
+                self.send_header('Content-type', 'text/css; charset=utf-8')
+                self.send_header('Cache-Control', 'public, max-age=3600')
+                self.end_headers()
+                self.wfile.write(css_content.encode('utf-8'))
+            except Exception as e:
+                self.send_error(404, f'CSS file not found: {e}')
         elif self.path == '/login' or self.path == '/login.html':
             self.send_login_html()
         elif self.path == '/image-gallery' or self.path == '/image-gallery.html':
@@ -159,17 +172,193 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 return
             reminders = reminder_sys.list_reminders(user_id=user_id)
             self.send_json(reminders)
+        elif self.path == '/api/reminders/check':
+            """检查到期的提醒（用于浏览器轮询）"""
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+            try:
+                # 查询到期且未触发的提醒
+                now = datetime.now().isoformat()
+                with db_manager.get_cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT id, content, remind_time
+                        FROM reminders
+                        WHERE user_id = %s
+                        AND status = 'pending'
+                        AND triggered = 0
+                        AND remind_time <= %s
+                        ORDER BY remind_time ASC
+                        LIMIT 10
+                        """,
+                        (user_id, now)
+                    )
+                    due_reminders = []
+                    for row in cursor.fetchall():
+                        reminder = {
+                            'id': row['id'],
+                            'content': row['content'],
+                            'remind_time': row['remind_time'].isoformat() if hasattr(row['remind_time'], 'isoformat') else str(row['remind_time'])
+                        }
+                        due_reminders.append(reminder)
+
+                        # 标记为已触发（Web端）
+                        cursor.execute(
+                            "UPDATE reminders SET triggered = 1, status = 'completed' WHERE id = %s",
+                            (row['id'],)
+                        )
+
+                        print(f"✅ Web端触发提醒: {reminder['content']}")
+
+                    db_manager.connection.commit()
+
+                    if due_reminders:
+                        print(f"📢 返回{len(due_reminders)}条到期提醒给前端")
+
+                    self.send_json({'success': True, 'reminders': due_reminders})
+            except Exception as e:
+                import traceback
+                print(f"❌ 检查提醒失败: {e}")
+                print(f"详细错误: {traceback.format_exc()}")
+                self.send_json({'success': False, 'reminders': [], 'error': str(e)})
         elif self.path == '/api/images':
             user_id = self.require_auth()
             if user_id is None:
                 return
             images = image_manager.list_images(user_id=user_id)
             self.send_json(images)
+        elif self.path == '/api/files':
+            # 文件列表（GET）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+            files = file_manager.list_files(user_id=user_id)
+            self.send_json(files)
+        elif self.path == '/api/file/stats':
+            # 存储统计（GET）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+            stats = file_manager.get_user_storage_stats(user_id)
+            print(f"[DEBUG] File stats for user_id={user_id}: {stats}")
+            self.send_json({'success': True, 'stats': stats})
+        elif self.path.startswith('/api/file/') and '/download' in self.path:
+            # 文件下载（GET） - 格式: /api/file/{id}/download?token=xxx
+            # 支持从URL参数获取token（因为<a>标签下载无法设置header）
+            from urllib.parse import urlparse, parse_qs
+            parsed_url = urlparse(self.path)
+            query_params = parse_qs(parsed_url.query)
+
+            # 优先从header获取token，其次从URL参数获取
+            token = self.headers.get('Authorization', '').replace('Bearer ', '')
+            if not token and 'token' in query_params:
+                token = query_params['token'][0]
+
+            # 验证token
+            user_id = None
+            if token:
+                result = user_manager.verify_token(token)
+                if result['success']:
+                    user_id = result['user_id']
+
+            if user_id is None:
+                self.send_error(401, '未授权：请先登录')
+                return
+
+            try:
+                # 从路径中提取file_id（支持带?参数的路径）
+                path_parts = parsed_url.path.split('/')
+                file_id = int(path_parts[-2])
+            except (ValueError, IndexError):
+                self.send_error(400, '无效的文件ID')
+                return
+
+            # 获取文件信息并检查权限
+            file_info = file_manager.get_file(file_id, user_id=user_id)
+            if not file_info:
+                self.send_error(404, '文件不存在或无权访问')
+                return
+
+            # 增加下载计数
+            file_manager.increment_download_count(file_id)
+
+            # 读取文件并发送
+            try:
+                with open(file_info['file_path'], 'rb') as f:
+                    content = f.read()
+
+                import mimetypes
+                # 使用original_name来猜测MIME类型，而不是file_path（UUID文件名）
+                content_type = file_info.get('mime_type') or mimetypes.guess_type(file_info['original_name'])[0] or 'application/octet-stream'
+
+                self.send_response(200)
+                self.send_header('Content-Type', content_type)
+                # 对文件名进行URL编码，支持中文文件名
+                from urllib.parse import quote
+                encoded_filename = quote(file_info["original_name"])
+                self.send_header('Content-Disposition', f'attachment; filename*=UTF-8\'\'{encoded_filename}')
+                self.send_header('Content-Length', str(len(content)))
+                self.send_header('Cache-Control', 'no-cache')
+                self.end_headers()
+                self.wfile.write(content)
+            except Exception as e:
+                self.send_error(500, f'下载失败: {str(e)}')
+        elif self.path.startswith('/api/file/') and self.path.count('/') == 3:
+            # 获取单个文件信息（GET） - 格式: /api/file/{id}
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            try:
+                file_id = int(self.path.split('/')[-1])
+            except ValueError:
+                self.send_json({'success': False, 'message': '无效的文件ID'}, status=400)
+                return
+
+            file_info = file_manager.get_file(file_id, user_id=user_id)
+            if file_info:
+                self.send_json(file_info)
+            else:
+                self.send_json({'success': False, 'message': '文件不存在'}, status=404)
+        elif self.path == '/file-manager' or self.path == '/file-manager.html':
+            # 文件管理页面
+            self.send_file_manager_html()
         elif self.path == '/api/auth/verify':
             # Token验证（GET请求）
             token = self.headers.get('Authorization', '').replace('Bearer ', '')
             result = user_manager.verify_token(token)
             self.send_json(result)
+        elif self.path == '/api/security/status':
+            # 查询安全验证状态（GET请求）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            token = self.headers.get('Authorization', '').replace('Bearer ', '')
+
+            # 检查是否已设置验证码
+            user_result = db_manager.query(
+                "SELECT security_code FROM users WHERE id = %s",
+                (user_id,)
+            )
+            has_security_code = bool(user_result and user_result[0]['security_code'])
+
+            # 检查session验证状态
+            session_result = db_manager.query(
+                "SELECT security_verified, security_verified_at FROM user_sessions WHERE session_token = %s",
+                (token,)
+            )
+
+            is_verified = False
+            if session_result and session_result[0]['security_verified'] == 1:
+                is_verified = True
+
+            self.send_json({
+                'success': True,
+                'has_security_code': has_security_code,
+                'is_verified': is_verified
+            })
         elif self.path == '/api/user/profile':
             # 获取当前用户信息
             user_id = self.require_auth()
@@ -203,6 +392,12 @@ class AssistantHandler(BaseHTTPRequestHandler):
         elif self.path.startswith('/uploads/avatars/'):
             # serve头像图片文件
             self.serve_image(self.path[1:])  # 去掉开头的 /
+        elif self.path.startswith('/uploads/files/'):
+            # serve通用文件
+            self.serve_file(self.path[1:])
+        elif self.path.startswith('/ai/uploads/files/'):
+            # 适配本地开发时的 /ai/ 路径
+            self.serve_file(self.path[4:])
         elif self.path == '/api/ai/get_mode':
             self.send_json({'mode': ai_assistant.model_type, 'config': ai_assistant.config})
         elif self.path == '/api/work-records':
@@ -310,11 +505,125 @@ class AssistantHandler(BaseHTTPRequestHandler):
             result = user_manager.verify_token(token)
             self.send_json(result)
 
+        elif self.path == '/api/security/set-code':
+            # 设置安全验证码
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            security_code = data.get('security_code', '').strip()
+            if not security_code or len(security_code) < 4:
+                self.send_json({'success': False, 'message': '验证码至少需要4个字符'})
+                return
+
+            # 使用SHA256加密验证码
+            import hashlib
+            hashed_code = hashlib.sha256(security_code.encode()).hexdigest()
+
+            try:
+                db_manager.execute(
+                    "UPDATE users SET security_code = %s WHERE id = %s",
+                    (hashed_code, user_id)
+                )
+                
+                self.send_json({'success': True, 'message': '安全验证码设置成功'})
+            except Exception as e:
+                self.send_json({'success': False, 'message': f'设置失败：{str(e)}'})
+
+        elif self.path == '/api/security/verify':
+            # 验证安全验证码
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            security_code = data.get('security_code', '').strip()
+            if not security_code:
+                self.send_json({'success': False, 'message': '请输入验证码'})
+                return
+
+            # 获取用户设置的验证码
+            result = db_manager.query(
+                "SELECT security_code FROM users WHERE id = %s",
+                (user_id,)
+            )
+
+            if not result or not result[0]['security_code']:
+                self.send_json({'success': False, 'message': '您还未设置安全验证码，请先在用户菜单中设置'})
+                return
+
+            # 验证密码
+            import hashlib
+            hashed_input = hashlib.sha256(security_code.encode()).hexdigest()
+
+            if hashed_input == result[0]['security_code']:
+                # 验证成功，更新session状态
+                token = self.headers.get('Authorization', '').replace('Bearer ', '')
+                try:
+                    db_manager.execute(
+                        "UPDATE user_sessions SET security_verified = 1, security_verified_at = NOW() WHERE session_token = %s",
+                        (token,)
+                    )
+                    
+                    self.send_json({'success': True, 'message': '验证成功'})
+                except Exception as e:
+                    self.send_json({'success': False, 'message': f'验证失败：{str(e)}'})
+            else:
+                self.send_json({'success': False, 'message': '验证码错误'})
+
+        elif self.path == '/api/security/status':
+            # 查询当前验证状态
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            token = self.headers.get('Authorization', '').replace('Bearer ', '')
+
+            # 检查是否已设置验证码
+            user_result = db_manager.query(
+                "SELECT security_code FROM users WHERE id = %s",
+                (user_id,)
+            )
+            has_security_code = bool(user_result and user_result[0]['security_code'])
+
+            # 检查session验证状态
+            session_result = db_manager.query(
+                "SELECT security_verified, security_verified_at FROM user_sessions WHERE session_token = %s",
+                (token,)
+            )
+
+            is_verified = False
+            if session_result and session_result[0]['security_verified'] == 1:
+                is_verified = True
+
+            self.send_json({
+                'success': True,
+                'has_security_code': has_security_code,
+                'is_verified': is_verified
+            })
+
+        elif self.path == '/api/security/clear':
+            # 清除验证状态（用于测试或用户主动退出验证）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            token = self.headers.get('Authorization', '').replace('Bearer ', '')
+            try:
+                db_manager.execute(
+                    "UPDATE user_sessions SET security_verified = 0, security_verified_at = NULL WHERE session_token = %s",
+                    (token,)
+                )
+                
+                self.send_json({'success': True, 'message': '已清除验证状态'})
+            except Exception as e:
+                self.send_json({'success': False, 'message': f'操作失败：{str(e)}'})
+
         elif self.path == '/api/ai/chat':
             user_id = self.require_auth()
             if user_id is None:
                 return
-            chat_result = ai_assistant.chat(data.get('message', ''), user_id=user_id)
+            token = self.headers.get('Authorization', '').replace('Bearer ', '')
+            chat_result = ai_assistant.chat(data.get('message', ''), user_id=user_id, file_id=data.get('file_id'), token=token)
             # 处理新的返回格式（包含response、detected_plans、detected_reminders和completed_plans）
             if isinstance(chat_result, dict):
                 response_data = {
@@ -553,6 +862,82 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 self.send_json({'success': True, 'message': '图片上传成功', 'image': img})
             except Exception as e:
                 self.send_json({'success': False, 'error': str(e)}, status=500)
+
+        elif self.path == '/api/file/upload':
+            # 上传文件（通用）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+            try:
+                file_data = data.get('file_data', '')
+                original_name = data.get('original_name', 'unknown')
+                mime_type = data.get('mime_type', 'application/octet-stream')
+                description = data.get('description', '')
+                tags = data.get('tags', [])
+
+                if not file_data:
+                    self.send_json({'success': False, 'message': '没有文件数据'})
+                    return
+
+                # 解码base64
+                if ',' in file_data:
+                    file_data = file_data.split(',')[1]
+
+                file_bytes = base64.b64decode(file_data)
+                file_size = len(file_bytes)
+
+                # 检查大小限制 (1GB)
+                if file_size > 1024 * 1024 * 1024:
+                     self.send_json({'success': False, 'message': '文件过大，最大支持1GB'})
+                     return
+
+                # 使用原始文件名，处理重名情况
+                import time
+                filename = original_name
+                file_path = os.path.join(file_manager.upload_dir, filename)
+
+                # 如果文件已存在，添加时间戳避免冲突
+                if os.path.exists(file_path):
+                    name_parts = original_name.rsplit('.', 1)
+                    if len(name_parts) == 2:
+                        base_name, ext = name_parts
+                        timestamp = int(time.time() * 1000)  # 毫秒时间戳
+                        filename = f"{base_name}_{timestamp}.{ext}"
+                    else:
+                        timestamp = int(time.time() * 1000)
+                        filename = f"{original_name}_{timestamp}"
+                    file_path = os.path.join(file_manager.upload_dir, filename)
+
+                # 保存文件
+                with open(file_path, 'wb') as f:
+                    f.write(file_bytes)
+
+                # 添加到数据库
+                file_id = file_manager.add_file(
+                    filename=filename,
+                    original_name=original_name,
+                    file_path=file_path,
+                    file_size=file_size,
+                    mime_type=mime_type,
+                    description=description,
+                    tags=tags,
+                    user_id=user_id
+                )
+
+                # 返回文件信息
+                file_info = {
+                    'id': file_id,
+                    'filename': filename,
+                    'original_name': original_name,
+                    'file_path': file_path,
+                    'file_size': file_size,
+                    'mime_type': mime_type
+                }
+
+                self.send_json({'success': True, 'message': '文件上传成功', 'file': file_info})
+            except Exception as e:
+                print(f"上传文件出错: {e}")
+                self.send_json({'success': False, 'error': str(e)}, status=500)
         
         elif self.path == '/api/image/delete':
             # 删除图片
@@ -599,6 +984,61 @@ class AssistantHandler(BaseHTTPRequestHandler):
             
             results = image_manager.search_images(keyword=keyword.strip(), user_id=user_id)
             self.send_json({'results': results})
+
+        elif self.path == '/api/file/search':
+            # 搜索文件（POST）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            keyword = data.get('keyword', '')
+            category = data.get('category')
+            tags = data.get('tags', [])
+
+            results = file_manager.search_files(
+                keyword=keyword.strip() if keyword else None,
+                category=category,
+                tags=tags if tags else None,
+                user_id=user_id
+            )
+            self.send_json({'results': results})
+
+        elif self.path == '/api/file/delete':
+            # 删除文件（POST）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            file_id = data.get('id')
+            if not file_id:
+                self.send_json({'success': False, 'message': '缺少文件ID'}, status=400)
+                return
+
+            success = file_manager.delete_file(file_id, user_id=user_id)
+            if success:
+                self.send_json({'success': True, 'message': '文件已删除'})
+            else:
+                self.send_json({'success': False, 'message': '删除失败或权限不足'}, status=403)
+
+        elif self.path == '/api/file/update':
+            # 更新文件信息（POST）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            file_id = data.get('id')
+            description = data.get('description')
+            tags = data.get('tags')
+
+            if not file_id:
+                self.send_json({'success': False, 'message': '缺少文件ID'}, status=400)
+                return
+
+            success = file_manager.update_file_info(file_id, description=description, tags=tags, user_id=user_id)
+            if success:
+                self.send_json({'success': True, 'message': '更新成功'})
+            else:
+                self.send_json({'success': False, 'message': '更新失败或权限不足'}, status=403)
 
         # ============ 用户头像相关API ============
 
@@ -830,6 +1270,35 @@ class AssistantHandler(BaseHTTPRequestHandler):
             self.send_error(404, 'Image not found')
         except Exception as e:
             self.send_error(500, 'Failed to read image')
+
+    def serve_file(self, filepath):
+        """发送文件（通用）"""
+        try:
+            # 安全检查：防止目录遍历
+            if '..' in filepath or filepath.startswith('/'):
+                self.send_error(403, 'Forbidden')
+                return
+
+            if not os.path.exists(filepath):
+                 self.send_error(404, 'File not found')
+                 return
+
+            with open(filepath, 'rb') as f:
+                content = f.read()
+
+            import mimetypes
+            content_type, _ = mimetypes.guess_type(filepath)
+            if not content_type:
+                content_type = 'application/octet-stream'
+
+            self.send_response(200)
+            self.send_header('Content-type', content_type)
+            self.send_header('Content-Length', str(len(content)))
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(content)
+        except Exception as e:
+            self.send_error(500, f'Failed to read file: {e}')
     
     def do_DELETE(self):
         """处理DELETE请求"""
@@ -878,7 +1347,1053 @@ class AssistantHandler(BaseHTTPRequestHandler):
         self.send_header('Content-type', 'text/html; charset=utf-8')
         self.end_headers()
         self.wfile.write(html_content.encode('utf-8'))
-    
+
+    def send_file_manager_html(self):
+        """发送文件管理页面"""
+        html_content = self.get_file_manager_template()
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html; charset=utf-8')
+        self.end_headers()
+        self.wfile.write(html_content.encode('utf-8'))
+
+    def get_file_manager_template(self):
+        """获取文件管理页面模板"""
+        return '''<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文件管理 - 个人AI助理</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+
+        .back-link {
+            display: inline-block;
+            color: white;
+            text-decoration: none;
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 8px;
+            margin-bottom: 20px;
+            transition: all 0.3s;
+        }
+
+        .back-link:hover {
+            background: rgba(255,255,255,0.2);
+        }
+
+        .container {
+            max-width: 100%;
+            width: 100%;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            padding: 30px 40px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+
+        @media (min-width: 1920px) {
+            .container {
+                max-width: 1800px;
+            }
+        }
+
+        h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+        }
+
+        .toolbar {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 25px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .toolbar input[type="file"] {
+            display: none;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .search-box {
+            flex: 1;
+            min-width: 200px;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .search-box:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            padding: 20px;
+            border-radius: 12px;
+            color: white;
+            text-align: center;
+        }
+
+        .stat-card:nth-child(2) {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+
+        .stat-card:nth-child(3) {
+            background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+        }
+
+        .stat-card h3 {
+            font-size: 14px;
+            opacity: 0.9;
+            margin-bottom: 10px;
+        }
+
+        .stat-card .value {
+            font-size: 32px;
+            font-weight: 700;
+        }
+
+        .category-filters {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 25px;
+            flex-wrap: wrap;
+        }
+
+        .category-tag {
+            padding: 8px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: white;
+            font-size: 14px;
+        }
+
+        .category-tag:hover {
+            border-color: #667eea;
+            color: #667eea;
+        }
+
+        .category-tag.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .file-grid {
+            margin-bottom: 30px;
+        }
+
+        /* 卡片式布局（图片类别使用）*/
+        .file-grid:not(:has(.file-list)) {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+        }
+
+        .file-card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            overflow: hidden;
+            transition: all 0.3s;
+            border: 2px solid transparent;
+        }
+
+        .file-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+            border-color: #667eea;
+        }
+
+        .file-icon-wrapper {
+            height: 150px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #667eea20 0%, #764ba220 100%);
+            font-size: 64px;
+        }
+
+        .file-info {
+            padding: 15px;
+        }
+
+        .file-card .filename {
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .file-card .description {
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 8px;
+            line-height: 1.4;
+            max-height: 40px;
+            overflow: hidden;
+        }
+
+        .file-card .tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-bottom: 12px;
+        }
+
+        .tag {
+            padding: 4px 10px;
+            background: #e3f2fd;
+            color: #1976d2;
+            font-size: 12px;
+            border-radius: 12px;
+        }
+
+        .file-card .meta {
+            font-size: 11px;
+            color: #999;
+            margin-bottom: 12px;
+        }
+
+        .file-card .actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .file-card .actions button {
+            flex: 1;
+            padding: 8px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+
+        .btn-download {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-download:hover {
+            background: #218838;
+        }
+
+        .btn-delete {
+            background: #ff4444;
+            color: white;
+        }
+
+        .btn-delete:hover {
+            background: #cc0000;
+        }
+
+        /* 列表布局样式 - 表格式 */
+        .file-list {
+            width: 100%;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            display: block !important; /* 覆盖父容器的grid */
+        }
+
+        /* 大屏幕：自动扩展填充空间 */
+        @media (min-width: 900px) {
+            .file-list {
+                overflow-x: auto; /* 内容过宽时允许滚动 */
+            }
+
+            .file-list-header {
+                display: grid;
+                grid-template-columns: 3fr 2fr 1fr 1.5fr 1.5fr;
+                gap: 20px;
+                padding: 14px 24px;
+                background: #f5f5f5;
+                border-bottom: 2px solid #e0e0e0;
+                font-size: 13px;
+                font-weight: 600;
+                color: #666;
+            }
+
+            .file-list-item {
+                display: grid;
+                grid-template-columns: 3fr 2fr 1fr 1.5fr 1.5fr;
+                gap: 20px;
+                align-items: center;
+                padding: 12px 24px;
+                transition: all 0.2s;
+                border-bottom: 1px solid #f0f0f0;
+            }
+        }
+
+        /* 中等屏幕：固定最小宽度，允许横向滚动 */
+        @media (max-width: 899px) and (min-width: 769px) {
+            .file-list {
+                overflow-x: auto;
+            }
+
+            .file-list-header {
+                display: grid;
+                grid-template-columns: minmax(180px, 2.5fr) minmax(140px, 1.3fr) minmax(70px, 0.7fr) minmax(110px, 1.1fr) minmax(130px, 1fr);
+                gap: 16px;
+                padding: 14px 24px;
+                background: #f5f5f5;
+                border-bottom: 2px solid #e0e0e0;
+                font-size: 13px;
+                font-weight: 600;
+                color: #666;
+                min-width: 630px;
+            }
+
+            .file-list-item {
+                display: grid;
+                grid-template-columns: minmax(180px, 2.5fr) minmax(140px, 1.3fr) minmax(70px, 0.7fr) minmax(110px, 1.1fr) minmax(130px, 1fr);
+                gap: 16px;
+                align-items: center;
+                padding: 12px 24px;
+                transition: all 0.2s;
+                border-bottom: 1px solid #f0f0f0;
+                min-width: 630px;
+            }
+        }
+
+        .file-list-item:hover {
+            background: #f8f9fa;
+        }
+
+        .file-list-item:last-child {
+            border-bottom: none;
+        }
+
+        .file-list-cell-name {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+        }
+
+        .file-list-icon {
+            font-size: 24px;
+            flex-shrink: 0;
+        }
+
+        .file-list-name {
+            font-size: 14px;
+            font-weight: 500;
+            color: #333;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .file-list-cell {
+            font-size: 13px;
+            color: #666;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .file-list-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        .file-list-actions button {
+            padding: 6px 14px;
+            font-size: 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        /* 移动端 */
+        @media (max-width: 768px) {
+            .file-list-header {
+                display: none;
+            }
+
+            .file-list-item {
+                grid-template-columns: 1fr;
+                gap: 8px;
+                padding: 15px;
+            }
+
+            .file-list-cell-name {
+                grid-column: 1;
+            }
+
+            .file-list-cell {
+                font-size: 12px;
+                padding-left: 40px;
+            }
+
+            .file-list-actions {
+                grid-column: 1;
+                justify-content: flex-start;
+                padding-left: 40px;
+            }
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+            grid-column: 1 / -1;
+        }
+
+        .empty-state svg {
+            width: 120px;
+            height: 120px;
+            margin-bottom: 20px;
+            opacity: 0.3;
+        }
+
+        .upload-preview {
+            display: none;
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 25px;
+            border: 2px dashed #667eea;
+        }
+
+        .upload-preview.active {
+            display: block;
+        }
+
+        .preview-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 10px;
+        }
+
+        .preview-item .icon {
+            font-size: 32px;
+        }
+
+        .preview-item .info {
+            flex: 1;
+        }
+
+        .preview-item .remove {
+            background: #ff4444;
+            color: white;
+            border: none;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+    <a href="/ai/" class="back-link">← 返回主页</a>
+
+    <div class="container">
+        <h1>📁 文件管理</h1>
+        <p class="subtitle">管理您的所有文件 - 支持文档、图片、音视频等多种格式</p>
+
+        <div class="stats">
+            <div class="stat-card">
+                <h3>📊 文件总数</h3>
+                <div class="value" id="totalFiles">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>💾 存储空间</h3>
+                <div class="value" id="totalSize">0 MB</div>
+            </div>
+            <div class="stat-card">
+                <h3>📅 今日上传</h3>
+                <div class="value" id="todayUploads">0</div>
+            </div>
+        </div>
+
+        <div class="toolbar">
+            <input type="file" id="fileUpload" multiple>
+            <button class="btn btn-primary" onclick="document.getElementById('fileUpload').click()">
+                ⬆️ 上传文件
+            </button>
+            <input type="text" id="searchKeyword" class="search-box" placeholder="搜索文件名或描述..." onkeypress="if(event.key==='Enter') searchFiles()">
+            <button class="btn btn-success" onclick="searchFiles()">🔍 搜索</button>
+        </div>
+
+        <div class="category-filters">
+            <div class="category-tag active" data-category="all" onclick="filterByCategory('all', event)">
+                📋 全部
+            </div>
+            <div class="category-tag" data-category="document" onclick="filterByCategory('document', event)">
+                📄 文档
+            </div>
+            <div class="category-tag" data-category="image" onclick="filterByCategory('image', event)">
+                🖼️ 图片
+            </div>
+            <div class="category-tag" data-category="video" onclick="filterByCategory('video', event)">
+                🎬 视频
+            </div>
+            <div class="category-tag" data-category="audio" onclick="filterByCategory('audio', event)">
+                🎵 音频
+            </div>
+            <div class="category-tag" data-category="archive" onclick="filterByCategory('archive', event)">
+                📦 压缩包
+            </div>
+            <div class="category-tag" data-category="other" onclick="filterByCategory('other', event)">
+                📎 其他
+            </div>
+        </div>
+
+        <div id="uploadPreview" class="upload-preview">
+            <h3>准备上传的文件</h3>
+            <div id="previewList"></div>
+            <div id="uploadProgress" style="display:none; margin:15px 0;">
+                <div style="margin-bottom:8px; color:#666; font-size:14px;">
+                    <span id="uploadStatus">正在上传...</span>
+                    <span id="uploadPercent" style="float:right; font-weight:600;">0%</span>
+                </div>
+                <div style="width:100%; height:24px; background:#e9ecef; border-radius:12px; overflow:hidden;">
+                    <div id="progressBar" style="width:0%; height:100%; background:linear-gradient(90deg, #4CAF50, #81C784); transition:width 0.3s ease;"></div>
+                </div>
+                <div style="margin-top:8px; font-size:12px; color:#999;">
+                    <span id="uploadedSize">0 MB</span> / <span id="totalSize">0 MB</span>
+                </div>
+            </div>
+            <input type="text" id="bulkDesc" placeholder="添加文件描述（可选）" style="width:100%; padding:10px; margin-bottom:10px; border:1px solid #ddd; border-radius:6px;">
+            <input type="text" id="bulkTags" placeholder="添加标签，用逗号分隔（可选）" style="width:100%; padding:10px; margin-bottom:10px; border:1px solid #ddd; border-radius:6px;">
+            <button class="btn btn-success" onclick="uploadFiles()" style="width:100%;">✅ 开始上传</button>
+        </div>
+
+        <div id="fileGrid" class="file-grid">
+            <div class="empty-state">正在加载文件...</div>
+        </div>
+    </div>
+
+    <script>
+        let selectedFiles = [];
+        let allFiles = [];
+        let currentCategory = 'all';
+
+        window.onload = function() {
+            loadAllFiles();
+            loadStats();
+        };
+
+        document.getElementById('fileUpload').addEventListener('change', function(e) {
+            selectedFiles = Array.from(e.target.files);
+            if (selectedFiles.length > 0) {
+                showUploadPreview();
+            }
+        });
+
+        function showUploadPreview() {
+            const preview = document.getElementById('uploadPreview');
+            const list = document.getElementById('previewList');
+
+            list.innerHTML = selectedFiles.map((file, index) => {
+                const icon = getFileIconByType(file.type);
+                const size = formatFileSize(file.size);
+                return `
+                    <div class="preview-item">
+                        <div class="icon">${icon}</div>
+                        <div class="info">
+                            <div style="font-weight:600;">${file.name}</div>
+                            <div style="font-size:12px; color:#666;">${size}</div>
+                        </div>
+                        <button class="remove" onclick="removeFile(${index})">×</button>
+                    </div>
+                `;
+            }).join('');
+
+            preview.classList.add('active');
+        }
+
+        function removeFile(index) {
+            selectedFiles.splice(index, 1);
+            if (selectedFiles.length === 0) {
+                document.getElementById('uploadPreview').classList.remove('active');
+            } else {
+                showUploadPreview();
+            }
+        }
+
+        async function uploadFiles() {
+            const description = document.getElementById('bulkDesc').value;
+            const tagsInput = document.getElementById('bulkTags').value;
+            const tags = tagsInput.split(',').map(t => t.trim()).filter(t => t);
+            const token = localStorage.getItem('token');
+
+            if (!token) {
+                alert('请先登录');
+                return;
+            }
+
+            // 显示进度条
+            const progressDiv = document.getElementById('uploadProgress');
+            const progressBar = document.getElementById('progressBar');
+            const uploadPercent = document.getElementById('uploadPercent');
+            const uploadStatus = document.getElementById('uploadStatus');
+            const uploadedSize = document.getElementById('uploadedSize');
+            const totalSize = document.getElementById('totalSize');
+
+            progressDiv.style.display = 'block';
+
+            // 计算总大小
+            const totalBytes = selectedFiles.reduce((sum, file) => sum + file.size, 0);
+            totalSize.textContent = (totalBytes / (1024 * 1024)).toFixed(2) + ' MB';
+
+            let uploadedBytes = 0;
+            let successCount = 0;
+
+            for (let i = 0; i < selectedFiles.length; i++) {
+                const file = selectedFiles[i];
+                uploadStatus.textContent = `正在上传: ${file.name} (${i + 1}/${selectedFiles.length})`;
+
+                try {
+                    await uploadSingleFile(file, description, tags, token, (loaded, total) => {
+                        // 更新进度 - 限制不超过当前文件大小
+                        const actualLoaded = Math.min(loaded, total);
+                        const currentTotal = uploadedBytes + actualLoaded;
+                        const percent = Math.min(100, Math.round((currentTotal / totalBytes) * 100));
+                        progressBar.style.width = percent + '%';
+                        uploadPercent.textContent = percent + '%';
+                        uploadedSize.textContent = (currentTotal / (1024 * 1024)).toFixed(2) + ' MB';
+                    });
+
+                    uploadedBytes += file.size;
+                    successCount++;
+                    console.log(`上传成功: ${file.name}`);
+                } catch (error) {
+                    console.error(`上传失败: ${file.name}`, error);
+                    alert(`上传失败: ${file.name}`);
+                }
+            }
+
+            // 上传完成
+            uploadStatus.textContent = `✅ 上传完成！成功 ${successCount}/${selectedFiles.length} 个文件`;
+            setTimeout(() => {
+                loadAllFiles();
+                loadStats();
+                document.getElementById('uploadPreview').classList.remove('active');
+                progressDiv.style.display = 'none';
+                progressBar.style.width = '0%';
+                selectedFiles = [];
+                document.getElementById('bulkDesc').value = '';
+                document.getElementById('bulkTags').value = '';
+            }, 2000);
+        }
+
+        function uploadSingleFile(file, description, tags, token, onProgress) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+
+                reader.onload = function(e) {
+                    const base64 = e.target.result.split(',')[1];
+                    const xhr = new XMLHttpRequest();
+
+                    xhr.upload.addEventListener('progress', (event) => {
+                        if (event.lengthComputable) {
+                            // 传递实际加载量和文件大小，让外部限制进度
+                            onProgress(event.loaded, file.size);
+                        }
+                    });
+
+                    xhr.addEventListener('load', () => {
+                        if (xhr.status === 200) {
+                            try {
+                                const result = JSON.parse(xhr.responseText);
+                                if (result.success) {
+                                    resolve(result);
+                                } else {
+                                    reject(new Error(result.message || '上传失败'));
+                                }
+                            } catch (e) {
+                                reject(e);
+                            }
+                        } else {
+                            reject(new Error(`HTTP ${xhr.status}`));
+                        }
+                    });
+
+                    xhr.addEventListener('error', () => reject(new Error('网络错误')));
+                    xhr.addEventListener('abort', () => reject(new Error('上传取消')));
+
+                    xhr.open('POST', '/ai/api/file/upload');
+                    xhr.setRequestHeader('Content-Type', 'application/json');
+                    xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+                    xhr.send(JSON.stringify({
+                        file_data: base64,
+                        original_name: file.name,
+                        mime_type: file.type,
+                        description: description,
+                        tags: tags
+                    }));
+                };
+
+                reader.onerror = () => reject(new Error('文件读取失败'));
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function loadAllFiles() {
+            try {
+                const token = localStorage.getItem('token');
+                const response = await fetch('/ai/api/files', {
+                    headers: token ? {'Authorization': 'Bearer ' + token} : {}
+                });
+                allFiles = await response.json();
+                displayFiles(allFiles);
+            } catch (error) {
+                console.error('加载文件失败:', error);
+                document.getElementById('fileGrid').innerHTML = '<div class="empty-state"><p>加载失败，请刷新重试</p></div>';
+            }
+        }
+
+        async function loadStats() {
+            try {
+                const token = localStorage.getItem('token');
+                const response = await fetch('/ai/api/file/stats', {
+                    headers: token ? {'Authorization': 'Bearer ' + token} : {}
+                });
+                const data = await response.json();
+                if (data.success && data.stats) {
+                    document.getElementById('totalFiles').textContent = data.stats.total_files || 0;
+                    document.getElementById('totalSize').textContent = (data.stats.total_size_mb || 0).toFixed(1) + ' MB';
+
+                    const today = new Date().toISOString().split('T')[0];
+                    const todayCount = allFiles.filter(f =>
+                        f.created_at && f.created_at.startsWith(today)
+                    ).length;
+                    document.getElementById('todayUploads').textContent = todayCount;
+                }
+            } catch (error) {
+                console.error('加载统计失败:', error);
+            }
+        }
+
+        async function searchFiles() {
+            const keyword = document.getElementById('searchKeyword').value;
+
+            if (!keyword) {
+                loadAllFiles();
+                return;
+            }
+
+            try {
+                const token = localStorage.getItem('token');
+                const response = await fetch('/ai/api/file/search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(token ? {'Authorization': 'Bearer ' + token} : {})
+                    },
+                    body: JSON.stringify({ keyword })
+                });
+                const data = await response.json();
+                displayFiles(data.results || data);
+            } catch (error) {
+                console.error('搜索失败:', error);
+            }
+        }
+
+        function filterByCategory(category, event) {
+            currentCategory = category;
+
+            document.querySelectorAll('.category-tag').forEach(tag => {
+                tag.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            if (category === 'all') {
+                displayFiles(allFiles);
+            } else {
+                const filtered = allFiles.filter(f => f.category === category);
+                displayFiles(filtered);
+            }
+        }
+
+        function displayFiles(files) {
+            const grid = document.getElementById('fileGrid');
+
+            if (!files || files.length === 0) {
+                grid.innerHTML = `
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+                        </svg>
+                        <h3>暂无文件</h3>
+                        <p>点击上方按钮上传文件</p>
+                    </div>
+                `;
+                return;
+            }
+
+            // 图片类别使用网格布局，其他使用列表布局
+            const isImageCategory = currentCategory === 'image';
+
+            if (isImageCategory) {
+                // 网格布局 - 显示图片预览
+                grid.innerHTML = files.map(file => {
+                    const tagsHtml = (file.tags && Array.isArray(file.tags)) ?
+                        file.tags.map(tag => `<span class="tag">${tag}</span>`).join('') : '';
+                    const fileSize = formatFileSize(file.file_size || 0);
+                    const uploadTime = file.created_at || '未知时间';
+                    const imagePath = file.file_path.startsWith('/') ? '/ai' + file.file_path : '/ai/' + file.file_path;
+
+                    return `
+                        <div class="file-card">
+                            <div class="file-icon-wrapper">
+                                <img src="${imagePath}" alt="${file.original_name}" style="width:100%; height:100%; object-fit:cover; border-radius:8px;">
+                            </div>
+                            <div class="file-info">
+                                <div class="filename" title="${file.original_name}">
+                                    ${file.original_name}
+                                </div>
+                                ${file.description ? `<div class="description">${file.description}</div>` : ''}
+                                ${tagsHtml ? `<div class="tags">${tagsHtml}</div>` : ''}
+                                <div class="meta">
+                                    📅 ${uploadTime.split(' ')[0]} | 💾 ${fileSize} | 📥 ${file.download_count || 0}次
+                                </div>
+                                <div class="actions">
+                                    <button class="btn-download" onclick="downloadFile(${file.id}, '${file.original_name}')">📥 下载</button>
+                                    <button class="btn-delete" onclick="deleteFile(${file.id})">🗑️ 删除</button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                // 列表布局 - 表格式显示
+                grid.innerHTML = `
+                    <div class="file-list">
+                        <div class="file-list-header">
+                            <div>文件名</div>
+                            <div>修改日期</div>
+                            <div>大小</div>
+                            <div>类型</div>
+                            <div>操作</div>
+                        </div>
+                        ${files.map(file => {
+                            const icon = getFileIcon(file.category, file.mime_type);
+                            const fileSize = formatFileSize(file.file_size || 0);
+                            const fileType = getFileTypeLabel(file.mime_type, file.original_name);
+                            const uploadFullTime = file.created_at || '未知时间';
+
+                            return `
+                                <div class="file-list-item">
+                                    <div class="file-list-cell-name">
+                                        <div class="file-list-icon">${icon}</div>
+                                        <div class="file-list-name" title="${file.original_name}">${file.original_name}</div>
+                                    </div>
+                                    <div class="file-list-cell">${uploadFullTime}</div>
+                                    <div class="file-list-cell">${fileSize}</div>
+                                    <div class="file-list-cell" title="${fileType}">${fileType}</div>
+                                    <div class="file-list-actions">
+                                        <button class="btn-download" onclick="downloadFile(${file.id}, '${file.original_name}')">下载</button>
+                                        <button class="btn-delete" onclick="deleteFile(${file.id})">删除</button>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                `;
+            }
+        }
+
+        function downloadFile(id, filename) {
+            const token = localStorage.getItem('token');
+            const link = document.createElement('a');
+            link.href = `/api/file/${id}/download`;
+            if (token) {
+                link.href += '?token=' + token;
+            }
+            link.download = filename;
+            link.click();
+        }
+
+        async function deleteFile(id) {
+            if (!confirm('确定要删除这个文件吗？')) return;
+
+            try {
+                const token = localStorage.getItem('token');
+                const response = await fetch('/ai/api/file/delete', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(token ? {'Authorization': 'Bearer ' + token} : {})
+                    },
+                    body: JSON.stringify({ id })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    loadAllFiles();
+                    loadStats();
+                } else {
+                    alert('删除失败：' + result.message);
+                }
+            } catch (error) {
+                console.error('删除失败:', error);
+                alert('删除失败，请重试');
+            }
+        }
+
+        function getFileIcon(category, mimeType) {
+            const iconMap = {
+                'document': '📄',
+                'image': '🖼️',
+                'video': '🎬',
+                'audio': '🎵',
+                'archive': '📦',
+                'other': '📎'
+            };
+            return iconMap[category] || '📎';
+        }
+
+        function getFileTypeLabel(mimeType, filename) {
+            // 从文件名获取扩展名
+            const ext = filename ? ('.' + filename.split('.').pop().toLowerCase()) : '';
+
+            // MIME类型到文件类型描述的映射
+            const typeMap = {
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document': `Microsoft Word ${ext}`,
+                'application/msword': `Microsoft Word ${ext}`,
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': `Microsoft Excel ${ext}`,
+                'application/vnd.ms-excel': `Microsoft Excel ${ext}`,
+                'application/vnd.openxmlformats-officedocument.presentationml.presentation': `Microsoft PowerPoint ${ext}`,
+                'application/vnd.ms-powerpoint': `Microsoft PowerPoint ${ext}`,
+                'application/pdf': `PDF文档 ${ext}`,
+                'text/plain': `文本文件 ${ext}`,
+                'text/csv': `CSV文件 ${ext}`,
+                'image/jpeg': `JPEG图片 ${ext}`,
+                'image/png': `PNG图片 ${ext}`,
+                'image/gif': `GIF图片 ${ext}`,
+                'image/bmp': `BMP图片 ${ext}`,
+                'image/webp': `WebP图片 ${ext}`,
+                'video/mp4': `MP4视频 ${ext}`,
+                'video/mpeg': `MPEG视频 ${ext}`,
+                'video/quicktime': `MOV视频 ${ext}`,
+                'video/x-msvideo': `AVI视频 ${ext}`,
+                'audio/mpeg': `MP3音频 ${ext}`,
+                'audio/wav': `WAV音频 ${ext}`,
+                'audio/ogg': `OGG音频 ${ext}`,
+                'application/zip': `ZIP压缩包 ${ext}`,
+                'application/x-rar-compressed': `RAR压缩包 ${ext}`,
+                'application/x-7z-compressed': `7Z压缩包 ${ext}`,
+                'application/gzip': `GZIP压缩包 ${ext}`,
+                'application/json': `JSON文件 ${ext}`,
+                'application/xml': `XML文件 ${ext}`,
+                'text/html': `HTML文件 ${ext}`,
+                'text/css': `CSS文件 ${ext}`,
+                'text/javascript': `JavaScript ${ext}`,
+                'application/javascript': `JavaScript ${ext}`
+            };
+
+            // 如果有精确的MIME类型映射，使用它
+            if (mimeType && typeMap[mimeType]) {
+                return typeMap[mimeType];
+            }
+
+            // 否则根据MIME类型分类
+            if (mimeType) {
+                if (mimeType.startsWith('image/')) return `图片文件 ${ext}`;
+                if (mimeType.startsWith('video/')) return `视频文件 ${ext}`;
+                if (mimeType.startsWith('audio/')) return `音频文件 ${ext}`;
+                if (mimeType.startsWith('text/')) return `文本文件 ${ext}`;
+            }
+
+            // 最后使用扩展名
+            return ext ? `${ext.toUpperCase().substring(1)}文件` : '未知类型';
+        }
+
+        function getFileIconByType(mimeType) {
+            if (mimeType.startsWith('image/')) return '🖼️';
+            if (mimeType.startsWith('video/')) return '🎬';
+            if (mimeType.startsWith('audio/')) return '🎵';
+            if (mimeType.includes('pdf')) return '📄';
+            if (mimeType.includes('word') || mimeType.includes('document')) return '📝';
+            if (mimeType.includes('excel') || mimeType.includes('sheet')) return '📊';
+            if (mimeType.includes('powerpoint') || mimeType.includes('presentation')) return '📽️';
+            if (mimeType.includes('zip') || mimeType.includes('rar') || mimeType.includes('7z')) return '📦';
+            return '📎';
+        }
+
+        function formatFileSize(bytes) {
+            if (!bytes) return '0 B';
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+            return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+        }
+    </script>
+</body>
+</html>'''
+
     def get_login_template(self):
         """获取登录页面模板"""
         return '''<!DOCTYPE html>
@@ -1039,6 +2554,37 @@ class AssistantHandler(BaseHTTPRequestHandler):
             padding: 20px;
             color: #999;
             font-size: 12px;
+        }
+
+        /* 加载动画样式 */
+        .loading-dots {
+            display: inline-block;
+        }
+
+        .loading-dots span {
+            animation: blink 1.4s infinite;
+            animation-fill-mode: both;
+        }
+
+        .loading-dots span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .loading-dots span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        .loading-dots span:nth-child(4) {
+            animation-delay: 0.6s;
+        }
+
+        @keyframes blink {
+            0%, 80%, 100% {
+                opacity: 0;
+            }
+            40% {
+                opacity: 1;
+            }
         }
     </style>
 </head>
@@ -1558,8 +3104,8 @@ class AssistantHandler(BaseHTTPRequestHandler):
         .welcome-message {
             display: flex;
             justify-content: center;
-            align-items: center;
-            padding: 100px 40px;
+            align-items: flex-start;
+            padding: 60px 40px 40px 40px;
             color: rgba(255, 255, 255, 0.9);
         }
         
@@ -1718,12 +3264,35 @@ class AssistantHandler(BaseHTTPRequestHandler):
             display: flex;
             align-items: center;
             justify-content: center;
-            background: #fff;
+            background: linear-gradient(135deg, #6BB6FF 0%, #4A9FE5 50%, #3B8ED0 100%);
+            border: none;
+            box-shadow: 0 4px 8px rgba(59, 142, 208, 0.4),
+                        inset 0 1px 2px rgba(255, 255, 255, 0.5),
+                        inset 0 -2px 4px rgba(0, 0, 0, 0.2);
             flex-shrink: 0;
+            cursor: pointer;
+            transition: all 0.3s ease;
         }
-        
+
         .send-button:hover {
-            background: #f0f0f0;
+            background: linear-gradient(135deg, #7DC5FF 0%, #5AAEF0 50%, #4A9FE5 100%);
+            box-shadow: 0 6px 12px rgba(59, 142, 208, 0.5),
+                        inset 0 1px 2px rgba(255, 255, 255, 0.6),
+                        inset 0 -2px 4px rgba(0, 0, 0, 0.15);
+            transform: translateY(-1px);
+        }
+
+        .send-button:active {
+            transform: translateY(1px);
+            box-shadow: 0 2px 4px rgba(59, 142, 208, 0.3),
+                        inset 0 1px 2px rgba(255, 255, 255, 0.4),
+                        inset 0 -1px 2px rgba(0, 0, 0, 0.3);
+        }
+
+        .send-button span {
+            color: #ffffff;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+            font-weight: bold;
         }
         
         .card {
@@ -2281,11 +3850,10 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
             /* 移动端欢迎消息居中 */
             .welcome-message {
-                min-height: calc(100vh - 56px - 120px);
                 display: flex;
                 justify-content: center;
-                align-items: center;
-                padding: 20px;
+                align-items: flex-start;
+                padding: 60px 20px 20px 20px;
             }
 
             .welcome-message p {
@@ -2331,7 +3899,122 @@ class AssistantHandler(BaseHTTPRequestHandler):
             text-align: right;
             opacity: 0.7;
         }
+
+        /* 强制注入：手机端极致体验版 v6 (顶部锚定 - 解决推顶问题) */
+        @media (max-width: 768px) {
+            /* 1. 锁死 Body，禁止页面级滚动 */
+            html, body { 
+                height: 100% !important; 
+                width: 100% !important; 
+                margin: 0 !important; 
+                padding: 0 !important; 
+                overflow: hidden !important; 
+                background: #f7f7f8 !important; 
+                color: #1a1a1a !important; 
+                position: fixed !important; /* iOS 防抖动核心 */
+            }
+            
+            /* 2. 顶部导航 - 永远钉在最上面 */
+            .header { 
+                position: fixed !important;
+                top: 0 !important;
+                left: 0 !important;
+                right: 0 !important;
+                height: 50px !important; 
+                background: #fff !important; 
+                border-bottom: 1px solid #e5e5e5 !important; 
+                display: flex !important; 
+                align-items: center !important; 
+                justify-content: center !important; 
+                z-index: 1000 !important; 
+                color: #000 !important;
+            }
+            
+            /* 3. 聊天滚动区 - 钉在顶部，延伸到底部 */
+            #chat-view, .chat-container, #aiChatBox { 
+                display: block !important;
+                position: fixed !important; /* 固定定位，不随页面滚动 */
+                top: 50px !important;       /* 从标题栏下方开始 */
+                bottom: 0 !important;       /* 一直延伸到屏幕底 */
+                left: 0 !important;
+                right: 0 !important;
+                width: 100% !important;
+                height: auto !important;
+                
+                /* 关键：内部滚动 */
+                overflow-y: scroll !important; 
+                -webkit-overflow-scrolling: touch !important; 
+                
+                /* 关键：顶部留出约20行空间(520px)，底部留出空间 */
+                padding: 520px 12px 100px 12px !important; 
+                
+                background: #f7f7f8 !important; 
+                z-index: 10 !important;
+            }
+            
+            /* 4. 底部输入区 - 消除间距，紧贴键盘 */
+            .input-area, .input-container { 
+                position: fixed !important; 
+                bottom: 0 !important; 
+                left: 0 !important; 
+                right: 0 !important;
+                width: 100% !important;
+                background: #fff !important; 
+                border-top: 1px solid #dadce0 !important; 
+                
+                /* 关键修改：移除底部 padding，消除与键盘辅助栏的间隙 */
+                padding: 10px 12px 10px 12px !important; 
+                
+                display: flex !important; 
+                align-items: center !important; 
+                gap: 8px !important; 
+                z-index: 2000 !important; 
+                min-height: 60px !important; 
+            }
+            
+            .input-area input, .input-container textarea { 
+                flex: 1 !important; 
+                height: 38px !important; 
+                border: 1px solid #ddd !important; 
+                background: #f0f2f5 !important; 
+                border-radius: 19px !important; 
+                padding: 0 16px !important; 
+                font-size: 16px !important; 
+                color: #000 !important; 
+                margin: 0 !important;
+                appearance: none !important;
+                
+                /* 尝试隐藏辅助栏的组合拳 */
+                autocomplete: off !important;
+                autocorrect: off !important;
+                spellcheck: false !important;
+            }
+
+            .input-area button {
+                background: #10a37f !important;
+                color: white !important;
+                border: none !important;
+                border-radius: 20px !important;
+                padding: 0 20px !important;
+                height: 38px !important;
+                font-weight: 600 !important;
+                min-width: 60px !important;
+            }
+            
+            /* 5. 样式修复 */
+            .sidebar { display: none !important; }
+            .message { display: flex !important; width: 100% !important; margin-bottom: 16px !important; color: #1a1a1a !important; }
+            .message.user { flex-direction: row-reverse !important; }
+            .message.user .message-content, .message.user .message-bubble { background: #10a37f !important; color: white !important; margin-right: 0 !important; margin-left: auto !important; border-bottom-right-radius: 4px !important; }
+            .message.assistant { flex-direction: row !important; }
+            .message.assistant .message-content, .message.assistant .message-bubble { background: #fff !important; color: #333 !important; margin-left: 0 !important; margin-right: auto !important; border: 1px solid #e5e5e5 !important; border-bottom-left-radius: 4px !important; }
+            
+            /* 6. 隐藏多余元素 */
+            .main-content > header { display: none !important; }
+            .welcome-message h3, .welcome-message p { color: #333 !important; }
+        }
     </style>
+    <link rel="stylesheet" href="/mobile_ui_patch.css?v=1.6">
 </head>
 <body>
     <!-- 手机端顶部栏 -->
@@ -2364,7 +4047,10 @@ class AssistantHandler(BaseHTTPRequestHandler):
             <div class="drawer-item" onclick="showImages(); closeMobileMenu();">
                 <span style="margin-right: 12px; font-size: 18px;">🖼️</span>图片管理
             </div>
-            
+            <div class="drawer-item" onclick="window.open('/ai/file-manager', '_blank'); closeMobileMenu();">
+                <span style="margin-right: 12px; font-size: 18px;">📁</span>文件管理
+            </div>
+
             <div class="drawer-divider"></div>
             
             <div class="drawer-item" style="cursor: default;">
@@ -2398,7 +4084,8 @@ class AssistantHandler(BaseHTTPRequestHandler):
             ✏️
         </button>
         <div class="sidebar-icon" onclick="openWorkPlans()" title="工作计划" style="margin-bottom:20px;">📋</div>
-        <div class="sidebar-icon" onclick="window.open('/image-gallery', '_blank')" title="图片管理（新窗口）" style="margin-bottom:20px;">🖼️</div>
+        <div class="sidebar-icon" onclick="window.open('/ai/image-gallery', '_blank')" title="图片管理（新窗口）" style="margin-bottom:20px;">🖼️</div>
+        <div class="sidebar-icon" onclick="window.open('/ai/file-manager', '_blank')" title="文件管理（新窗口）" style="margin-bottom:20px;">📁</div>
         <div class="sidebar-icon" onclick="openSettings()" title="设置" style="margin-top: auto; margin-bottom:20px;">⚙️</div>
         <div class="sidebar-icon" onclick="toggleUserPanel()" title="用户菜单" style="margin-top: 0; cursor: pointer; padding:0; overflow:hidden;" id="userAvatarIcon">
             <img id="sidebarUserAvatar" src="" alt="头像" style="width:100%; height:100%; object-fit:cover; display:none;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
@@ -2437,12 +4124,11 @@ class AssistantHandler(BaseHTTPRequestHandler):
                         <!-- 输入区域 -->
                         <div class="input-container">
                             <div class="input-wrapper">
-                                <span class="input-icon" onclick="triggerImageUpload()" title="上传图片（支持多选）">📎</span>
-                                <span class="input-icon" id="voiceBtn" onclick="toggleVoiceInput()" title="语音输入" style="margin-left: 8px;">🎤</span>
                                 <input type="file" id="imageUpload" accept="image/*" multiple style="display:none" onchange="handleImageSelect(event)">
-                                <textarea id="aiInput" rows="1" placeholder="How can I help you?" onkeydown="handleAIKeyPress(event)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="text" data-form-type="other"></textarea>
+                                <input type="file" id="fileUpload" style="display:none" onchange="handleFileSelect(event)">
+                                <textarea id="aiInput" rows="1" placeholder="How can I help you?" onkeydown="handleAIKeyPress(event)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="search" name="chat_input" data-form-type="other"></textarea>
                                 <button class="send-button" onclick="sendAI()">
-                                    <span style="font-size: 20px;">🎙️</span>
+                                    <span style="font-size: 24px;">▶</span>
                                 </button>
                             </div>        
                 <!-- 图片预览区域 -->
@@ -2458,6 +4144,19 @@ class AssistantHandler(BaseHTTPRequestHandler):
                         </button>
             </div>
             </div>
+                <!-- 文件预览区域 -->
+                <div id="filePreviewContainer" style="display:none; margin-top:10px; background:rgba(64,64,64,0.6); padding:10px; border-radius:8px;">
+                    <div style="display:flex; align-items:center; justify-content:space-between;">
+                        <div style="display:flex; align-items:center;">
+                            <span style="font-size:24px; margin-right:10px;">📄</span>
+                            <div>
+                                <div id="fileName" style="font-weight:bold; color:#fff;">filename.pdf</div>
+                                <div id="fileSize" style="font-size:12px; color:#aaa;">1.2 MB</div>
+                            </div>
+                        </div>
+                        <span onclick="clearFileSelection()" style="cursor:pointer; color:#ff4444; font-weight:bold;">✕</span>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -2992,7 +4691,31 @@ class AssistantHandler(BaseHTTPRequestHandler):
             localStorage.setItem('chatInputHistory', JSON.stringify(inputHistory));
             historyIndex = -1; // 重置索引
         }
-        
+
+        // 自动调整textarea高度（最多4行）
+        function autoResizeTextarea(textarea) {
+            if (!textarea) return;
+
+            // 重置高度以获取正确的scrollHeight
+            textarea.style.height = 'auto';
+
+            // 计算新高度，限制最大高度为120px（约4行）
+            const maxHeight = 120;
+            const minHeight = 36;
+            let newHeight = textarea.scrollHeight;
+
+            if (newHeight < minHeight) {
+                newHeight = minHeight;
+            } else if (newHeight > maxHeight) {
+                newHeight = maxHeight;
+                textarea.style.overflowY = 'auto';
+            } else {
+                textarea.style.overflowY = 'hidden';
+            }
+
+            textarea.style.height = newHeight + 'px';
+        }
+
         // AI助手 - 处理按键
         function handleAIKeyPress(event) {
             const input = event.target;
@@ -3016,15 +4739,17 @@ class AssistantHandler(BaseHTTPRequestHandler):
                             historyIndex = inputHistory.length - 1;
                             event.preventDefault(); // 阻止光标移动
                             input.value = inputHistory[historyIndex];
+                            autoResizeTextarea(input); // 调整高度
                         }
                     } else if (historyIndex > 0) {
                         historyIndex--;
                         event.preventDefault();
                         input.value = inputHistory[historyIndex];
+                        autoResizeTextarea(input); // 调整高度
                     }
                 }
             }
-            
+
             // 下键：查看下一条历史
             if (event.key === 'ArrowDown') {
                 // 只有当光标在末尾时才触发
@@ -3034,10 +4759,12 @@ class AssistantHandler(BaseHTTPRequestHandler):
                         if (historyIndex < inputHistory.length - 1) {
                             historyIndex++;
                             input.value = inputHistory[historyIndex];
+                            autoResizeTextarea(input); // 调整高度
                         } else {
                             // 回到最新草稿
                             historyIndex = -1;
                             input.value = currentDraft;
+                            autoResizeTextarea(input); // 调整高度
                         }
                     }
                 }
@@ -3046,7 +4773,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
         
         // AI助手
             
-        function appendAI(role, text, timestamp = null) {
+        function appendAI(role, text, timestamp = null, fileInfo = null) {
             const box = document.getElementById('aiChatBox');
             
             // 移除欢迎消息
@@ -3131,6 +4858,28 @@ class AssistantHandler(BaseHTTPRequestHandler):
             timeDiv.textContent = timeStr;
             
             content.appendChild(textDiv);
+
+            // 新增：如果有文件，显示文件卡片
+            if (fileInfo) {
+                const fileCard = document.createElement('div');
+                fileCard.style.cssText = 'margin-top: 8px; background: rgba(0,0,0,0.05); padding: 8px; border-radius: 6px; display: flex; align-items: center; cursor: pointer; border: 1px solid rgba(0,0,0,0.1);';
+                // 使用 /ai/ 前缀以适配 Nginx 路由
+                const fileName = fileInfo.filename || fileInfo.name;
+                const filePath = `/ai/uploads/files/${fileName}`;
+                
+                fileCard.onclick = () => window.open(filePath, '_blank');
+                
+                fileCard.innerHTML = `
+                    <span style="font-size: 20px; margin-right: 8px;">📄</span>
+                    <div style="flex: 1; overflow: hidden;">
+                        <div style="font-weight: 500; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${fileInfo.name || fileInfo.original_name}</div>
+                        <div style="font-size: 11px; color: #666;">${formatFileSize(fileInfo.size || fileInfo.file_size)}</div>
+                    </div>
+                    <span style="font-size: 14px; color: #4A90E2;">⬇️</span>
+                `;
+                content.appendChild(fileCard);
+            }
+
             content.appendChild(timeDiv);
             
             messageDiv.appendChild(avatar);
@@ -3405,6 +5154,12 @@ class AssistantHandler(BaseHTTPRequestHandler):
                         <h3>✨ 新对话已开始</h3>
                     </div>
                 `;
+
+                // 清空聊天历史列表，不再加载
+                const chatList = document.getElementById('chatList');
+                if (chatList) {
+                    chatList.innerHTML = '<p style="text-align:center; color:#999; padding:20px;">新对话模式 - 历史记录已隐藏</p>';
+                }
             } catch(e) {
                 alert('操作失败：' + e);
             }
@@ -3719,6 +5474,74 @@ class AssistantHandler(BaseHTTPRequestHandler):
         let selectedImages = []; // 改为数组以支持多张图片
         let selectedImageData = null;
         
+        let currentFileId = null;
+
+        function triggerFileUpload() {
+            document.getElementById('fileUpload').click();
+        }
+
+        async function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            // 显示上传中
+            document.getElementById('filePreviewContainer').style.display = 'block';
+            document.getElementById('fileName').textContent = '正在上传: ' + file.name;
+            document.getElementById('fileSize').textContent = formatFileSize(file.size);
+
+            // 读取文件并上传
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                const base64Data = e.target.result;
+                
+                try {
+                    const response = await fetch('/ai/api/file/upload', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + localStorage.getItem('token')
+                        },
+                        body: JSON.stringify({
+                            file_data: base64Data,
+                            original_name: file.name,
+                            mime_type: file.type,
+                            file_size: file.size
+                        })
+                    });
+                    
+                    const result = await response.json();
+                    if (result.success) {
+                        currentFileId = result.file.id;
+                        document.getElementById('fileName').textContent = result.file.original_name;
+                        // 上传成功，不需要其他操作，只需保留currentFileId
+                    } else {
+                        alert('上传失败: ' + result.message);
+                        clearFileSelection();
+                    }
+                } catch (error) {
+                    alert('上传出错: ' + error);
+                    clearFileSelection();
+                }
+            };
+            reader.readAsDataURL(file);
+            
+            // 清空 input，允许重复选择同一文件
+            document.getElementById('fileUpload').value = '';
+        }
+
+        function clearFileSelection() {
+            currentFileId = null;
+            document.getElementById('filePreviewContainer').style.display = 'none';
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
         function triggerImageUpload() {
             document.getElementById('imageUpload').click();
         }
@@ -3912,105 +5735,106 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 alert('❌ 上传失败，请重试');
             }
         }
-        
-        // 修改原有的sendAI函数以支持图片上传
-        async function sendAI() {
-            const input = document.getElementById('aiInput');
-            const msg = input.value.trim();
-            
-            // 如果有选中的图片，先上传
-            let uploadedImage = null;
-            if (selectedImages.length > 0) {
-                uploadedImage = await uploadCurrentImage();
-                if (uploadedImage) {
-                    // 在聊天框中显示图片
-                    appendImageToChat(uploadedImage);
-                }
-            }
-            
-            if (!msg && !uploadedImage) return;
-            
-            if (msg) {
-                appendAI('user', msg);
-                saveInputHistory(msg);
-                input.value = '';
-                // 重置草稿
-                currentDraft = '';
-            }
-            
+
+        // 显示加载动画
+        function showLoading() {
             const box = document.getElementById('aiChatBox');
-            const welcome = box.querySelector('.welcome-message');
-            if (welcome) welcome.remove();
-            
-            if (!msg) return;  // 如果只上传图片，不发送AI请求
-            
-            const loading = document.createElement('div');
-            loading.id = 'loading';
-            loading.className = 'message assistant';
-            loading.innerHTML = `
-                <div style="padding: 16px 20px; border-radius: 20px; background: rgba(255, 255, 255, 0.9); color: #1a1a1a; max-width: 70%; border-bottom-left-radius: 4px;">
-                    <span style="font-size: 1.5em; letter-spacing: 2px;">...</span>
+            const loadingId = 'loading-' + Date.now();
+            const loadingDiv = document.createElement('div');
+            loadingDiv.id = loadingId;
+            loadingDiv.className = 'message assistant';
+            loadingDiv.innerHTML = `
+                <div class="ai-message">
+                    <span class="loading-dots">正在思考<span>.</span><span>.</span><span>.</span></span>
                 </div>
             `;
-            box.appendChild(loading);
+            box.appendChild(loadingDiv);
             box.scrollTop = box.scrollHeight;
-            
-            try {
-                const token = localStorage.getItem('token');
-                const headers = {
-                    'Content-Type': 'application/json'
-                };
-                if (token) {
-                    headers['Authorization'] = 'Bearer ' + token;
-                }
+            return loadingId;
+        }
 
+        // 移除加载动画
+        function removeLoading(loadingId) {
+            const loadingEl = document.getElementById(loadingId);
+            if (loadingEl) {
+                loadingEl.remove();
+            }
+        }
+
+        async function sendAI() {
+            const input = document.getElementById('aiInput');
+            const message = input.value.trim();
+            const originalText = message; // 保存原始文本用于乐观更新
+            
+            if (!message && !currentFileId) return; // 如果没有消息也没有文件，则不发送
+
+            // 清空输入
+            input.value = '';
+            autoResizeTextarea(input); // 重置高度
+
+            // 乐观更新：立即显示用户消息
+            let fileInfo = null;
+            if (currentFileId) {
+                const fileName = document.getElementById('fileName').textContent;
+                const fileSize = document.getElementById('fileSize').textContent;
+                // 模拟 fileInfo 对象用于预览
+                fileInfo = {
+                    name: fileName.replace('正在上传: ', ''),
+                    size: 0 // 实际上formatFileSize返回的是字符串，这里appendAI里再次格式化可能会有问题，但appendAI处理了
+                };
+                // appendAI 里 formatFileSize 需要数字，或者我们直接在 innerHTML 里处理
+                // 简单起见，我们传给 appendAI 的 fileInfo.size 如果是字符串，formatFileSize 可能返回 NaN
+                // 让我们直接修改 appendAI 让他支持字符串 size (如果已经是格式化好的)
+                // 或者在这里不做太复杂，直接显示文件名
+            }
+            
+            appendAI('user', originalText, null, fileInfo); 
+            
+            // 显示加载状态
+            const loadingId = showLoading();
+
+            try {
                 const resp = await fetch('/api/ai/chat', {
                     method: 'POST',
-                    headers: headers,
-                    body: JSON.stringify({message: msg})
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + localStorage.getItem('token')
+                    },
+                    body: JSON.stringify({ 
+                        message: message,
+                        file_id: currentFileId // 传递文件ID
+                    })
                 });
 
-                // 检查响应状态
-                if (!resp.ok) {
-                    const text = await resp.text();
-                    throw new Error(`HTTP ${resp.status}: ${text}`);
-                }
-
-                // 检查是否是JSON响应
-                const contentType = resp.headers.get('content-type');
-                if (!contentType || !contentType.includes('application/json')) {
-                    const text = await resp.text();
-                    console.error('非JSON响应:', text);
-                    throw new Error('服务器返回了非JSON响应，可能需要重新登录');
+                // 发送后清空文件选择
+                if (currentFileId) {
+                    clearFileSelection();
                 }
 
                 const data = await resp.json();
-                loading.remove();
-
-                // 检查响应中是否有错误
-                if (!data.success && data.message) {
-                    throw new Error(data.message);
+                removeLoading(loadingId);
+                
+                if (data.response) {
+                    appendAI('assistant', data.response);
                 }
-
-                appendAI('assistant', data.response || data.message);
-
-                // 处理识别到的计划
+                
+                // 处理识别到的计划（如果有）
                 if (data.detected_plans && data.detected_plans.length > 0) {
-                    displayDetectedPlans(data.detected_plans);
+                    data.detected_plans.forEach(plan => {
+                        showPlanConfirmation(plan);
+                    });
                 }
-            } catch(e) {
-                loading.remove();
-                console.error('AI请求错误:', e);
-                appendAI('assistant', '❌ 请求失败：' + e.message);
 
-                // 如果是认证错误，提示用户重新登录
-                if (e.message.includes('登录') || e.message.includes('401')) {
-                    setTimeout(() => {
-                        if (confirm('会话已过期，是否重新登录？')) {
-                            window.location.href = '/ai/login';
-                        }
-                    }, 1000);
+                // 处理识别到的提醒
+                if (data.detected_reminders && data.detected_reminders.length > 0) {
+                    // 刷新提醒列表
+                    loadReminders();
                 }
+
+            } catch (error) {
+                removeLoading(loadingId);
+                appendAI('assistant', '⚠️ 抱歉，发生了错误，请稍后重试。');
+                console.error('Chat error:', error);
             }
         }
         
@@ -4332,7 +6156,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                         // ✅ Token有效，显示用户信息和聊天界面
                         showUserInfo(username || data.username);
                         // 加载历史记录
-                        loadChatHistory();
+                        // loadChatHistory(); // 已禁用自动加载历史记录
                     } else {
                         // ❌ Token无效，清除数据并重定向到登录页
                         clearLoginData();
@@ -4781,7 +6605,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                             timeStr = date.toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'});
                         }
                         
-                        appendAI(msg.role, msg.content, timeStr);
+                        appendAI(msg.role, msg.content, timeStr, msg.file_info);
                     });
                     
                     // 滚动到底部
@@ -4792,6 +6616,153 @@ class AssistantHandler(BaseHTTPRequestHandler):
             } catch (e) {
                 console.error('加载历史记录失败:', e);
             }
+        }
+
+        // ==================== 提醒通知系统 ====================
+
+        /**
+         * 检查到期的提醒并显示通知
+         */
+        async function checkDueReminders() {
+            try {
+                const token = localStorage.getItem('token');
+                if (!token) {
+                    console.log('[提醒检查] Token不存在，跳过');
+                    return;
+                }
+
+                const response = await fetch('/api/reminders/check', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (!response.ok) {
+                    console.log('[提醒检查] API响应失败:', response.status);
+                    return;
+                }
+
+                const data = await response.json();
+                console.log('[提醒检查] API返回:', data);
+
+                if (data.success && data.reminders && data.reminders.length > 0) {
+                    console.log(`[提醒检查] 找到${data.reminders.length}条到期提醒`);
+                    // 显示所有到期的提醒
+                    data.reminders.forEach((reminder, index) => {
+                        console.log(`[提醒检查] 显示第${index + 1}条:`, reminder);
+                        showReminderNotification(reminder);
+                    });
+                }
+            } catch (e) {
+                console.error('[提醒检查] 异常:', e);
+            }
+        }
+
+        /**
+         * 显示提醒通知（优先使用Electron原生通知）
+         */
+        function showReminderNotification(reminder) {
+            const title = '📢 任务提醒';
+            const body = reminder.content;
+
+            // 1. 优先使用Electron原生通知（如果在Electron环境中）
+            if (window.electronAPI && window.electronAPI.showNotification) {
+                console.log('使用Electron原生通知:', title, body);
+                window.electronAPI.showNotification(title, body, false);
+                return;
+            }
+
+            // 2. 降级到Web Notification API
+            if ('Notification' in window) {
+                if (Notification.permission === 'granted') {
+                    try {
+                        const notification = new Notification(title, {
+                            body: body,
+                            icon: '/favicon.ico',
+                            tag: `reminder-${reminder.id}`,
+                            requireInteraction: true // 需要用户主动关闭
+                        });
+
+                        // 点击通知时聚焦窗口
+                        notification.onclick = () => {
+                            window.focus();
+                            notification.close();
+                        };
+
+                        console.log('✅ Web通知已显示:', body);
+                    } catch (e) {
+                        console.error('Web通知显示失败:', e);
+                        // 降级到页面内通知
+                        showInPageAlert(title, body);
+                    }
+                } else if (Notification.permission === 'default') {
+                    // 请求通知权限
+                    Notification.requestPermission().then(permission => {
+                        if (permission === 'granted') {
+                            showReminderNotification(reminder);
+                        } else {
+                            showInPageAlert(title, body);
+                        }
+                    });
+                } else {
+                    // 权限被拒绝，使用页面内通知
+                    showInPageAlert(title, body);
+                }
+            } else {
+                // 浏览器不支持通知，使用页面内通知
+                showInPageAlert(title, body);
+            }
+        }
+
+        /**
+         * 页面内通知（最后降级方案）
+         */
+        function showInPageAlert(title, message) {
+            // 创建通知元素
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                padding: 20px 30px;
+                border-radius: 12px;
+                box-shadow: 0 10px 40px rgba(102, 126, 234, 0.5);
+                z-index: 10000;
+                max-width: 400px;
+                animation: slideInRight 0.3s ease-out;
+                cursor: pointer;
+            `;
+            notification.innerHTML = `
+                <div style="font-size: 18px; font-weight: 600; margin-bottom: 8px;">${title}</div>
+                <div style="font-size: 14px; line-height: 1.5;">${message}</div>
+            `;
+
+            // 添加到页面
+            document.body.appendChild(notification);
+
+            // 点击关闭
+            notification.onclick = () => notification.remove();
+
+            // 5秒后自动关闭
+            setTimeout(() => {
+                notification.style.animation = 'slideOutRight 0.3s ease-out';
+                setTimeout(() => notification.remove(), 300);
+            }, 5000);
+
+            console.log('✅ 页面内通知已显示:', message);
+        }
+
+        /**
+         * 启动提醒检查器（每10秒检查一次）
+         */
+        function startReminderChecker() {
+            // 首次立即检查
+            checkDueReminders();
+
+            // 每10秒检查一次
+            setInterval(checkDueReminders, 10000);
+
+            console.log('✅ 提醒检查器已启动（10秒间隔）');
         }
 
         window.onload = () => {
@@ -4814,6 +6785,24 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 calculateMaxHeight();
             } catch (e) {
                 console.error('Calculate max height failed:', e);
+            }
+
+            // 3.5. 初始化textarea自动高度调整（仅手机端）
+            try {
+                const aiInput = document.getElementById('aiInput');
+                if (aiInput && window.innerWidth <= 768) {
+                    // 监听输入事件
+                    aiInput.addEventListener('input', function() {
+                        autoResizeTextarea(this);
+                    });
+
+                    // 初始化高度
+                    autoResizeTextarea(aiInput);
+
+                    console.log('✅ Textarea自动高度已启用');
+                }
+            } catch (e) {
+                console.error('Init textarea auto-resize failed:', e);
             }
 
             // 4. 打字机效果
@@ -4898,6 +6887,13 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 } catch (e) {
                     console.error('Mobile optimization failed:', e);
                 }
+            }
+
+            // 9. 启动提醒检查（Electron原生通知 或 Web Notification）
+            try {
+                startReminderChecker();
+            } catch (e) {
+                console.error('Start reminder checker failed:', e);
             }
         };
         
@@ -5818,12 +7814,19 @@ class AssistantHandler(BaseHTTPRequestHandler):
         }
         
         .container {
-            max-width: 1400px;
+            max-width: 100%;
+            width: 100%;
             margin: 0 auto;
             background: white;
             border-radius: 20px;
-            padding: 30px;
+            padding: 30px 40px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+
+        @media (min-width: 1920px) {
+            .container {
+                max-width: 1800px;
+            }
         }
         
         .toolbar {
@@ -6157,7 +8160,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
 <body>
     <div class="header">
         <h1>🖼️ 图片管理中心</h1>
-        <a href="/" class="back-link">← 返回主页</a>
+        <a href="/ai/" class="back-link">← 返回主页</a>
     </div>
     
     <div class="container">
@@ -6510,11 +8513,11 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
 def run_server(port=8000):
     """运行服务器"""
-    reminder_sys.start_monitoring()
-
-    # 初始化提醒调度器
-    scheduler = get_global_scheduler(db_manager=db_manager)
-    scheduler.start()
+    # ❌ 禁用所有后端提醒调度器（改用前端Electron轮询通知）
+    # reminder_sys.start_monitoring()  # 禁用ReminderSystemMySQL的监控
+    # scheduler = get_global_scheduler(db_manager=db_manager)
+    # scheduler.start()  # 禁用ReminderScheduler的调度
+    print("⚠️  所有后端提醒调度器已禁用，使用前端Electron通知")
 
     server = HTTPServer(('', port), AssistantHandler)
 
