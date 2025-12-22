@@ -128,14 +128,14 @@ class AssistantHandler(BaseHTTPRequestHandler):
             # 允许加载主页HTML，前端会通过checkLogin()检查Token
             # 如果Token无效会重定向到/login
             self.send_html()
-        elif self.path == '/mobile_ui_patch.css':
+        elif self.path.startswith('/mobile_ui_patch.css'):
             # 提供手机端CSS补丁
             try:
                 with open('mobile_ui_patch.css', 'r', encoding='utf-8') as f:
                     css_content = f.read()
                 self.send_response(200)
                 self.send_header('Content-type', 'text/css; charset=utf-8')
-                self.send_header('Cache-Control', 'public, max-age=3600')
+                self.send_header('Cache-Control', 'no-cache, must-revalidate')  # 禁用缓存
                 self.end_headers()
                 self.wfile.write(css_content.encode('utf-8'))
             except Exception as e:
@@ -4014,7 +4014,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
             .welcome-message h3, .welcome-message p { color: #333 !important; }
         }
     </style>
-    <link rel="stylesheet" href="/mobile_ui_patch.css?v=1.6">
+    <link rel="stylesheet" href="/mobile_ui_patch.css?v=2.0">
 </head>
 <body>
     <!-- 手机端顶部栏 -->
