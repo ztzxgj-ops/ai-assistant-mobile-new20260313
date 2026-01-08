@@ -1,0 +1,8 @@
+#!/usr/bin/expect -f
+set timeout 60
+set password "gyq3160GYQ3160"
+
+spawn ssh root@47.109.148.176 "pip3 install aliyun-python-sdk-core aliyun-python-sdk-dm -i https://pypi.tuna.tsinghua.edu.cn/simple"
+expect "password:"
+send "$password\r"
+expect eof

@@ -1,0 +1,54 @@
+{
+  "appId": "com.aiassistant.app",
+  "productName": "AI Personal Assistant",
+  "directories": {
+    "output": "dist"
+  },
+  "files": [
+    "main.js",
+    "preload.js",
+    "frontend/**/*",
+    "node_modules/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "backend/dist/ai-backend",
+      "to": "backend/ai-backend"
+    },
+    {
+      "from": "backend/config/db_schema.sql",
+      "to": "backend/db_schema.sql"
+    }
+  ],
+  "mac": {
+    "category": "public.app-category.productivity",
+    "icon": "resources/icon.icns",
+    "target": [
+      {
+        "target": "dmg",
+        "arch": [
+          "x64",
+          "arm64"
+        ]
+      }
+    ],
+    "hardenedRuntime": true,
+    "gatekeeperAssess": false
+  },
+  "dmg": {
+    "iconSize": 100,
+    "contents": [
+      {
+        "x": 380,
+        "y": 280,
+        "type": "link",
+        "path": "/Applications"
+      },
+      {
+        "x": 110,
+        "y": 280,
+        "type": "file"
+      }
+    ]
+  }
+}

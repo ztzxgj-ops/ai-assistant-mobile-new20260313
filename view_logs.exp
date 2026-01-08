@@ -1,0 +1,8 @@
+#!/usr/bin/expect -f
+set timeout 20
+set password "gyq3160GYQ3160"
+
+spawn ssh root@47.109.148.176 "echo '=== 标准输出日志 ===' && tail -30 /var/log/ai-assistant.log && echo '' && echo '=== 错误日志 ===' && tail -30 /var/log/ai-assistant-error.log 2>&1"
+expect "password:"
+send "$password\r"
+expect eof

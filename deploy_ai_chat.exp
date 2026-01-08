@@ -1,0 +1,49 @@
+#!/usr/bin/expect -f
+
+set timeout 60
+set password "gyq3160GYQ3160"
+set server "47.109.148.176"
+set user "root"
+set local_file "ai_chat_assistant.py"
+set remote_path "/var/www/ai-assistant/"
+
+puts "正在上传 ai_chat_assistant.py..."
+spawn scp $local_file $user@$server:$remote_path
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        send "$password\r"
+    }
+}
+expect eof
+
+puts "正在重启AI助理服务..."
+spawn ssh $user@$server "supervisorctl restart ai-assistant"
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        send "$password\r"
+    }
+}
+expect eof
+
+puts "正在检查服务状态..."
+spawn ssh $user@$server "supervisorctl status ai-assistant"
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        send "$password\r"
+    }
+}
+expect eof
+
+puts "部署完成！"

@@ -1,0 +1,7 @@
+#!/usr/bin/expect -f
+set timeout 60
+set password "102330"
+spawn sudo ln -sf /Users/jry/.gem/ruby/3.4.0/bin/pod /usr/local/bin/pod
+expect "Password:"
+send "$password\r"
+expect eof

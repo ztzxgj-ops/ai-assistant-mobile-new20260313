@@ -1,0 +1,24 @@
+#!/usr/bin/expect -f
+set timeout 30
+set password "gyq3160GYQ3160"
+
+puts "查找占用8000端口的进程..."
+spawn ssh root@47.109.148.176 "lsof -i:8000"
+expect "password:"
+send "$password\r"
+expect eof
+
+puts "\n杀掉所有Python进程..."
+spawn ssh root@47.109.148.176 "pkill -9 -f 'python.*assistant_web'"
+expect "password:"
+send "$password\r"
+expect eof
+
+puts "\n等待2秒..."
+sleep 2
+
+puts "\n启动服务..."
+spawn ssh root@47.109.148.176 "supervisorctl start ai-assistant && sleep 3 && supervisorctl status ai-assistant"
+expect "password:"
+send "$password\r"
+expect eof

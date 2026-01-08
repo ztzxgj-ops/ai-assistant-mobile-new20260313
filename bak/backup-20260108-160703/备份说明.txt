@@ -1,0 +1,55 @@
+AI助理系统备份说明
+==================
+
+备份时间: 2026年01月08日 16:07:03
+备份目录: backup-20260108-160703
+备份类型: 自动备份
+
+📦 备份内容
+-----------
+1. 所有Python源代码 (*.py)
+2. 配置文件 (*.json)
+3. 文档文件 (*.md)
+4. 部署脚本 (deploy/)
+5. MySQL数据库完整备份
+
+❌ 排除内容
+-----------
+- uploads/ 目录 (图片和文件上传)
+- bak/ 目录 (历史备份)
+- __pycache__/ 目录
+- *.pyc 编译文件
+
+📍 备份位置
+-----------
+云端服务器 (47.109.148.176):
+  - /tmp/ai-assistant-backup-20260108-160703.tar.gz
+  - /tmp/ai_assistant_db_backup_20260108-160703.sql
+
+本地备份 (/Users/a1-6/Documents/GJ/编程/ai助理new/bak/backup-20260108-160703):
+  - ai-assistant-backup-20260108-160703.tar.gz
+  - ai_assistant_db_backup_20260108-160703.sql
+  - 备份说明.txt
+
+📊 文件大小
+-----------
+代码备份: 168K
+数据库备份: 672K
+
+🔄 恢复方法
+-----------
+# 1. 恢复代码文件
+tar -xzf ai-assistant-backup-20260108-160703.tar.gz -C /var/www/ai-assistant/
+
+# 2. 恢复数据库
+mysql -u ai_assistant -p'ai_assistant_2024' ai_assistant < ai_assistant_db_backup_20260108-160703.sql
+
+# 3. 重启服务
+sudo supervisorctl restart ai-assistant
+
+📝 备份脚本
+-----------
+使用自动备份脚本: backup_server.sh
+下次备份建议: 2026年01月09日
+
+生成时间: 2026年01月08日 16:07:03

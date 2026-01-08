@@ -1,0 +1,90 @@
+========================================
+AI助理系统 - 上传文件备份清单
+========================================
+备份时间: 2025-12-21 13:09:52
+备份文件: uploads_backup_20251221_130951.tar.gz
+压缩大小:  36M
+
+========================================
+备份内容统计
+========================================
+头像文件 (avatars): 19 个 (3.1M)
+聊天图片 (images):  35 个 ( 34M)
+上传文件 (files):   0 个 ()
+----------------------------------------
+总计: 54 个文件 ( 37M)
+压缩后:  36M
+
+========================================
+文件列表
+========================================
+--- uploads/avatars ---
+uploads/avatars/avatar_3_bbda9f302fb04be9bce6260479578833.jpg (73K)
+uploads/avatars/avatar_2_2dd118d2527547a38f701db00886e0e3.jpg (1.6M)
+uploads/avatars/avatar_2_ae8037bf8cfd42f89e1695040888d7b6.jpg (32K)
+uploads/avatars/avatar_2_664b9f8358ff47679685cb33983ca213.jpg (73K)
+uploads/avatars/avatar_2_e4c7eb64dfb34139a7f51cfb0d439bc9.jpg (179K)
+uploads/avatars/jqm.jpg (368K)
+uploads/avatars/.gitkeep (0B)
+uploads/avatars/musk.jpg (19K)
+uploads/avatars/dhf.jpg (49K)
+uploads/avatars/ns1.jpg (17K)
+uploads/avatars/lbxx.jpg (46K)
+uploads/avatars/avatar_2_d6bc68a3d35d44ca8ef242d43fefb5ed.jpg (32K)
+uploads/avatars/avatar_2_ae313e6409064971b862f92a5d390867.jpg (73K)
+uploads/avatars/avatar_14_ce894a03ed964f93a28ca80388527451.jpg (179K)
+uploads/avatars/avatar_6_378d1845661442cb8a1e80fcfb665de5.jpg (73K)
+uploads/avatars/avatar_2_6f2e34f3f8b34a59921c699c14af89d9.jpg (73K)
+uploads/avatars/ns1.webp (17K)
+uploads/avatars/avatar_5_12885cbee2d44788a43e8ea541faabd6.jpg (122K)
+uploads/avatars/avatar_2_3948eb17559149f182651334bd1f4d0e.jpg (73K)
+
+--- uploads/images ---
+uploads/images/cd207837d3a4494895e2e86ab3f35494.png (2.9M)
+uploads/images/d0cac3e19b2c4556996a8a953410f04a.png (2.9M)
+uploads/images/b114dfdda849441b9107cf16dc2b7cd4.png (2.9M)
+uploads/images/4e423848c26f4f91849c580f787dcfe0.PNG (268K)
+uploads/images/02c0c5112c75428496917d02091012e8.PNG (307K)
+uploads/images/62cfcb0fe27f4b339e34d390d6f649e0.png (32K)
+uploads/images/a7c9ea12a7264b8bb97682556069efc4.PNG (1.6M)
+uploads/images/.gitkeep (0B)
+uploads/images/5ec98ec40cac4ccaaaf15ab76ea12fe6.JPG (179K)
+uploads/images/48b74e577fbb44e397da8abdf2b3bc7a.png (3.2M)
+uploads/images/b272f05ec6904616a76df015db3da30c.jpg (255K)
+uploads/images/c4787e18d6d2468abeeef4f6739d8f62.png (32K)
+uploads/images/9a2b2ab1aee241afa8891b79a5c7668f.png (857K)
+uploads/images/c9d899ba10494ced83288083761fccf3.png (349K)
+uploads/images/6ee12c7e9fde42db988adcd97cb925e8.PNG (307K)
+uploads/images/b1e79d1b3f314a30941685e6358f799f.png (3.1M)
+uploads/images/1dea1257cc194a23ae2aeb4e99cfe61c.PNG (1.7M)
+uploads/images/cae8bb2884204330942942e8f5a68522.jpg (3.5M)
+uploads/images/08b7309d98e64962a5e052a266fb25ba.png (163K)
+uploads/images/491711a4630247babbaa311ed0214233.png (32K)
+uploads/images/4c02a1805e37442c85a339a3eca019e4.PNG (515K)
+uploads/images/0bfcbf5ec6b74ca095982b99f414d04b.png (42K)
+uploads/images/aa86ae9327db45eaaac740280a3e71a1.jpg (908K)
+uploads/images/3daebd811f9148a98df6edfaf6f2449d.PNG (1.1M)
+uploads/images/1527965f01294976814252c2a31f5dad.PNG (1.7M)
+uploads/images/fae8ffbe2f12440ca94d37bbc2077f4a.jpeg (37K)
+uploads/images/99972e16d5a34197a9708b9b221ce172.PNG (307K)
+uploads/images/78d4f056db164a93976c3844885064a9.png (32K)
+uploads/images/0cd31b99e1494bf5a7b75bef61703a7b.png (34K)
+uploads/images/1726d3a4db5847469e4b8bad8fff23f4.PNG (1.7M)
+uploads/images/637687e624484f36ae929cf18aab3150.jpeg (1.5M)
+uploads/images/20362f92a1d74a1fbef8178416111eaa.PNG (1.1M)
+uploads/images/6cdfac9ffbeb4edeb778a2ef862e2b57.PNG (197K)
+uploads/images/daa887f8b9104993a2252d3dfe5e1386.jpeg (73K)
+uploads/images/fa60c66c6c744a64bd4356ebc047b468.jpg (73K)
+
+--- uploads/files ---
+
+========================================
+恢复方法
+========================================
+# 解压到当前目录
+tar -xzf uploads_backup_20251221_130951.tar.gz
+
+# 恢复到服务器
+scp uploads_backup_20251221_130951.tar.gz ai-server:/var/www/ai-assistant/
+ssh ai-server "cd /var/www/ai-assistant && tar -xzf uploads_backup_20251221_130951.tar.gz"
+========================================

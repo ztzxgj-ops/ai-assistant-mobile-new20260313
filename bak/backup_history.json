@@ -1,0 +1,56 @@
+[
+  {
+    "id": 3,
+    "timestamp": "2026-01-08 16:56:18",
+    "backup_dir": "backup-20260108-165607",
+    "status": "success",
+    "notes": "",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260108-165607.tar.gz",
+        "size": 170398
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260108-165607.sql",
+        "size": 675381
+      }
+    }
+  },
+  {
+    "id": 2,
+    "timestamp": "2026-01-08 16:20:19",
+    "backup_dir": "backup-20260108-161959",
+    "status": "success",
+    "notes": "测试备份系统",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260108-161959.tar.gz",
+        "size": 170398
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260108-161959.sql",
+        "size": 671526
+      }
+    }
+  },
+  {
+    "id": 1,
+    "timestamp": "2026-01-08 16:07:19",
+    "backup_dir": "backup-20260108-160703",
+    "status": "success",
+    "notes": "修复缓存文件排除问题，增强备份系统历史管理",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260108-160703.tar.gz",
+        "size": 170398
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260108-160703.sql",
+        "size": 671526
+      }
+    }
+  }
+]

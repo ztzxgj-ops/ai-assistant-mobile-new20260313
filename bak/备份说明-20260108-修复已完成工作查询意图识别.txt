@@ -1,0 +1,36 @@
+AI助理系统备份说明
+备份时间: 2026年01月08日 10:31:51
+备份版本: 修复已完成工作查询意图识别问题
+
+本次备份内容:
+1. 所有Python源代码 (*.py)
+2. 配置文件 (*.json)
+3. 文档文件 (*.md)
+4. 部署脚本 (deploy/)
+5. MySQL数据库完整备份
+
+排除内容:
+- uploads/ 目录 (图片和文件上传)
+- __pycache__/ 目录
+- *.pyc 编译文件
+
+备份位置:
+- 云端: /tmp/ai-assistant-backup-20260108-103011.tar.gz
+- 云端数据库: /tmp/ai_assistant_db_backup_20260108-103117.sql
+- 本地: bak/ai-assistant-backup-20260108-103011-修复已完成工作查询意图识别.tar.gz
+- 本地数据库: bak/ai_assistant_db_backup_20260108-103117.sql
+
+重要修复:
+1. 修复1个月以来已完成的工作被误判为标记完成命令的问题
+2. 在detect_and_complete_plans()函数中添加时间表达式排除逻辑
+3. 确保查询类指令不会触发标记完成操作
+
+恢复方法:
+# 恢复代码文件
+tar -xzf ai-assistant-backup-20260108-103011.tar.gz -C /var/www/ai-assistant/
+
+# 恢复数据库
+mysql -u ai_assistant -p'ai_assistant_2024' ai_assistant < ai_assistant_db_backup_20260108-103117.sql
+
+# 重启服务
+sudo supervisorctl restart ai-assistant

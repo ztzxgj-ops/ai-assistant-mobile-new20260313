@@ -1,0 +1,62 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+set password "gyq3160GYQ3160"
+
+puts "=========================================="
+puts "配置SSH免密登录"
+puts "=========================================="
+puts ""
+
+# 使用ssh-copy-id上传公钥
+spawn ssh-copy-id -i /Users/jry/.ssh/id_rsa.pub root@47.109.148.176
+
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        send "$password\r"
+    }
+}
+
+expect {
+    "Number of key(s) added:" {
+        puts "\n✅ 公钥上传成功！\n"
+    }
+    "already exist" {
+        puts "\n✅ 公钥已存在！\n"
+    }
+    timeout {
+        puts "\n⚠️  上传超时\n"
+        exit 1
+    }
+}
+
+expect eof
+
+# 测试免密登录
+puts "=========================================="
+puts "测试免密登录..."
+puts "=========================================="
+
+spawn ssh -o BatchMode=yes root@47.109.148.176 "echo '免密登录测试成功！'"
+
+expect {
+    "免密登录测试成功!" {
+        puts ""
+        puts "🎉🎉🎉 SSH免密登录配置完成！"
+        puts ""
+        puts "现在可以无密码执行："
+        puts "  • ssh root@47.109.148.176"
+        puts "  • scp文件到服务器"
+        puts "  • 自动化备份脚本"
+        puts ""
+    }
+    timeout {
+        puts "\n⚠️  测试超时，请手动验证"
+    }
+}
+
+puts "=========================================="

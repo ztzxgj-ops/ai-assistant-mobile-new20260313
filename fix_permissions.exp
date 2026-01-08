@@ -1,0 +1,15 @@
+#!/usr/bin/expect -f
+set timeout 30
+set password "gyq3160GYQ3160"
+
+puts "修复文件权限..."
+spawn ssh root@47.109.148.176 "chown -R nginx:nginx /var/www/ai-assistant && chmod -R 755 /var/www/ai-assistant && ls -la /var/www/ai-assistant/*.py | tail -5"
+expect "password:"
+send "$password\r"
+expect eof
+
+puts "\n重启服务..."
+spawn ssh root@47.109.148.176 "supervisorctl restart ai-assistant && sleep 3 && supervisorctl status ai-assistant"
+expect "password:"
+send "$password\r"
+expect eof

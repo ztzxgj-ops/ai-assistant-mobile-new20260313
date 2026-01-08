@@ -1,0 +1,35 @@
+#!/usr/bin/expect -f
+
+set timeout 60
+set password "gyq3160GYQ3160"
+set server "47.109.148.176"
+set user "root"
+set remote_path "/var/www/ai-assistant/bak/"
+
+puts "正在上传服务器代码备份..."
+spawn scp bak/ai-assistant-xcode独立及提醒事项完成-20251230-121518-server.tar.gz $user@$server:$remote_path
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        send "$password\r"
+    }
+}
+expect eof
+
+puts "正在上传移动端代码备份..."
+spawn scp bak/ai-assistant-xcode独立及提醒事项完成-20251230-121518-mobile.tar.gz $user@$server:$remote_path
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        send "$password\r"
+    }
+}
+expect eof
+
+puts "✅ 备份文件上传完成！"

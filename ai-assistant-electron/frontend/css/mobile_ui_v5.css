@@ -1,0 +1,195 @@
+/* ========================================
+   AI助理系统 - 手机端极致体验版
+   架构：Flexbox 全屏布局
+   修复：键盘联动、间距过大、半透明遮挡
+   ======================================== */
+
+/* ============ 1. 全局布局锁定 (防止整体滚动) ============ */
+@media (max-width: 768px) {
+    html, body {
+        height: 100%; /* 关键：锁定高度 */
+        width: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden; /* 禁止 body 滚动 */
+        background-color: #f7f7f8; /* 统一背景色 */
+        position: fixed; /* iOS 键盘防抖动的大招 */
+    }
+
+    /* 隐藏侧边栏 */
+    .sidebar {
+        display: none !important;
+    }
+
+    /* 主容器：改为 Flex 列布局 */
+    .main-content {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: 100% !important;
+        height: 100% !important; /* 占满屏幕 */
+        display: flex !important;
+        flex-direction: column !important;
+        background: #f7f7f8 !important;
+        z-index: 1;
+    }
+
+    /* ============ 2. 顶部导航 (固定在顶部) ============ */
+    .header {
+        flex-shrink: 0; /* 禁止压缩 */
+        height: 50px;
+        background: #fff !important; /* 纯白背景，去除半透明 */
+        border-bottom: 1px solid #e5e5e5;
+        padding: 0 15px;
+        display: flex;
+        align-items: center;
+        justify-content: center; /* 标题居中 */
+        z-index: 10;
+        position: relative;
+    }
+
+    .header h1 {
+        font-size: 17px !important;
+        font-weight: 600;
+        margin: 0;
+        color: #000;
+    }
+
+    /* ============ 3. 聊天主视图容器 ============ */
+    #chat-view {
+        flex: 1; /* 自动占据剩余所有空间 */
+        display: flex !important;
+        flex-direction: column !important;
+        overflow: hidden; /* 内部滚动 */
+        position: relative;
+        height: 100%;
+        width: 100%;
+    }
+
+    /* ============ 4. 消息列表区 (中间滚动部分) ============ */
+    .chat-container {
+        flex: 1; /* 占据 #chat-view 的剩余空间 */
+        overflow-y: auto !important; /* 允许垂直滚动 */
+        overflow-x: hidden;
+        padding: 15px 12px !important;
+        background: #f7f7f8 !important; /* 纯色背景 */
+        -webkit-overflow-scrolling: touch; /* iOS顺滑滚动 */
+        
+        /* 隐藏滚动条但保留功能 - 去除"半透明条" */
+        scrollbar-width: none; /* Firefox */
+        -ms-overflow-style: none; /* IE/Edge */
+    }
+    
+    .chat-container::-webkit-scrollbar {
+        display: none; /* Chrome/Safari */
+    }
+
+    /* ============ 5. 底部输入区 (紧贴键盘) ============ */
+    .input-area {
+        flex-shrink: 0; /* 禁止压缩 */
+        position: relative !important; /* 不再使用 fixed */
+        bottom: auto !important;
+        background: #f7f7f8 !important; /* 与背景色一致 */
+        border-top: 1px solid #e5e5e5;
+        
+        /* 紧凑布局优化 - 宽度最大化 */
+        padding: 8px 6px !important;
+        /* iOS底部安全区适配：只有在键盘收起时才需要 padding */
+        padding-bottom: max(8px, env(safe-area-inset-bottom)) !important;
+        
+        display: flex !important;
+        align-items: flex-end; /* 底部对齐，适应多行 */
+        gap: 8px !important;
+        z-index: 20;
+    }
+
+    /* 输入框样式 - 多行文本域 */
+    .input-area textarea {
+        flex: 1;
+        min-height: 36px !important;
+        max-height: 96px !important; /* 最多约4行 */
+        border: 1px solid #ddd !important;
+        background: #ffffff !important;
+        border-radius: 18px !important;
+        padding: 8px 12px !important; /* 垂直居中 */
+        font-size: 16px !important; /* 防止 iOS 自动放大 */
+        margin: 0 !important;
+        resize: none !important; /* 禁止手动拖拽 */
+        line-height: 20px !important;
+        font-family: inherit;
+    }
+
+    .input-area textarea:focus {
+        background: #fff !important;
+        border-color: #10a37f !important;
+        outline: none;
+    }
+
+    /* 发送按钮 */
+    .input-area button {
+        height: 36px !important;
+        padding: 0 16px !important;
+        border-radius: 18px !important;
+        background: #10a37f !important; /* ChatGPT 绿 */
+        color: white !important;
+        font-size: 14px !important;
+        font-weight: 500;
+        margin: 0 0 1px 0 !important; /* 底部微调 */
+        flex-shrink: 0;
+    }
+
+    /* ============ 6. 消息气泡优化 ============ */
+    .message {
+        margin-bottom: 16px !important;
+        display: flex !important;
+        width: 100%;
+    }
+    
+    .message-bubble {
+        max-width: 88% !important;
+        padding: 10px 14px !important;
+        font-size: 15px !important;
+        line-height: 1.5;
+        border-radius: 12px !important;
+        box-shadow: none !important;
+    }
+
+    /* 用户气泡 */
+    .message.user {
+        justify-content: flex-end;
+    }
+    
+    .message.user .message-bubble {
+        background: #10a37f !important;
+        color: white !important;
+        border-bottom-right-radius: 4px !important;
+    }
+    
+    .message.user .message-time {
+        color: rgba(255,255,255,0.7) !important;
+    }
+
+    /* 机器人气泡 */
+    .message.assistant {
+        justify-content: flex-start;
+    }
+    
+    .message.assistant .message-bubble {
+        background: #fff !important;
+        color: #333 !important;
+        border: 1px solid #e5e5e5;
+        border-bottom-left-radius: 4px !important;
+    }
+
+    /* ============ 7. 解决 iOS "键盘推顶" 问题 ============ */
+    /* 当键盘弹出时，viewport 变小，因为是 Flex 布局，
+       .chat-container 会自动缩小高度，而 header 保持在顶部 */
+    
+    /* 隐藏不必要的元素 */
+    .typing-indicator {
+        background: transparent !important; /* 确保无背景色 */
+        margin: 0 10px;
+    }
+}

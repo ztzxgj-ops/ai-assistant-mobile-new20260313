@@ -1,0 +1,21 @@
+#!/usr/bin/expect -f
+set timeout 30
+set password "gyq3160GYQ3160"
+
+puts "上传迁移SQL文件..."
+spawn scp migration_add_verification.sql root@47.109.148.176:/tmp/
+expect "password:"
+send "$password\r"
+expect eof
+
+puts "\n执行数据库迁移..."
+spawn ssh root@47.109.148.176 "mysql -u ai_assistant -pai_assistant_2024 ai_assistant < /tmp/migration_add_verification.sql && echo '迁移完成！'"
+expect "password:"
+send "$password\r"
+expect eof
+
+puts "\n重启服务..."
+spawn ssh root@47.109.148.176 "supervisorctl restart ai-assistant && sleep 2 && supervisorctl status ai-assistant"
+expect "password:"
+send "$password\r"
+expect eof

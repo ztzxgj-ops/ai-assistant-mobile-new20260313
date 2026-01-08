@@ -9,7 +9,7 @@ MySQL数据库管理类
 import pymysql
 from pymysql.cursors import DictCursor
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from contextlib import contextmanager
 import os
 
@@ -123,16 +123,16 @@ class MemoryManagerMySQL:
     def __init__(self, db_manager):
         self.db = db_manager
     
-    def add_message(self, role, content, tags=None, image_url=None, user_id=None):
+    def add_message(self, role, content, tags=None, image_url=None, user_id=None, file_id=None):
         """添加消息到数据库"""
         sql = """
-            INSERT INTO messages (user_id, role, content, tags, image_url, timestamp)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO messages (user_id, role, content, tags, image_url, file_id, timestamp)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
         """
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         tags_json = json.dumps(tags or [], ensure_ascii=False) if tags else None
 
-        message_id = self.db.execute(sql, (user_id, role, content, tags_json, image_url, timestamp))
+        message_id = self.db.execute(sql, (user_id, role, content, tags_json, image_url, file_id, timestamp))
         return message_id
     
     def get_recent_messages(self, limit=10, user_id=None):
@@ -142,10 +142,12 @@ class MemoryManagerMySQL:
             return []  # 未授权用户无法查询任何数据
 
         sql = """
-            SELECT id, role, content, timestamp, tags, image_url
-            FROM messages
-            WHERE user_id = %s
-            ORDER BY timestamp DESC
+            SELECT m.id, m.role, m.content, m.timestamp, m.tags, m.image_url,
+                   f.id as file_id, f.original_name as file_name, f.file_size, f.mime_type, f.file_path, f.filename
+            FROM messages m
+            LEFT JOIN files f ON m.file_id = f.id
+            WHERE m.user_id = %s
+            ORDER BY m.timestamp DESC
             LIMIT %s
         """
         messages = self.db.query(sql, (user_id, limit))
@@ -160,6 +162,17 @@ class MemoryManagerMySQL:
             else:
                 msg['tags'] = []
 
+            # 构造 file_info
+            if msg.get('file_id'):
+                msg['file_info'] = {
+                    'id': msg['file_id'],
+                    'name': msg['file_name'],
+                    'filename': msg['filename'],
+                    'size': msg['file_size'],
+                    'type': msg['mime_type'],
+                    'path': msg['file_path']
+                }
+
             # 转换datetime为字符串
             if msg['timestamp'] and hasattr(msg['timestamp'], 'strftime'):
                 msg['timestamp'] = msg['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
@@ -171,13 +184,18 @@ class MemoryManagerMySQL:
         if user_id is None:
             return []
 
+        # 计算24小时前的时间
+        start_time = (datetime.now() - timedelta(hours=24)).strftime('%Y-%m-%d %H:%M:%S')
+
         sql = """
-            SELECT id, role, content, timestamp, tags, image_url
-            FROM messages
-            WHERE user_id = %s AND timestamp >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
-            ORDER BY timestamp ASC
+            SELECT m.id, m.role, m.content, m.timestamp, m.tags, m.image_url,
+                   f.id as file_id, f.original_name as file_name, f.file_size, f.mime_type, f.file_path, f.filename
+            FROM messages m
+            LEFT JOIN files f ON m.file_id = f.id
+            WHERE m.user_id = %s AND m.timestamp >= %s
+            ORDER BY m.timestamp ASC
         """
-        messages = self.db.query(sql, (user_id,))
+        messages = self.db.query(sql, (user_id, start_time))
 
         # 解析JSON字段和转换日期
         for msg in messages:
@@ -188,6 +206,17 @@ class MemoryManagerMySQL:
                     msg['tags'] = []
             else:
                 msg['tags'] = []
+
+            # 构造 file_info
+            if msg.get('file_id'):
+                msg['file_info'] = {
+                    'id': msg['file_id'],
+                    'name': msg['file_name'],
+                    'filename': msg['filename'],
+                    'size': msg['file_size'],
+                    'type': msg['mime_type'],
+                    'path': msg['file_path']
+                }
 
             # 转换datetime为字符串
             if msg['timestamp'] and hasattr(msg['timestamp'], 'strftime'):
@@ -201,25 +230,27 @@ class MemoryManagerMySQL:
         if user_id is None:
             return []  # 未授权用户无法搜索任何数据
 
-        conditions = ["user_id = %s"]  # 必须包含user_id过滤
+        conditions = ["m.user_id = %s"]  # 必须包含user_id过滤
         params = [user_id]
 
         if keyword:
-            conditions.append("content LIKE %s")
+            conditions.append("m.content LIKE %s")
             params.append(f"%{keyword}%")
 
         if tags:
             for tag in tags:
-                conditions.append("JSON_CONTAINS(tags, %s)")
+                conditions.append("JSON_CONTAINS(m.tags, %s)")
                 params.append(json.dumps(tag, ensure_ascii=False))
 
         where_clause = " AND ".join(conditions)
 
         sql = f"""
-            SELECT id, role, content, timestamp, tags, image_url
-            FROM messages
+            SELECT m.id, m.role, m.content, m.timestamp, m.tags, m.image_url,
+                   f.id as file_id, f.original_name as file_name, f.file_size, f.mime_type, f.file_path
+            FROM messages m
+            LEFT JOIN files f ON m.file_id = f.id
             WHERE {where_clause}
-            ORDER BY timestamp DESC
+            ORDER BY m.timestamp DESC
             LIMIT %s
         """
         params.append(limit)
@@ -236,6 +267,16 @@ class MemoryManagerMySQL:
             else:
                 msg['tags'] = []
             
+            # 构造 file_info
+            if msg.get('file_id'):
+                msg['file_info'] = {
+                    'id': msg['file_id'],
+                    'name': msg['file_name'],
+                    'size': msg['file_size'],
+                    'type': msg['mime_type'],
+                    'path': msg['file_path']
+                }
+
             # 转换datetime为字符串
             if msg['timestamp'] and hasattr(msg['timestamp'], 'strftime'):
                 msg['timestamp'] = msg['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
@@ -246,17 +287,21 @@ class MemoryManagerMySQL:
         """获取所有消息"""
         if user_id is not None:
             sql = """
-                SELECT id, role, content, timestamp, tags, image_url
-                FROM messages
-                WHERE user_id = %s
-                ORDER BY timestamp ASC
+                SELECT m.id, m.role, m.content, m.timestamp, m.tags, m.image_url,
+                       f.id as file_id, f.original_name as file_name, f.file_size, f.mime_type, f.file_path
+                FROM messages m
+                LEFT JOIN files f ON m.file_id = f.id
+                WHERE m.user_id = %s
+                ORDER BY m.timestamp ASC
             """
             messages = self.db.query(sql, (user_id,))
         else:
             sql = """
-                SELECT id, role, content, timestamp, tags, image_url
-                FROM messages
-                ORDER BY timestamp ASC
+                SELECT m.id, m.role, m.content, m.timestamp, m.tags, m.image_url,
+                       f.id as file_id, f.original_name as file_name, f.file_size, f.mime_type, f.file_path
+                FROM messages m
+                LEFT JOIN files f ON m.file_id = f.id
+                ORDER BY m.timestamp ASC
             """
             messages = self.db.query(sql)
         
@@ -270,6 +315,16 @@ class MemoryManagerMySQL:
             else:
                 msg['tags'] = []
             
+            # 构造 file_info
+            if msg.get('file_id'):
+                msg['file_info'] = {
+                    'id': msg['file_id'],
+                    'name': msg['file_name'],
+                    'size': msg['file_size'],
+                    'type': msg['mime_type'],
+                    'path': msg['file_path']
+                }
+
             # 转换datetime为字符串
             if msg['timestamp'] and hasattr(msg['timestamp'], 'strftime'):
                 msg['timestamp'] = msg['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
@@ -609,7 +664,7 @@ class ImageManagerMySQL:
         """
 
         images = self.db.query(sql, params)
-        
+
         # 解析JSON字段和转换日期
         for img in images:
             if img['tags']:
@@ -619,11 +674,15 @@ class ImageManagerMySQL:
                     img['tags'] = []
             else:
                 img['tags'] = []
-            
+
             # 转换datetime为字符串
             if img.get('created_at') and hasattr(img['created_at'], 'strftime'):
                 img['created_at'] = img['created_at'].strftime('%Y-%m-%d %H:%M:%S')
-        
+
+            # 确保 file_path 格式正确（以/开头，用于前端）
+            if img['file_path'] and not img['file_path'].startswith('/'):
+                img['file_path'] = f"/{img['file_path']}"
+
         return images
     
     def get_all_images(self, user_id=None):
@@ -645,7 +704,7 @@ class ImageManagerMySQL:
                 ORDER BY created_at DESC
             """
             images = self.db.query(sql)
-        
+
         # 解析JSON字段和转换日期
         for img in images:
             if img['tags']:
@@ -655,11 +714,15 @@ class ImageManagerMySQL:
                     img['tags'] = []
             else:
                 img['tags'] = []
-            
+
             # 转换datetime为字符串
             if img.get('created_at') and hasattr(img['created_at'], 'strftime'):
                 img['created_at'] = img['created_at'].strftime('%Y-%m-%d %H:%M:%S')
-        
+
+            # 确保 file_path 格式正确（以/开头，用于前端）
+            if img['file_path'] and not img['file_path'].startswith('/'):
+                img['file_path'] = f"/{img['file_path']}"
+
         return images
     
     def delete_image(self, image_id, user_id=None):
@@ -760,6 +823,10 @@ class ImageManagerMySQL:
             if img.get('created_at') and hasattr(img['created_at'], 'strftime'):
                 img['created_at'] = img['created_at'].strftime('%Y-%m-%d %H:%M:%S')
 
+            # 确保 file_path 格式正确（以/开头，用于前端）
+            if img['file_path'] and not img['file_path'].startswith('/'):
+                img['file_path'] = f"/{img['file_path']}"
+
         return images
 
 
@@ -806,7 +873,7 @@ class WorkPlanManagerMySQL:
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
         sql = f"""
-            SELECT id, title, content as description, due_date as deadline, priority, status, created_at
+            SELECT id, title, content as description, due_date as deadline, priority, status, created_at, updated_at
             FROM work_plans
             WHERE {where_clause}
             ORDER BY created_at DESC
@@ -819,6 +886,8 @@ class WorkPlanManagerMySQL:
                 plan['deadline'] = plan['deadline'].strftime('%Y-%m-%d %H:%M:%S')
             if plan.get('created_at') and hasattr(plan['created_at'], 'strftime'):
                 plan['created_at'] = plan['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            if plan.get('updated_at') and hasattr(plan['updated_at'], 'strftime'):
+                plan['updated_at'] = plan['updated_at'].strftime('%Y-%m-%d %H:%M:%S')
 
         return plans
     
@@ -904,6 +973,354 @@ class WorkPlanManagerMySQL:
         return self.list_plans()
 
 
+class FileManagerMySQL:
+    """基于MySQL的通用文件管理器（支持1GB以内文件）"""
+
+    # 文件大小限制（1GB = 1073741824字节）
+    MAX_FILE_SIZE = 1073741824
+
+    # MIME类型到分类的映射
+    MIME_TO_CATEGORY = {
+        'application/pdf': 'document',
+        'application/msword': 'document',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'document',
+        'application/vnd.ms-excel': 'document',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'document',
+        'application/vnd.ms-powerpoint': 'document',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'document',
+        'text/plain': 'document',
+        'text/csv': 'document',
+        'image/jpeg': 'image',
+        'image/png': 'image',
+        'image/gif': 'image',
+        'image/bmp': 'image',
+        'image/webp': 'image',
+        'video/mp4': 'video',
+        'video/mpeg': 'video',
+        'video/quicktime': 'video',
+        'video/x-msvideo': 'video',
+        'audio/mpeg': 'audio',
+        'audio/wav': 'audio',
+        'audio/ogg': 'audio',
+        'audio/mp4': 'audio',
+        'application/zip': 'archive',
+        'application/x-rar-compressed': 'archive',
+        'application/x-7z-compressed': 'archive',
+        'application/x-tar': 'archive',
+        'application/gzip': 'archive',
+    }
+
+    def __init__(self, db_manager, upload_dir='uploads/files'):
+        self.db = db_manager
+        self.upload_dir = upload_dir
+
+        # 创建上传目录
+        import os
+        if not os.path.exists(upload_dir):
+            os.makedirs(upload_dir, exist_ok=True)
+            print(f"✅ 创建文件上传目录: {upload_dir}")
+
+    def _get_category_from_mime(self, mime_type):
+        """根据MIME类型自动识别文件分类"""
+        if not mime_type:
+            return 'other'
+        return self.MIME_TO_CATEGORY.get(mime_type, 'other')
+
+    def add_file(self, filename, original_name, file_path, file_size, mime_type=None,
+                 description=None, tags=None, category=None, user_id=None):
+        """添加文件记录"""
+        # 检查文件大小
+        if file_size > self.MAX_FILE_SIZE:
+            raise ValueError(f"文件大小超过限制（最大1GB），当前大小: {file_size / (1024*1024):.2f}MB")
+
+        # 自动识别分类
+        if category is None and mime_type:
+            category = self._get_category_from_mime(mime_type)
+
+        sql = """
+            INSERT INTO files
+            (user_id, filename, original_name, file_path, file_size, mime_type,
+             description, tags, category)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        tags_json = json.dumps(tags or [], ensure_ascii=False) if tags else None
+
+        file_id = self.db.execute(sql, (
+            user_id, filename, original_name, file_path, file_size, mime_type,
+            description, tags_json, category or 'other'
+        ))
+        print(f"✅ 文件已添加到数据库: {original_name} (ID={file_id}, 大小={file_size / (1024*1024):.2f}MB)")
+        return file_id
+
+    def search_files(self, keyword=None, category=None, tags=None, user_id=None, limit=None):
+        """搜索文件"""
+        conditions = []
+        params = []
+
+        if user_id is not None:
+            conditions.append("user_id = %s")
+            params.append(user_id)
+
+        if keyword:
+            conditions.append("(description LIKE %s OR original_name LIKE %s)")
+            params.extend([f"%{keyword}%", f"%{keyword}%"])
+
+        if category:
+            conditions.append("category = %s")
+            params.append(category)
+
+        if tags:
+            for tag in tags:
+                conditions.append("JSON_CONTAINS(tags, %s)")
+                params.append(json.dumps(tag, ensure_ascii=False))
+
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
+
+        sql = f"""
+            SELECT id, filename, original_name, file_path, file_size, mime_type,
+                   description, tags, category, download_count, created_at, updated_at
+            FROM files
+            WHERE {where_clause}
+            ORDER BY created_at DESC
+        """
+        if limit:
+            sql += f" LIMIT {limit}"
+
+        files = self.db.query(sql, params if params else None)
+
+        # 解析JSON字段和转换日期
+        for file in files:
+            if file['tags']:
+                try:
+                    file['tags'] = json.loads(file['tags'])
+                except:
+                    file['tags'] = []
+            else:
+                file['tags'] = []
+
+            # 转换datetime为字符串
+            if file.get('created_at') and hasattr(file['created_at'], 'strftime'):
+                file['created_at'] = file['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            if file.get('updated_at') and hasattr(file['updated_at'], 'strftime'):
+                file['updated_at'] = file['updated_at'].strftime('%Y-%m-%d %H:%M:%S')
+
+        return files
+
+    def list_files(self, user_id=None, category=None, limit=None):
+        """列出文件"""
+        return self.search_files(category=category, user_id=user_id, limit=limit)
+
+    def get_file(self, file_id, user_id=None):
+        """获取单个文件信息"""
+        if user_id is not None:
+            sql = """
+                SELECT id, filename, original_name, file_path, file_size, mime_type,
+                       description, tags, category, download_count, created_at, updated_at
+                FROM files
+                WHERE id = %s AND user_id = %s
+            """
+            files = self.db.query(sql, (file_id, user_id))
+        else:
+            sql = """
+                SELECT id, filename, original_name, file_path, file_size, mime_type,
+                       description, tags, category, download_count, created_at, updated_at
+                FROM files
+                WHERE id = %s
+            """
+            files = self.db.query(sql, (file_id,))
+
+        if files:
+            file = files[0]
+            if file['tags']:
+                try:
+                    file['tags'] = json.loads(file['tags'])
+                except:
+                    file['tags'] = []
+            else:
+                file['tags'] = []
+
+            if file.get('created_at') and hasattr(file['created_at'], 'strftime'):
+                file['created_at'] = file['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            if file.get('updated_at') and hasattr(file['updated_at'], 'strftime'):
+                file['updated_at'] = file['updated_at'].strftime('%Y-%m-%d %H:%M:%S')
+
+            return file
+        return None
+
+    def delete_file(self, file_id, user_id=None):
+        """删除文件（包括磁盘文件和数据库记录）"""
+        # 先获取文件信息
+        file_info = self.get_file(file_id, user_id=user_id)
+        if not file_info:
+            return False
+
+        # 删除磁盘文件
+        import os
+        try:
+            if os.path.exists(file_info['file_path']):
+                os.remove(file_info['file_path'])
+                print(f"✅ 磁盘文件已删除: {file_info['file_path']}")
+        except Exception as e:
+            print(f"⚠️ 删除磁盘文件失败: {e}")
+
+        # 删除数据库记录
+        if user_id is not None:
+            sql = "DELETE FROM files WHERE id = %s AND user_id = %s"
+            self.db.execute(sql, (file_id, user_id))
+        else:
+            sql = "DELETE FROM files WHERE id = %s"
+            self.db.execute(sql, (file_id,))
+
+        print(f"✅ 文件记录已删除: {file_info['original_name']} (ID={file_id})")
+        return True
+
+    def batch_delete_files(self, file_ids, user_id=None):
+        """批量删除文件"""
+        success_count = 0
+        for file_id in file_ids:
+            if self.delete_file(file_id, user_id=user_id):
+                success_count += 1
+        return success_count
+
+    def increment_download_count(self, file_id):
+        """增加下载次数"""
+        sql = "UPDATE files SET download_count = download_count + 1 WHERE id = %s"
+        self.db.execute(sql, (file_id,))
+
+    def update_file_info(self, file_id, description=None, tags=None, user_id=None):
+        """更新文件信息（描述、标签）"""
+        # 检查权限
+        if user_id is not None:
+            check_sql = "SELECT user_id FROM files WHERE id = %s"
+            result = self.db.query_one(check_sql, (file_id,))
+            if result and result.get('user_id') != user_id:
+                return False
+
+        updates = []
+        values = []
+
+        if description is not None:
+            updates.append("description = %s")
+            values.append(description)
+
+        if tags is not None:
+            updates.append("tags = %s")
+            values.append(json.dumps(tags, ensure_ascii=False))
+
+        if not updates:
+            return False
+
+        values.append(file_id)
+        sql = f"UPDATE files SET {', '.join(updates)} WHERE id = %s"
+        self.db.execute(sql, tuple(values))
+        print(f"✅ 文件信息已更新: ID={file_id}")
+        return True
+
+    def get_user_storage_stats(self, user_id):
+        """获取用户存储统计"""
+        sql = """
+            SELECT
+                COUNT(*) as total_files,
+                COALESCE(SUM(file_size), 0) as total_size,
+                COUNT(CASE WHEN category = 'document' THEN 1 END) as document_count,
+                COUNT(CASE WHEN category = 'image' THEN 1 END) as image_count,
+                COUNT(CASE WHEN category = 'video' THEN 1 END) as video_count,
+                COUNT(CASE WHEN category = 'audio' THEN 1 END) as audio_count,
+                COUNT(CASE WHEN category = 'archive' THEN 1 END) as archive_count,
+                COUNT(CASE WHEN category = 'other' THEN 1 END) as other_count
+            FROM files
+            WHERE user_id = %s
+        """
+        result = self.db.query_one(sql, (user_id,))
+
+        # 确保返回有效的数据结构
+        if not result:
+            result = {
+                'total_files': 0,
+                'total_size': 0,
+                'document_count': 0,
+                'image_count': 0,
+                'video_count': 0,
+                'audio_count': 0,
+                'archive_count': 0,
+                'other_count': 0
+            }
+
+        # 转换 Decimal 类型为 int/float（确保 JSON 可序列化）
+        total_size = int(result.get('total_size', 0) or 0)
+        result['total_files'] = int(result.get('total_files', 0))
+        result['total_size'] = total_size
+        result['document_count'] = int(result.get('document_count', 0))
+        result['image_count'] = int(result.get('image_count', 0))
+        result['video_count'] = int(result.get('video_count', 0))
+        result['audio_count'] = int(result.get('audio_count', 0))
+        result['archive_count'] = int(result.get('archive_count', 0))
+        result['other_count'] = int(result.get('other_count', 0))
+
+        # 转换总大小为可读格式
+        result['total_size_mb'] = round(total_size / (1024 * 1024), 2)
+        result['total_size_gb'] = round(total_size / (1024 * 1024 * 1024), 3)
+
+        return result
+
+
+class KeywordManager:
+    """关键词管理器（用于AI搜索优化）"""
+
+    def __init__(self, config_file='mysql_config.json'):
+        """初始化关键词管理器"""
+        self.db = MySQLManager(config_file)
+        print("✅ 关键词管理器已初始化")
+
+    def add_keyword(self, keyword, category=None, user_id=None):
+        """添加关键词"""
+        try:
+            # 检查表是否存在，如果不存在则不执行操作
+            tables = self.db.query("SHOW TABLES LIKE 'search_keywords'")
+            if not tables:
+                return None
+
+            sql = """
+                INSERT INTO search_keywords (keyword, category, user_id, count)
+                VALUES (%s, %s, %s, 1)
+                ON DUPLICATE KEY UPDATE count = count + 1
+            """
+            return self.db.execute(sql, (keyword, category, user_id))
+        except Exception as e:
+            print(f"⚠️ 添加关键词失败: {e}")
+            return None
+
+    def get_popular_keywords(self, limit=10, user_id=None):
+        """获取热门关键词"""
+        try:
+            # 检查表是否存在
+            tables = self.db.query("SHOW TABLES LIKE 'search_keywords'")
+            if not tables:
+                return []
+
+            conditions = []
+            params = []
+
+            if user_id is not None:
+                conditions.append("user_id = %s")
+                params.append(user_id)
+
+            where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+
+            sql = f"""
+                SELECT keyword, category, count
+                FROM search_keywords
+                {where_clause}
+                ORDER BY count DESC
+                LIMIT {limit}
+            """
+
+            return self.db.query(sql, params if params else None)
+        except Exception as e:
+            print(f"⚠️ 获取关键词失败: {e}")
+            return []
+
+
 if __name__ == '__main__':
     # 测试数据库连接
     try:
@@ -917,165 +1334,4 @@ if __name__ == '__main__':
         db.close()
     except Exception as e:
         print(f"❌ Database test failed: {e}")
-
-
-# ========================================
-# 关键词管理类（支持动态添加/删除搜索关键词）
-# ========================================
-class KeywordManager:
-    """搜索关键词管理器 - 支持用户自定义和权限控制"""
-
-    def __init__(self, config_file='mysql_config.json'):
-        self.db = MySQLManager(config_file)
-
-    def get_keywords(self, user_id=None):
-        """获取用户可用的所有关键词（系统+全局+用户自定义）"""
-        if user_id is None:
-            # 只返回系统默认关键词
-            sql = "SELECT keyword FROM search_keywords WHERE source='system'"
-            results = self.db.query(sql)
-        else:
-            # 返回：系统默认 + 全局关键词 + 该用户的自定义关键词
-            sql = """
-                SELECT DISTINCT keyword FROM search_keywords
-                WHERE source='system' OR source='global' OR user_id=%s
-                ORDER BY keyword
-            """
-            results = self.db.query(sql, [user_id])
-
-        return [row['keyword'] for row in results]
-
-    def add_keyword(self, keyword, user_id, is_admin=False):
-        """
-        添加关键词
-        - 普通用户：添加为user类型（仅自己可见）
-        - 管理员：添加为global类型（所有人可见）
-        """
-        keyword = keyword.strip()
-        if not keyword:
-            return {'success': False, 'message': '关键词不能为空'}
-
-        if len(keyword) > 50:
-            return {'success': False, 'message': '关键词长度不能超过50个字符'}
-
-        try:
-            if is_admin:
-                # 管理员添加全局关键词
-                sql = """
-                    INSERT INTO search_keywords (user_id, keyword, source, created_by)
-                    VALUES (NULL, %s, 'global', %s)
-                    ON DUPLICATE KEY UPDATE keyword=VALUES(keyword)
-                """
-                self.db.execute(sql, [keyword, user_id])
-                return {'success': True, 'message': f'已添加全局关键词：{keyword}', 'scope': 'global'}
-            else:
-                # 普通用户添加个人关键词
-                sql = """
-                    INSERT INTO search_keywords (user_id, keyword, source, created_by)
-                    VALUES (%s, %s, 'user', %s)
-                    ON DUPLICATE KEY UPDATE keyword=VALUES(keyword)
-                """
-                self.db.execute(sql, [user_id, keyword, user_id])
-                return {'success': True, 'message': f'已添加个人关键词：{keyword}', 'scope': 'user'}
-        except Exception as e:
-            return {'success': False, 'message': f'添加失败：{str(e)}'}
-
-    def delete_keyword(self, keyword, user_id, is_admin=False):
-        """
-        删除关键词（权限控制）
-        - 普通用户：只能删除自己添加的user类型关键词
-        - 管理员：可以删除任何关键词
-        """
-        keyword = keyword.strip()
-        if not keyword:
-            return {'success': False, 'message': '关键词不能为空'}
-
-        try:
-            if is_admin:
-                # 管理员可以删除任何关键词
-                sql = "DELETE FROM search_keywords WHERE keyword=%s"
-                affected = self.db.execute(sql, [keyword])
-                if affected > 0:
-                    return {'success': True, 'message': f'已删除关键词：{keyword}（管理员权限）'}
-                else:
-                    return {'success': False, 'message': f'关键词不存在：{keyword}'}
-            else:
-                # 普通用户只能删除自己添加的user类型关键词
-                sql = """
-                    DELETE FROM search_keywords
-                    WHERE keyword=%s AND user_id=%s AND source='user'
-                """
-                affected = self.db.execute(sql, [keyword, user_id])
-                if affected > 0:
-                    return {'success': True, 'message': f'已删除个人关键词：{keyword}'}
-                else:
-                    return {'success': False, 'message': f'无法删除：该关键词不存在或无权限（只能删除自己添加的关键词）'}
-        except Exception as e:
-            return {'success': False, 'message': f'删除失败：{str(e)}'}
-
-    def list_keywords(self, user_id=None, is_admin=False):
-        """
-        查看关键词列表
-        - 普通用户：显示系统+全局+自己的
-        - 管理员：显示所有
-        """
-        try:
-            if is_admin:
-                # 管理员查看所有（按类型分组）
-                sql = """
-                    SELECT keyword, source, user_id, created_at
-                    FROM search_keywords
-                    ORDER BY source, keyword
-                """
-                results = self.db.query(sql)
-
-                # 按类型分组
-                grouped = {'system': [], 'global': [], 'user': []}
-                for row in results:
-                    grouped[row['source']].append({
-                        'keyword': row['keyword'],
-                        'user_id': row['user_id'],
-                        'created_at': str(row['created_at'])
-                    })
-
-                return {
-                    'success': True,
-                    'data': grouped,
-                    'total': len(results),
-                    'message': f'共{len(results)}个关键词'
-                }
-            else:
-                # 普通用户查看自己可用的
-                sql = """
-                    SELECT keyword, source, created_at
-                    FROM search_keywords
-                    WHERE source='system' OR source='global' OR user_id=%s
-                    ORDER BY source, keyword
-                """
-                results = self.db.query(sql, [user_id])
-
-                # 按类型分组
-                grouped = {'system': [], 'global': [], 'user': []}
-                for row in results:
-                    grouped[row['source']].append({
-                        'keyword': row['keyword'],
-                        'created_at': str(row['created_at'])
-                    })
-
-                return {
-                    'success': True,
-                    'data': grouped,
-                    'total': len(results),
-                    'message': f'共{len(results)}个可用关键词'
-                }
-        except Exception as e:
-            return {'success': False, 'message': f'查询失败：{str(e)}'}
-
-    def is_admin(self, user_id):
-        """检查用户是否是管理员"""
-        if user_id is None:
-            return False
-        sql = "SELECT username FROM users WHERE id=%s"
-        result = self.db.query(sql, [user_id])
-        return len(result) > 0 and result[0]['username'] == 'admin'
 

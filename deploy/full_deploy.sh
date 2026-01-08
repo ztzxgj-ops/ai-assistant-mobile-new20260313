@@ -15,7 +15,7 @@ NC='\033[0m'
 # 配置
 SERVER="47.109.148.176"
 SERVER_USER="root"
-LOCAL_DIR="/Users/a1-6/Documents/GJ/贷款管理科/贷款政策调整/202511"
+LOCAL_DIR="/Users/jry/gj/ai助理/xyMac"
 REMOTE_DIR="/var/www/ai-assistant"
 BACKUP_DIR="/root/backups"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -134,6 +134,18 @@ rsync -avz --progress \
     --exclude='*.log' \
     --exclude='backup_*' \
     --exclude='私人助理v*' \
+    --exclude='node_modules' \
+    --exclude='dist' \
+    --exclude='build' \
+    --exclude='ai-assistant-electron/dist' \
+    --exclude='ai-assistant-electron/node_modules' \
+    --exclude='ai-assistant-mobile' \
+    --exclude='bak' \
+    --exclude='ai-assistant-backup-*' \
+    --exclude='*.zip' \
+    --exclude='*.dmg' \
+    --exclude='*.pkg' \
+    --exclude='*.app' \
     "${LOCAL_DIR}/" "${SERVER_USER}@${SERVER}:${REMOTE_DIR}/"
 
 if [ $? -ne 0 ]; then
@@ -158,8 +170,12 @@ ssh ${SERVER_USER}@${SERVER} << 'DEPLOY_EOF'
 cd /var/www/ai-assistant
 
 echo "========== 安装系统依赖 =========="
-apt update -qq
-apt install -y python3 python3-pip supervisor mysql-client curl wget
+if command -v dnf &> /dev/null; then
+    dnf install -y python3 python3-pip supervisor mysql curl wget
+elif command -v apt &> /dev/null; then
+    apt update -qq
+    apt install -y python3 python3-pip supervisor mysql-client curl wget
+fi
 
 echo ""
 echo "========== 安装Python依赖 =========="
@@ -169,24 +185,51 @@ echo ""
 echo "========== 设置目录权限 =========="
 mkdir -p /var/www/ai-assistant/uploads/avatars
 mkdir -p /var/www/ai-assistant/uploads/images
-chown -R www-data:www-data /var/www/ai-assistant
+
+# 检测Web服务器用户 (nginx 或 www-data)
+WEB_USER="www-data"
+if id "nginx" &>/dev/null; then
+    WEB_USER="nginx"
+elif id "apache" &>/dev/null; then
+    WEB_USER="apache"
+fi
+echo "使用Web用户: $WEB_USER"
+
+chown -R $WEB_USER:$WEB_USER /var/www/ai-assistant
 chmod -R 755 /var/www/ai-assistant
 chmod -R 775 /var/www/ai-assistant/uploads
 
 # 设置配置文件权限
 if [ -f /var/www/ai-assistant/mysql_config.json ]; then
     chmod 600 /var/www/ai-assistant/mysql_config.json
-    chown www-data:www-data /var/www/ai-assistant/mysql_config.json
+    chown $WEB_USER:$WEB_USER /var/www/ai-assistant/mysql_config.json
 fi
 
 if [ -f /var/www/ai-assistant/ai_config.json ]; then
     chmod 600 /var/www/ai-assistant/ai_config.json
-    chown www-data:www-data /var/www/ai-assistant/ai_config.json
+    chown $WEB_USER:$WEB_USER /var/www/ai-assistant/ai_config.json
 fi
 
 echo ""
 echo "========== 配置Supervisor =========="
-cp /var/www/ai-assistant/deploy/supervisor-config.conf /etc/supervisor/conf.d/ai-assistant.conf
+# 检测Supervisor配置目录
+SUPERVISOR_CONF_DIR="/etc/supervisor/conf.d"
+SUPERVISOR_EXT=".conf"
+
+if [ -d "/etc/supervisord.d" ]; then
+    SUPERVISOR_CONF_DIR="/etc/supervisord.d"
+    SUPERVISOR_EXT=".ini"
+fi
+
+TARGET_CONF="$SUPERVISOR_CONF_DIR/ai-assistant$SUPERVISOR_EXT"
+echo "Supervisor配置路径: $TARGET_CONF"
+
+cp /var/www/ai-assistant/deploy/supervisor-config.conf "$TARGET_CONF"
+# 修改运行用户
+sed -i "s/user=www-data/user=$WEB_USER/g" "$TARGET_CONF"
+
+# 启动Supervisor服务
+systemctl enable --now supervisord 2>/dev/null || systemctl enable --now supervisor
 
 # 重载Supervisor
 supervisorctl reread

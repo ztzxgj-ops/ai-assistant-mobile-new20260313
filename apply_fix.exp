@@ -1,0 +1,13 @@
+#!/usr/bin/expect -f
+set timeout 30
+set password "gyq3160GYQ3160"
+
+spawn scp fix_verification_table.sql root@47.109.148.176:/tmp/
+expect "password:"
+send "$password\r"
+expect eof
+
+spawn ssh root@47.109.148.176 "mysql -u ai_assistant -pai_assistant_2024 ai_assistant < /tmp/fix_verification_table.sql && echo 'Done!'"
+expect "password:"
+send "$password\r"
+expect eof

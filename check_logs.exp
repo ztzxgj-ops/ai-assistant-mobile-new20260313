@@ -1,0 +1,9 @@
+#!/usr/bin/expect -f
+set timeout 15
+set password "gyq3160GYQ3160"
+
+puts "查找日志文件..."
+spawn ssh root@47.109.148.176 "ls -la /var/log/supervisor/ && echo '---' && supervisorctl tail -100 ai-assistant stderr"
+expect "password:"
+send "$password\r"
+expect eof

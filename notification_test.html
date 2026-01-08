@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>通知测试</title>
+</head>
+<body>
+    <h1>Electron通知测试页面</h1>
+    <button onclick="testNotification()">测试Electron通知</button>
+    <button onclick="testWebNotification()">测试Web通知</button>
+    <button onclick="checkAPI()">检查API</button>
+    <div id="output" style="margin-top: 20px; white-space: pre-wrap; font-family: monospace;"></div>
+
+    <script>
+        function log(msg) {
+            const output = document.getElementById('output');
+            output.textContent += msg + '\n';
+            console.log(msg);
+        }
+
+        function checkAPI() {
+            log('=== 检查API ===');
+            log('window.electronAPI 存在: ' + (!!window.electronAPI));
+            if (window.electronAPI) {
+                log('showNotification 存在: ' + (!!window.electronAPI.showNotification));
+                log('playSound 存在: ' + (!!window.electronAPI.playSound));
+            }
+            log('Notification API 存在: ' + ('Notification' in window));
+            if ('Notification' in window) {
+                log('Notification 权限: ' + Notification.permission);
+            }
+        }
+
+        function testNotification() {
+            log('=== 测试Electron通知 ===');
+            if (window.electronAPI && window.electronAPI.showNotification) {
+                log('调用 electronAPI.showNotification...');
+                window.electronAPI.showNotification('测试标题', '这是测试内容', false);
+                log('✅ 调用成功');
+            } else {
+                log('❌ electronAPI 不可用');
+            }
+        }
+
+        function testWebNotification() {
+            log('=== 测试Web通知 ===');
+            if ('Notification' in window) {
+                if (Notification.permission === 'granted') {
+                    new Notification('Web通知测试', { body: '这是Web通知' });
+                    log('✅ Web通知已显示');
+                } else if (Notification.permission !== 'denied') {
+                    Notification.requestPermission().then(permission => {
+                        if (permission === 'granted') {
+                            new Notification('Web通知测试', { body: '这是Web通知' });
+                            log('✅ Web通知已显示');
+                        }
+                    });
+                } else {
+                    log('❌ 通知权限被拒绝');
+                }
+            } else {
+                log('❌ 浏览器不支持通知');
+            }
+        }
+
+        // 页面加载时自动检查
+        window.onload = checkAPI;
+    </script>
+</body>
+</html>

@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI助理系统 - 自动备份工具（完整版）</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+
+        .status-ready {
+            background: #28a745;
+            color: white;
+        }
+
+        .status-running {
+            background: #ffc107;
+            color: #333;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        .content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .content {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .card h2 {
+            font-size: 18px;
+            color: #333;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .info-item {
+            background: #f7f9fc;
+            padding: 12px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .info-item label {
+            display: block;
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 3px;
+        }
+
+        .info-item .value {
+            font-size: 13px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #5a6268;
+        }
+
+        .btn-restore {
+            background: #17a2b8;
+            color: white;
+            font-size: 12px;
+            padding: 6px 10px;
+            flex: auto;
+        }
+
+        .btn-restore:hover:not(:disabled) {
+            background: #138496;
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .progress-section {
+            margin-top: 20px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: #e9ecef;
+            border-radius: 3px;
+            overflow: hidden;
+            display: none;
+        }
+
+        .progress-bar.active {
+            display: block;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            animation: loading 1.5s infinite;
+        }
+
+        @keyframes loading {
+            0% { width: 0; }
+            50% { width: 100%; }
+            100% { width: 100%; }
+        }
+
+        .logs {
+            background: #f5f5f5;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 12px;
+            font-size: 12px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 15px;
+            display: none;
+        }
+
+        .logs.active {
+            display: block;
+        }
+
+        .log-line {
+            padding: 2px 0;
+            color: #666;
+        }
+
+        .log-line.error {
+            color: #d32f2f;
+        }
+
+        .log-line.success {
+            color: #388e3c;
+        }
+
+        /* 备份历史样式 */
+        .history-list {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .history-item {
+            background: #f9f9f9;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            border-left: 4px solid #667eea;
+            transition: all 0.3s ease;
+        }
+
+        .history-item:hover {
+            background: #f0f0f0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .history-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .history-time {
+            font-weight: 600;
+            color: #333;
+            font-size: 14px;
+        }
+
+        .history-status {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .status-success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-failed {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .history-details {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 8px;
+        }
+
+        .history-notes {
+            background: white;
+            padding: 8px;
+            border-radius: 4px;
+            margin-bottom: 8px;
+            border: 1px solid #ddd;
+            font-size: 12px;
+            color: #555;
+            min-height: 20px;
+        }
+
+        .history-notes-empty {
+            color: #999;
+            font-style: italic;
+        }
+
+        .history-notes-input {
+            width: 100%;
+            padding: 6px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 12px;
+            resize: none;
+            font-family: inherit;
+        }
+
+        .history-actions {
+            display: flex;
+            gap: 6px;
+            margin-top: 8px;
+        }
+
+        .btn-notes {
+            background: #ffc107;
+            color: #333;
+            border: none;
+            padding: 4px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .btn-notes:hover {
+            background: #ffb300;
+        }
+
+        .btn-restore-action {
+            background: #17a2b8;
+            color: white;
+            border: none;
+            padding: 4px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .btn-restore-action:hover {
+            background: #138496;
+        }
+
+        .alert {
+            padding: 12px 15px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            display: none;
+        }
+
+        .alert.active {
+            display: block;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border-left: 4px solid #28a745;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border-left: 4px solid #dc3545;
+        }
+
+        .alert-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border-left: 4px solid #17a2b8;
+        }
+
+        .footer {
+            text-align: center;
+            color: white;
+            margin-top: 30px;
+            opacity: 0.8;
+            font-size: 14px;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .modal-body {
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 20px;
+            line-height: 1.6;
+        }
+
+        .modal-footer {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 AI助理系统自动备份工具</h1>
+            <p>一键备份云服务器代码、配置和数据库 + 完整历史记录 + 智能恢复</p>
+            <span class="status-badge status-ready" id="serverStatus">🟢 服务就绪</span>
+        </div>
+
+        <div class="alert alert-info active">
+            💡 <strong>提示：</strong>请确保已启动备份服务器（运行 python3 backup_web_server.py）
+        </div>
+
+        <div class="content">
+            <!-- 备份控制区 -->
+            <div class="card">
+                <h2>📦 备份控制</h2>
+
+                <div class="info-grid">
+                    <div class="info-item">
+                        <label>服务器地址</label>
+                        <div class="value">47.109.148.176</div>
+                    </div>
+                    <div class="info-item">
+                        <label>最后备份时间</label>
+                        <div class="value" id="lastBackupTime">加载中...</div>
+                    </div>
+                    <div class="info-item">
+                        <label>备份内容</label>
+                        <div class="value">代码+数据库</div>
+                    </div>
+                    <div class="info-item">
+                        <label>排除目录</label>
+                        <div class="value">uploads/, bak/</div>
+                    </div>
+                </div>
+
+                <div class="button-group">
+                    <button class="btn btn-primary" id="backupBtn" onclick="startBackup()">🟢 开始备份</button>
+                    <button class="btn btn-secondary" id="refreshBtn" onclick="loadHistory()">🔄 刷新历史</button>
+                </div>
+
+                <div class="progress-section">
+                    <div class="progress-bar" id="progressBar">
+                        <div class="progress-fill"></div>
+                    </div>
+                </div>
+
+                <div class="logs" id="logsOutput">
+                    <div class="log-line">📝 日志输出...</div>
+                </div>
+
+                <div class="alert" id="alertBox"></div>
+            </div>
+
+            <!-- 备份历史区 -->
+            <div class="card">
+                <h2>📋 备份历史记录</h2>
+                <div class="history-list" id="historyList">
+                    <div style="text-align: center; color: #999; padding: 20px;">
+                        加载备份历史中...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 恢复确认对话框 -->
+    <div class="modal" id="restoreModal">
+        <div class="modal-content">
+            <div class="modal-header">⚠️ 确认恢复备份</div>
+            <div class="modal-body">
+                <p><strong>您确定要恢复此备份吗？</strong></p>
+                <p style="margin-top: 10px; color: #d32f2f;">⚠️ 恢复操作将：</p>
+                <ul style="margin-left: 20px; margin-top: 5px;">
+                    <li>停止当前的AI助理服务</li>
+                    <li>覆盖服务器上的代码文件</li>
+                    <li>恢复数据库到备份时的状态</li>
+                    <li>重新启动服务</li>
+                </ul>
+                <p style="margin-top: 15px;">此操作不可撤销，请确保您了解后果！</p>
+                <p style="margin-top: 10px; color: #666;">恢复脚本将自动生成，您需要在终端中手动执行。</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeRestoreModal()">取消</button>
+                <button class="btn btn-primary" onclick="confirmRestore()">继续恢复</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        💾 AI助理备份系统 v2.0 | 支持自动备份、历史管理、智能恢复
+    </div>
+
+    <script>
+        const API_BASE = 'http://127.0.0.1:8888';
+        let currentRestoreBackupDir = null;
+
+        // 启动备份
+        async function startBackup() {
+            const btn = document.getElementById('backupBtn');
+            btn.disabled = true;
+            btn.textContent = '⏳ 备份进行中...';
+
+            showProgressBar(true);
+            showLogs(true);
+            clearLogs();
+
+            try {
+                const response = await fetch(`${API_BASE}/api/backup`);
+                const data = await response.json();
+
+                if (data.status === 'started') {
+                    addLog('✅ 备份任务已启动');
+                    await monitorBackupProgress();
+                }
+            } catch (error) {
+                addLog(`❌ 错误: ${error.message}`, 'error');
+                showAlert('启动备份失败: ' + error.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🟢 开始备份';
+                showProgressBar(false);
+            }
+        }
+
+        // 监控备份进度
+        async function monitorBackupProgress() {
+            let isRunning = true;
+
+            while (isRunning) {
+                await new Promise(resolve => setTimeout(resolve, 1000));
+
+                try {
+                    const response = await fetch(`${API_BASE}/api/status`);
+                    const data = await response.json();
+
+                    if (data.output) {
+                        data.output.forEach(line => {
+                            if (line && !document.getElementById('logsOutput').innerText.includes(line)) {
+                                addLog(line);
+                            }
+                        });
+                    }
+
+                    if (data.status !== 'running') {
+                        isRunning = false;
+
+                        if (data.status === 'success') {
+                            showAlert('✅ 备份完成成功！', 'success');
+                            addLog('✅ 备份完成', 'success');
+                            await loadHistory();
+                        } else {
+                            showAlert('❌ 备份失败，请查看日志', 'error');
+                            addLog('❌ 备份失败', 'error');
+                        }
+                    }
+                } catch (error) {
+                    addLog(`⚠️ 监控错误: ${error.message}`, 'error');
+                }
+            }
+        }
+
+        // 加载备份历史
+        async function loadHistory() {
+            try {
+                const response = await fetch(`${API_BASE}/api/history`);
+                const history = await response.json();
+
+                const historyList = document.getElementById('historyList');
+
+                if (!history || history.length === 0) {
+                    historyList.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">暂无备份记录</div>';
+                    document.getElementById('lastBackupTime').textContent = '无';
+                    return;
+                }
+
+                // 更新最后备份时间
+                if (history.length > 0) {
+                    document.getElementById('lastBackupTime').textContent = history[0].timestamp;
+                }
+
+                // 生成历史列表HTML
+                let html = '';
+                history.forEach((item, index) => {
+                    const statusClass = item.status === 'success' ? 'status-success' : 'status-failed';
+                    const statusText = item.status === 'success' ? '成功' : '失败';
+
+                    html += `
+                        <div class="history-item" id="history-${item.id}">
+                            <div class="history-header">
+                                <div class="history-time">🕐 ${item.timestamp}</div>
+                                <span class="history-status ${statusClass}">${statusText}</span>
+                            </div>
+
+                            <div class="history-details">
+                                📁 ${item.backup_dir} | 代码: ${item.code_size} | 数据库: ${item.db_size}
+                            </div>
+
+                            <div class="history-notes" id="notes-display-${item.id}">
+                                <span class="history-notes-empty">无备注</span>
+                            </div>
+
+                            <div class="history-actions">
+                                <button class="btn-notes" onclick="showEditNotes(${item.id}, '${item.notes || ''}')">✏️ 编辑备注</button>
+                                ${item.status === 'success' ? `<button class="btn-restore-action" onclick="prepareRestore('${item.backup_dir}')">🔄 恢复备份</button>` : ''}
+                            </div>
+                        </div>
+                    `;
+                });
+
+                historyList.innerHTML = html;
+
+                // 更新备注显示
+                history.forEach(item => {
+                    if (item.notes) {
+                        document.getElementById(`notes-display-${item.id}`).innerHTML = item.notes;
+                    }
+                });
+
+            } catch (error) {
+                document.getElementById('historyList').innerHTML = `<div style="color: #d32f2f;">加载失败: ${error.message}</div>`;
+            }
+        }
+
+        // 编辑备注
+        function showEditNotes(id, currentNotes) {
+            const notesDiv = document.getElementById(`notes-display-${id}`);
+            const input = document.createElement('textarea');
+            input.className = 'history-notes-input';
+            input.value = currentNotes;
+            input.placeholder = '输入本次备份的说明（如：修复Bug、功能完善等）...';
+
+            const saveBtn = document.createElement('button');
+            saveBtn.className = 'btn-notes';
+            saveBtn.textContent = '💾 保存';
+            saveBtn.onclick = async () => {
+                await saveNotes(id, input.value);
+                loadHistory();
+            };
+
+            const cancelBtn = document.createElement('button');
+            cancelBtn.className = 'btn-notes';
+            cancelBtn.textContent = '❌ 取消';
+            cancelBtn.style.background = '#6c757d';
+            cancelBtn.style.color = 'white';
+            cancelBtn.onclick = loadHistory;
+
+            notesDiv.innerHTML = '';
+            notesDiv.appendChild(input);
+            notesDiv.appendChild(document.createElement('br'));
+            const btnDiv = document.createElement('div');
+            btnDiv.style.marginTop = '6px';
+            btnDiv.style.display = 'flex';
+            btnDiv.style.gap = '6px';
+            btnDiv.appendChild(saveBtn);
+            btnDiv.appendChild(cancelBtn);
+            notesDiv.appendChild(btnDiv);
+        }
+
+        // 保存备注
+        async function saveNotes(id, notes) {
+            try {
+                const response = await fetch(`${API_BASE}/api/update_notes`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id, notes })
+                });
+
+                const result = await response.json();
+                if (result.status === 'success') {
+                    showAlert('✅ 备注已保存', 'success');
+                }
+            } catch (error) {
+                showAlert('❌ 保存失败: ' + error.message, 'error');
+            }
+        }
+
+        // 准备恢复
+        function prepareRestore(backupDir) {
+            currentRestoreBackupDir = backupDir;
+            document.getElementById('restoreModal').classList.add('active');
+        }
+
+        // 关闭恢复对话框
+        function closeRestoreModal() {
+            document.getElementById('restoreModal').classList.remove('active');
+            currentRestoreBackupDir = null;
+        }
+
+        // 确认恢复
+        async function confirmRestore() {
+            closeRestoreModal();
+
+            try {
+                const response = await fetch(`${API_BASE}/api/restore`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ backup_dir: currentRestoreBackupDir })
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    showAlert(`✅ 恢复脚本已生成！请在终端执行：\n\n${result.command}`, 'info');
+                    addLog('✅ 恢复脚本: ' + result.command);
+                } else {
+                    showAlert('❌ 生成恢复脚本失败: ' + result.message, 'error');
+                }
+            } catch (error) {
+                showAlert('❌ 错误: ' + error.message, 'error');
+            }
+        }
+
+        // 日志管理
+        function addLog(message, type = '') {
+            const logsDiv = document.getElementById('logsOutput');
+            const line = document.createElement('div');
+            line.className = 'log-line' + (type ? ' ' + type : '');
+            line.textContent = message;
+            logsDiv.appendChild(line);
+            logsDiv.scrollTop = logsDiv.scrollHeight;
+        }
+
+        function clearLogs() {
+            document.getElementById('logsOutput').innerHTML = '';
+        }
+
+        function showLogs(show) {
+            document.getElementById('logsOutput').classList.toggle('active', show);
+        }
+
+        function showProgressBar(show) {
+            document.getElementById('progressBar').classList.toggle('active', show);
+        }
+
+        // 提示框
+        function showAlert(message, type) {
+            const alert = document.getElementById('alertBox');
+            alert.className = `alert alert-${type} active`;
+            alert.innerHTML = message.replace(/\n/g, '<br>');
+            setTimeout(() => alert.classList.remove('active'), 5000);
+        }
+
+        // 初始化
+        window.addEventListener('load', () => {
+            loadHistory();
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,99 @@
+#!/usr/bin/expect -f
+
+set timeout 60
+set password "gyq3160GYQ3160"
+set server "47.109.148.176"
+set user "root"
+set remote_path "/var/www/ai-assistant/"
+
+puts "=========================================="
+puts "部署验证码功能到云服务器"
+puts "=========================================="
+
+# 上传 verification_service.py
+puts "\n正在上传 verification_service.py..."
+spawn scp verification_service.py $user@$server:$remote_path
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        send "$password\r"
+    }
+}
+expect eof
+
+# 上传 user_manager.py
+puts "\n正在上传 user_manager.py..."
+spawn scp user_manager.py $user@$server:$remote_path
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        send "$password\r"
+    }
+}
+expect eof
+
+# 上传 assistant_web.py
+puts "\n正在上传 assistant_web.py..."
+spawn scp assistant_web.py $user@$server:$remote_path
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        send "$password\r"
+    }
+}
+expect eof
+
+# 上传 aliyun_email_config.json
+puts "\n正在上传 aliyun_email_config.json..."
+spawn scp aliyun_email_config.json $user@$server:$remote_path
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        send "$password\r"
+    }
+}
+expect eof
+
+# 重启服务
+puts "\n正在重启服务器..."
+spawn ssh $user@$server "supervisorctl restart ai-assistant"
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        send "$password\r"
+    }
+}
+expect eof
+
+# 检查服务状态
+puts "\n检查服务状态..."
+spawn ssh $user@$server "supervisorctl status ai-assistant"
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        send "$password\r"
+    }
+}
+expect eof
+
+puts "\n=========================================="
+puts "部署完成！"
+puts "=========================================="

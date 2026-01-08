@@ -1,0 +1,121 @@
+# AI个人助理系统备份说明
+
+## 备份信息
+- **备份时间**: 2025-12-22 01:16:02
+- **备份文件**: ai-assistant-backup-解决文件显示上传下载问题-20251222_011602.tar.gz
+- **备份大小**: 612MB
+- **备份来源**: 云服务器 47.109.148.176:/var/www/ai-assistant
+
+## 本次更新内容
+
+### 文件管理功能完善
+1. **文件上传优化**
+   - 使用原始文件名保存（不再使用UUID）
+   - 重名文件自动添加时间戳（如：文件_1734823456789.docx）
+   - 支持最大1GB文件上传
+
+2. **文件下载修复**
+   - 修复下载时文件名和类型错误问题
+   - 支持URL参数传递token（兼容<a>标签下载）
+   - 正确设置MIME类型（使用original_name而不是UUID）
+   - 支持中文文件名（UTF-8编码）
+
+3. **文件列表显示优化**
+   - 改为表格式布局（类似macOS Finder）
+   - 列：文件名 | 修改日期 | 大小 | 类型 | 操作
+   - 自适应屏幕宽度：
+     * 大屏幕（≥900px）：自动扩展占满整个页面
+     * 中等屏幕（769-899px）：固定宽度+横向滚动
+     * 移动端（≤768px）：垂直堆叠布局
+   - 添加文件类型识别（Microsoft Word/Excel等）
+
+4. **容器宽度优化**
+   - 页面容器从max-width:1400px改为100%
+   - 修复.file-grid的grid布局冲突
+   - 充分利用屏幕空间
+
+## 备份内容
+
+### 包含的文件
+- ✅ 所有Python源代码（*.py）
+- ✅ 配置文件（mysql_config.json, ai_config.json等）
+- ✅ 数据库备份文件（*.sql）
+- ✅ 脚本文件（*.sh）
+- ✅ uploads目录结构（空目录）
+
+### 排除的文件
+- ❌ uploads/files/* （用户上传的文件）
+- ❌ uploads/images/* （用户上传的图片）
+- ❌ uploads/avatars/* （用户头像）
+- ❌ *.pyc（Python编译文件）
+- ❌ __pycache__（缓存目录）
+- ❌ .git（Git仓库）
+
+## 核心文件说明
+
+### 主要代码文件
+- **assistant_web.py** (260KB+): 主HTTP服务器，包含所有API路由和前端HTML
+- **ai_chat_assistant.py**: AI对话核心逻辑
+- **mysql_manager.py**: 数据库管理（包含FileManagerMySQL）
+- **user_manager.py**: 用户认证和会话管理
+- **reminder_scheduler.py**: 提醒系统后台调度器
+- **notification_service.py**: 跨平台通知服务
+
+### 配置文件
+- **mysql_config.json**: MySQL数据库连接配置
+- **ai_config.json**: 通义千问API配置
+- **database_schema.sql**: 数据库表结构
+
+## 恢复方法
+
+### 1. 解压备份
+```bash
+tar -xzf ai-assistant-backup-解决文件显示上传下载问题-20251222_011602.tar.gz -C /var/www/ai-assistant/
+```
+
+### 2. 重启服务
+```bash
+cd /var/www/ai-assistant
+ps aux | grep 'python3 assistant_web.py' | grep -v grep | awk '{print $2}' | xargs kill -9
+nohup python3 assistant_web.py > /var/log/ai-assistant.log 2>&1 &
+```
+
+### 3. 验证服务
+```bash
+netstat -tlnp | grep 8000
+curl http://localhost:8000/api/auth/verify
+```
+
+## 技术细节
+
+### 文件下载接口改进（assistant_web.py:184-244）
+- 支持从URL参数获取token（?token=xxx）
+- 使用original_name猜测MIME类型
+- URL编码中文文件名（filename*=UTF-8''）
+- 增加下载计数统计
+
+### 文件列表布局（assistant_web.py:1587-1730）
+- 响应式Grid布局
+- 三种屏幕断点（900px, 769px, 768px）
+- 覆盖父容器.file-grid的grid布局影响
+
+### 容器宽度（assistant_web.py:1334-1348, 7423-7437）
+- max-width: 100%（普通屏幕）
+- max-width: 1800px（超大屏≥1920px）
+- padding: 30px 40px（左右边距）
+
+## 注意事项
+
+1. **不包含用户数据**：此备份不包含用户上传的文件和图片
+2. **需要配置文件**：mysql_config.json和ai_config.json需要正确配置
+3. **数据库恢复**：如需恢复数据库，使用包含的.sql文件
+4. **文件权限**：恢复后确保uploads目录可写（chmod 775）
+
+## 相关文档
+- CLAUDE.md: 项目架构和开发指南
+- DEPLOYMENT_GUIDE.md: 部署文档
+- DATABASE_SETUP.md: 数据库设置文档
+
+---
+备份创建时间: 2025-12-22 01:16:02
+备份创建者: Claude Code

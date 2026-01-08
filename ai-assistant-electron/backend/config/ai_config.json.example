@@ -1,0 +1,8 @@
+{
+  "model_type": "openai",
+  "api_key": "YOUR_QWEN_API_KEY_HERE",
+  "model_name": "qwen-turbo",
+  "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  "temperature": 0.5,
+  "max_tokens": 300
+}

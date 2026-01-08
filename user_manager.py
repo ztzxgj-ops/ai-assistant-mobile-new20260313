@@ -307,6 +307,30 @@ class UserManager:
             print(f"更新用户头像失败: {e}")
             return False
 
+    def update_phone(self, user_id, phone):
+        """
+        更新用户手机号
+
+        参数:
+            user_id: 用户ID
+            phone: 手机号码
+
+        返回:
+            是否成功
+        """
+        try:
+            sql = """
+                UPDATE users
+                SET phone = %s
+                WHERE id = %s
+            """
+            self.db.execute(sql, (phone, user_id))
+            print(f"✅ 用户手机号已更新: user_id={user_id}, phone={phone}")
+            return True
+        except Exception as e:
+            print(f"更新用户手机号失败: {e}")
+            return False
+
     def update_settings(self, user_id, chat_background=None):
         """
         更新用户设置
@@ -321,20 +345,127 @@ class UserManager:
         try:
             updates = []
             params = []
-            
+
             if chat_background is not None:
                 updates.append("chat_background = %s")
                 params.append(chat_background)
-            
+
             if not updates:
                 return True
-                
+
             params.append(user_id)
             sql = f"UPDATE users SET {', '.join(updates)} WHERE id = %s"
-            
+
             self.db.execute(sql, tuple(params))
             return True
         except Exception as e:
             print(f"更新用户设置失败: {e}")
             return False
+
+    def register_with_verification(self, username, password, email='', phone='',
+                                   email_verified=False, phone_verified=False):
+        """
+        注册新用户（带验证状态）- 用于邮箱/手机验证码注册流程
+
+        参数:
+            username: 用户名
+            password: 密码（明文，将被哈希）
+            email: 邮箱地址（可选）
+            phone: 电话号码（可选）
+            email_verified: 邮箱是否已验证
+            phone_verified: 手机号是否已验证
+
+        返回:
+            字典，包含success、message、user_id字段
+        """
+        # 检查用户名是否已存在
+        existing_user = self.get_user_by_username(username)
+        if existing_user:
+            return {'success': False, 'message': '用户名已存在'}
+
+        # 检查邮箱是否已存在（如果提供了邮箱）
+        if email:
+            existing_email = self.db.query_one("SELECT id FROM users WHERE email = %s", (email,))
+            if existing_email:
+                return {'success': False, 'message': '邮箱已被注册'}
+
+        # 检查手机是否已存在（如果提供了手机号）
+        if phone:
+            existing_phone = self.db.query_one("SELECT id FROM users WHERE phone = %s", (phone,))
+            if existing_phone:
+                return {'success': False, 'message': '手机号已被注册'}
+
+        try:
+            # 插入新用户记录，包含验证状态
+            sql = """
+                INSERT INTO users
+                (username, password_hash, email, phone, email_verified, phone_verified, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            user_id = self.db.execute(sql, (
+                username,
+                self.hash_password(password),
+                email or None,  # 如果为空则存储NULL
+                phone or None,  # 如果为空则存储NULL
+                1 if email_verified else 0,
+                1 if phone_verified else 0,
+                now
+            ))
+
+            print(f"✅ 用户注册成功: username={username}, user_id={user_id}")
+            return {
+                'success': True,
+                'message': '注册成功',
+                'user_id': user_id
+            }
+        except Exception as e:
+            print(f"❌ 注册失败: {str(e)}")
+            return {'success': False, 'message': f'注册失败: {str(e)}'}
+
+    def get_user_by_email(self, email):
+        """
+        通过邮箱获取用户
+
+        参数:
+            email: 邮箱地址
+
+        返回:
+            用户字典，或None
+        """
+        try:
+            sql = """
+                SELECT id, username, password_hash, email, phone,
+                       email_verified, phone_verified, created_at, last_login
+                FROM users
+                WHERE email = %s
+            """
+            result = self.db.query_one(sql, (email,))
+            return result
+        except Exception as e:
+            print(f"查询用户失败: {e}")
+            return None
+
+    def get_user_by_phone(self, phone):
+        """
+        通过手机号获取用户
+
+        参数:
+            phone: 手机号
+
+        返回:
+            用户字典，或None
+        """
+        try:
+            sql = """
+                SELECT id, username, password_hash, email, phone,
+                       email_verified, phone_verified, created_at, last_login
+                FROM users
+                WHERE phone = %s
+            """
+            result = self.db.query_one(sql, (phone,))
+            return result
+        except Exception as e:
+            print(f"查询用户失败: {e}")
+            return None
 

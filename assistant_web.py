@@ -11,6 +11,8 @@ import uuid
 import os
 import re
 from datetime import datetime, timedelta
+from email import message_from_bytes
+from io import BytesIO
 
 # 初始化数据库和管理器
 from mysql_manager import MySQLManager
@@ -18,10 +20,12 @@ from ai_chat_assistant import AIAssistant
 from user_manager import UserManager
 from notification_service import get_notification_service, get_notification_queue
 from reminder_scheduler import get_global_scheduler
+from verification_service import get_verification_manager
 
 db_manager = MySQLManager('mysql_config.json')
 ai_assistant = AIAssistant()
 user_manager = UserManager(db_manager)
+verification_manager = get_verification_manager(db_manager)
 
 # 从AI助手获取管理器
 memory = ai_assistant.memory
@@ -464,6 +468,8 @@ class AssistantHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         """处理POST请求"""
         content_length = int(self.headers['Content-Length'])
+
+        # 处理 JSON 数据
         post_data = self.rfile.read(content_length).decode('utf-8')
         data = json.loads(post_data)
 
@@ -504,6 +510,144 @@ class AssistantHandler(BaseHTTPRequestHandler):
             token = self.headers.get('Authorization', '').replace('Bearer ', '')
             result = user_manager.verify_token(token)
             self.send_json(result)
+
+        # ========================================
+        # 邮箱/手机验证码相关API
+        # ========================================
+
+        elif self.path == '/api/verification/send-code':
+            """发送验证码到邮箱或手机"""
+            contact_type = data.get('contact_type', '')  # 'email' | 'phone'
+            contact_value = data.get('contact_value', '')
+            code_type = data.get('code_type', 'register')  # 'register' | 'reset_password'
+
+            if not contact_type or not contact_value:
+                self.send_json({'success': False, 'message': '请提供联系方式'})
+                return
+
+            if contact_type not in ['email', 'phone']:
+                self.send_json({'success': False, 'message': '联系方式类型错误'})
+                return
+
+            # 对于注册验证码，检查是否已注册
+            if code_type == 'register':
+                if contact_type == 'email':
+                    existing = db_manager.query_one("SELECT id FROM users WHERE email = %s", (contact_value,))
+                else:
+                    existing = db_manager.query_one("SELECT id FROM users WHERE phone = %s", (contact_value,))
+
+                if existing:
+                    self.send_json({'success': False, 'message': '该联系方式已被注册'})
+                    return
+
+            # 发送验证码
+            result = verification_manager.send_code(contact_type, contact_value, code_type)
+            self.send_json(result)
+
+        elif self.path == '/api/verification/verify-code':
+            """验证验证码"""
+            contact_type = data.get('contact_type', '')
+            contact_value = data.get('contact_value', '')
+            code = data.get('code', '')
+            code_type = data.get('code_type', 'register')
+
+            if not all([contact_type, contact_value, code]):
+                self.send_json({'success': False, 'message': '参数不完整'})
+                return
+
+            # 验证验证码
+            result = verification_manager.verify_code(contact_type, contact_value, code, code_type)
+            self.send_json(result)
+
+        elif self.path == '/api/auth/register-with-verification':
+            """用户注册（需要邮箱/手机验证）"""
+            username = data.get('username', '')
+            password = data.get('password', '')
+            email = data.get('email', '')
+            phone = data.get('phone', '')
+            verification_code = data.get('verification_code', '')
+
+            # 基本验证
+            if not username or not password:
+                self.send_json({'success': False, 'message': '用户名和密码不能为空'})
+                return
+
+            if not email and not phone:
+                self.send_json({'success': False, 'message': '请至少提供邮箱或手机号'})
+                return
+
+            if not verification_code:
+                self.send_json({'success': False, 'message': '请输入验证码'})
+                return
+
+            # 验证验证码
+            contact_type = 'email' if email else 'phone'
+            contact_value = email or phone
+
+            verify_result = verification_manager.verify_code(contact_type, contact_value, verification_code, 'register')
+
+            if not verify_result['success']:
+                self.send_json(verify_result)
+                return
+
+            # 创建用户（带验证状态）
+            result = user_manager.register_with_verification(
+                username=username,
+                password=password,
+                email=email,
+                phone=phone,
+                email_verified=bool(email),
+                phone_verified=bool(phone)
+            )
+
+            if not result['success']:
+                self.send_json(result)
+                return
+
+            # 自动登录
+            login_result = user_manager.login(username, password)
+            self.send_json(login_result)
+
+        elif self.path == '/api/auth/reset-password':
+            """重置密码（通过邮箱/手机验证码）"""
+            contact_type = data.get('contact_type', '')
+            contact_value = data.get('contact_value', '')
+            verification_code = data.get('verification_code', '')
+            new_password = data.get('new_password', '')
+
+            if not all([contact_type, contact_value, verification_code, new_password]):
+                self.send_json({'success': False, 'message': '参数不完整'})
+                return
+
+            # 验证验证码
+            verify_result = verification_manager.verify_code(contact_type, contact_value, verification_code, 'reset_password')
+
+            if not verify_result['success']:
+                self.send_json(verify_result)
+                return
+
+            # 查找用户
+            if contact_type == 'email':
+                user = db_manager.query_one("SELECT id FROM users WHERE email = %s", (contact_value,))
+            else:
+                user = db_manager.query_one("SELECT id FROM users WHERE phone = %s", (contact_value,))
+
+            if not user:
+                self.send_json({'success': False, 'message': '用户不存在'})
+                return
+
+            # 更新密码
+            try:
+                new_password_hash = user_manager.hash_password(new_password)
+                db_manager.execute("UPDATE users SET password_hash = %s WHERE id = %s",
+                                  (new_password_hash, user['id']))
+
+                # 清除所有会话
+                db_manager.execute("DELETE FROM user_sessions WHERE user_id = %s", (user['id'],))
+
+                self.send_json({'success': True, 'message': '密码重置成功，请重新登录'})
+            except Exception as e:
+                self.send_json({'success': False, 'message': f'重置失败: {str(e)}'})
 
         elif self.path == '/api/security/set-code':
             # 设置安全验证码
@@ -623,7 +767,8 @@ class AssistantHandler(BaseHTTPRequestHandler):
             if user_id is None:
                 return
             token = self.headers.get('Authorization', '').replace('Bearer ', '')
-            chat_result = ai_assistant.chat(data.get('message', ''), user_id=user_id, file_id=data.get('file_id'), token=token)
+            session_id = self.headers.get('X-Session-ID', '')  # ✨ 获取会话ID
+            chat_result = ai_assistant.chat(data.get('message', ''), user_id=user_id, file_id=data.get('file_id'), token=token, session_id=session_id)  # ✨ 传递session_id
             # 处理新的返回格式（包含response、detected_plans、detected_reminders和completed_plans）
             if isinstance(chat_result, dict):
                 response_data = {
@@ -848,12 +993,15 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     user_id=user_id
                 )
 
-                # 返回图片信息
+                # 返回图片信息 - file_path 格式应为 /uploads/images/xxx.jpg (前端使用)
+                # 注意：前端需要的是URL路径格式（以斜杠开头）
+                relative_path = f"/{file_path}" if not file_path.startswith('/') else file_path
+
                 img = {
                     'id': img_id,
                     'filename': filename,
                     'original_name': original_name,
-                    'file_path': file_path,
+                    'file_path': relative_path,  # 返回格式: /uploads/images/xxx.jpg
                     'description': description,
                     'tags': tags,
                     'file_size': file_size
@@ -924,12 +1072,14 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     user_id=user_id
                 )
 
-                # 返回文件信息
+                # 返回文件信息 - file_path 格式应为 /uploads/files/xxx.pdf (前端使用)
+                relative_path = f"/{file_path}" if not file_path.startswith('/') else file_path
+
                 file_info = {
                     'id': file_id,
                     'filename': filename,
                     'original_name': original_name,
-                    'file_path': file_path,
+                    'file_path': relative_path,  # 返回格式: /uploads/files/xxx.pdf
                     'file_size': file_size,
                     'mime_type': mime_type
                 }
@@ -1108,6 +1258,76 @@ class AssistantHandler(BaseHTTPRequestHandler):
             else:
                 self.send_json({'success': False, 'message': '更新设置失败'}, status=500)
 
+        elif self.path == '/api/user/update-profile':
+            # 更新用户资料
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            phone = data.get('phone')
+
+            if phone is not None:
+                try:
+                    success = user_manager.update_phone(user_id, phone)
+                    if success:
+                        self.send_json({'success': True, 'message': '资料更新成功'})
+                    else:
+                        self.send_json({'success': False, 'message': '更新失败'}, status=500)
+                except Exception as e:
+                    self.send_json({'success': False, 'error': str(e)}, status=500)
+            else:
+                self.send_json({'success': False, 'message': '没有提供要更新的数据'}, status=400)
+
+        elif self.path == '/api/user/upload-avatar':
+            # 上传头像 (使用 base64 编码,与其他上传接口保持一致)
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            try:
+                image_data = data.get('avatar') or data.get('image_data', '')
+
+                if not image_data:
+                    self.send_json({'success': False, 'error': '没有图片数据'}, status=400)
+                    return
+
+                # 解码base64图片
+                if ',' in image_data:
+                    image_data = image_data.split(',')[1]
+
+                image_bytes = base64.b64decode(image_data)
+
+                # 生成唯一文件名
+                filename = f"avatar_{user_id}_{uuid.uuid4().hex}.jpg"
+
+                # 创建 avatars 目录
+                avatar_dir = 'uploads/avatars'
+                os.makedirs(avatar_dir, exist_ok=True)
+
+                file_path = os.path.join(avatar_dir, filename)
+
+                # 保存文件
+                with open(file_path, 'wb') as f:
+                    f.write(image_bytes)
+
+                # 更新用户头像URL
+                avatar_url = f'/uploads/avatars/{filename}'
+                success = user_manager.update_avatar(user_id, avatar_url)
+
+                if success:
+                    self.send_json({
+                        'success': True,
+                        'message': '头像上传成功',
+                        'avatar_url': avatar_url
+                    })
+                else:
+                    self.send_json({'success': False, 'error': '更新头像URL失败'}, status=500)
+            except Exception as e:
+                print(f"头像上传错误: {e}")
+                import traceback
+                traceback.print_exc()
+                self.send_json({'success': False, 'error': str(e)}, status=500)
+
         elif self.path == '/api/user/change-password':
             # 修改密码
             user_id = self.require_auth()
@@ -1234,7 +1454,142 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
         else:
             self.send_error(404)
-    
+
+    def _handle_avatar_upload(self):
+        """处理头像上传 (multipart/form-data)"""
+        # 先检查认证信息
+        auth_header = self.headers.get('Authorization', '')
+        print(f"[DEBUG] Authorization header: {auth_header[:50] if auth_header else 'MISSING'}")
+
+        user_id = self.require_auth()
+        if user_id is None:
+            print("[ERROR] Authentication failed - no valid user_id")
+            return
+
+        print(f"[DEBUG] Authenticated user_id: {user_id}")
+
+        try:
+            # 解析 multipart/form-data
+            content_type = self.headers['Content-Type']
+            content_length = int(self.headers['Content-Length'])
+
+            print(f"[DEBUG] Content-Type: {content_type}")
+            print(f"[DEBUG] Content-Length: {content_length}")
+
+            # 读取原始数据
+            raw_data = self.rfile.read(content_length)
+            print(f"[DEBUG] Read {len(raw_data)} bytes")
+
+            # 提取 boundary
+            if 'boundary=' not in content_type:
+                self.send_json({'success': False, 'error': 'Missing boundary in Content-Type'}, status=400)
+                return
+
+            boundary = content_type.split('boundary=')[1].strip()
+            if boundary.startswith('"') and boundary.endswith('"'):
+                boundary = boundary[1:-1]
+
+            print(f"[DEBUG] Boundary: {boundary}")
+
+            # boundary 的完整格式
+            boundary_bytes = ('--' + boundary).encode('utf-8')
+            end_boundary_bytes = ('--' + boundary + '--').encode('utf-8')
+
+            # 分割数据
+            parts = raw_data.split(boundary_bytes)
+            print(f"[DEBUG] Found {len(parts)} parts")
+
+            image_bytes = None
+            for i, part in enumerate(parts):
+                print(f"[DEBUG] Part {i}: {len(part)} bytes")
+                if len(part) < 10:  # 跳过太小的部分
+                    continue
+
+                # 打印部分头部用于调试
+                header_preview = part[:200] if len(part) > 200 else part
+                print(f"[DEBUG] Part {i} header: {header_preview}")
+
+                # 查找 Content-Disposition 和 filename
+                if b'Content-Disposition' in part:
+                    # 查找双换行符(标志着头部结束)
+                    header_end = part.find(b'\r\n\r\n')
+                    if header_end == -1:
+                        header_end = part.find(b'\n\n')
+
+                    if header_end != -1:
+                        headers = part[:header_end]
+                        body = part[header_end+4:] if b'\r\n\r\n' in part[:header_end+4] else part[header_end+2:]
+
+                        print(f"[DEBUG] Found headers: {headers}")
+                        print(f"[DEBUG] Body length: {len(body)}")
+
+                        # 检查是否有文件内容
+                        if b'filename=' in headers or b'name="avatar"' in headers:
+                            # 移除末尾的 \r\n 或 \n
+                            while body.endswith(b'\r\n') or body.endswith(b'\n') or body.endswith(b'\r'):
+                                body = body.rstrip(b'\r\n')
+
+                            # 移除结束边界
+                            if end_boundary_bytes in body:
+                                body = body.split(end_boundary_bytes)[0]
+
+                            if len(body) > 0:
+                                image_bytes = body
+                                print(f"[DEBUG] Extracted image: {len(image_bytes)} bytes")
+                                break
+
+            if not image_bytes or len(image_bytes) < 100:
+                # 收集调试信息
+                debug_info = []
+                debug_info.append(f"Parts found: {len(parts)}")
+                for i, part in enumerate(parts):
+                    if len(part) > 10 and b'Content-Disposition' in part:
+                        header_end = part.find(b'\r\n\r\n')
+                        if header_end == -1:
+                            header_end = part.find(b'\n\n')
+                        if header_end != -1:
+                            headers_preview = part[:min(header_end, 300)].decode('utf-8', errors='ignore')
+                            debug_info.append(f"Part {i} headers: {headers_preview}")
+
+                error_msg = f'没有找到图片数据 (found {len(image_bytes) if image_bytes else 0} bytes). Debug: {"; ".join(debug_info)}'
+                print(f"[ERROR] {error_msg}")
+                self.send_json({'success': False, 'error': error_msg}, status=400)
+                return
+
+            # 生成唯一文件名
+            filename = f"avatar_{user_id}_{uuid.uuid4().hex}.jpg"
+
+            # 创建 avatars 目录
+            avatar_dir = 'uploads/avatars'
+            os.makedirs(avatar_dir, exist_ok=True)
+
+            file_path = os.path.join(avatar_dir, filename)
+
+            # 保存文件
+            with open(file_path, 'wb') as f:
+                f.write(image_bytes)
+
+            print(f"[DEBUG] Saved to {file_path}")
+
+            # 更新用户头像URL
+            avatar_url = f'/uploads/avatars/{filename}'
+            success = user_manager.update_avatar(user_id, avatar_url)
+
+            if success:
+                print(f"[DEBUG] Avatar updated successfully: {avatar_url}")
+                self.send_json({
+                    'success': True,
+                    'message': '头像上传成功',
+                    'avatar_url': avatar_url
+                })
+            else:
+                self.send_json({'success': False, 'error': '更新头像URL失败'}, status=500)
+        except Exception as e:
+            print(f"头像上传错误: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json({'success': False, 'error': str(e)}, status=500)
+
     def send_json(self, data, status=200):
         """发送JSON响应"""
         self.send_response(status)
@@ -2771,6 +3126,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-visual">
     <title>个人助手</title>
+    <link rel="stylesheet" href="/mobile_ui_patch.css">
     <style>
         * { 
             margin: 0; 
@@ -3155,13 +3511,45 @@ class AssistantHandler(BaseHTTPRequestHandler):
         /* 移动端优化 */
         @media (max-width: 768px) {
             .input-container {
-                padding: 20px 16px 30px;
+                padding: 0 !important; /* 去除内边距 */
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                background: transparent;
+                z-index: 1000;
+            }
+            
+            .input-wrapper {
+                border-radius: 0 !important;
+                background: rgba(255, 255, 255, 0.95) !important;
+                backdrop-filter: blur(10px);
+                border: none !important;
+                border-top: 1px solid rgba(0,0,0,0.1) !important;
+                padding: 8px 12px !important;
+                padding-bottom: max(8px, env(safe-area-inset-bottom)) !important;
+            }
+            
+            textarea#aiInput {
+                background: #f0f2f5 !important;
+                border: 1px solid #ddd !important;
+                border-radius: 20px !important;
+                color: #333 !important;
+                padding: 8px 12px !important;
+            }
+            
+            .send-button {
+                width: 36px;
+                height: 36px;
+                background: #007bff !important;
+                box-shadow: none !important;
             }
         }
 
         @media (max-width: 480px) {
-            .input-container {
-                padding: 20px 12px 30px;
+            #aiChatBox {
+                padding: 80px 16px 20px;
+                gap: 20px;
             }
         }
 
@@ -3171,7 +3559,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
             border-radius: 24px;
             padding: 4px 4px 4px 20px;
             display: flex;
-            align-items: center;
+            align-items: flex-end; /* 底部对齐，适应多行 */
             gap: 12px;
             box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
             border: 1px solid rgba(255, 255, 255, 0.1);
@@ -3182,6 +3570,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
             font-size: 20px;
             cursor: pointer;
             transition: color 0.3s;
+            margin-bottom: 12px; /* 图标底部对齐 */
         }
         
         .input-icon:hover {
@@ -3223,11 +3612,11 @@ class AssistantHandler(BaseHTTPRequestHandler):
         textarea { 
             resize: none; 
             min-height: 24px; /* 初始高度 */
-            max-height: 120px; /* JS会覆盖此最大高度 */
+            max-height: 120px; /* 约5行高度 */
             font-family: inherit;
-            line-height: 1.5em; /* 确保 line-height 为 em 单位，方便计算 */
-            padding: 10px 0; /* 调整 padding，确保垂直居中并计算准确 */
-            overflow-y: hidden; /* 隐藏滚动条 */
+            line-height: 1.5em;
+            padding: 10px 0;
+            overflow-y: hidden; /* 默认隐藏滚动条 */
         }
         
         textarea::placeholder {
@@ -3909,7 +4298,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 margin: 0 !important; 
                 padding: 0 !important; 
                 overflow: hidden !important; 
-                background: #f7f7f8 !important; 
+                /* background: #f7f7f8 !important;  已移除：允许显示用户自定义背景 */
                 color: #1a1a1a !important; 
                 position: fixed !important; /* iOS 防抖动核心 */
             }
@@ -3959,46 +4348,68 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 left: 0 !important; 
                 right: 0 !important;
                 width: 100% !important;
-                background: #fff !important; 
-                border-top: 1px solid #dadce0 !important; 
+                background: transparent !important; 
                 
                 /* 关键修改：移除底部 padding，消除与键盘辅助栏的间隙 */
-                padding: 10px 12px 10px 12px !important; 
+                padding: 0 !important; 
                 
                 display: flex !important; 
-                align-items: center !important; 
-                gap: 8px !important; 
+                align-items: flex-end !important; 
+                gap: 0 !important;
                 z-index: 2000 !important; 
-                min-height: 60px !important; 
+                min-height: auto !important; 
             }
             
-            .input-area input, .input-container textarea { 
+            .input-wrapper {
+                border-radius: 0 !important;
+                background: rgba(255, 255, 255, 0.1) !important; /* 半透明背景 */
+                backdrop-filter: blur(10px);
+                border: none !important;
+                border-top: 1px solid rgba(255,255,255,0.1) !important;
+                padding: 8px 12px !important;
+                padding-bottom: max(8px, env(safe-area-inset-bottom)) !important;
+                width: 100% !important;
+                margin: 0 !important;
+                display: flex !important;
+                align-items: flex-end !important;
+                gap: 10px !important;
+            }
+            
+            .input-area input, .input-container textarea, textarea#aiInput { 
                 flex: 1 !important; 
-                height: 38px !important; 
+                min-height: 36px !important; 
+                max-height: 120px !important;
                 border: 1px solid #ddd !important; 
-                background: #f0f2f5 !important; 
-                border-radius: 19px !important; 
-                padding: 0 16px !important; 
+                background: #ffffff !important; 
+                border-radius: 20px !important; 
+                padding: 8px 12px !important; 
                 font-size: 16px !important; 
-                color: #000 !important; 
+                color: #333 !important; 
                 margin: 0 !important;
                 appearance: none !important;
-                
-                /* 尝试隐藏辅助栏的组合拳 */
-                autocomplete: off !important;
-                autocorrect: off !important;
-                spellcheck: false !important;
+                resize: none !important;
+                line-height: 20px !important;
             }
 
-            .input-area button {
-                background: #10a37f !important;
+            .input-area button, .send-button {
+                background: #007bff !important;
                 color: white !important;
                 border: none !important;
-                border-radius: 20px !important;
-                padding: 0 20px !important;
-                height: 38px !important;
-                font-weight: 600 !important;
-                min-width: 60px !important;
+                border-radius: 50% !important;
+                padding: 0 !important;
+                width: 36px !important;
+                height: 36px !important;
+                margin: 0 0 1px 0 !important;
+                min-width: 36px !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                box-shadow: none !important;
+            }
+            
+            .send-button span {
+                font-size: 16px !important;
+                margin-left: 2px !important;
             }
             
             /* 5. 样式修复 */
@@ -4126,7 +4537,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                             <div class="input-wrapper">
                                 <input type="file" id="imageUpload" accept="image/*" multiple style="display:none" onchange="handleImageSelect(event)">
                                 <input type="file" id="fileUpload" style="display:none" onchange="handleFileSelect(event)">
-                                <textarea id="aiInput" rows="1" placeholder="How can I help you?" onkeydown="handleAIKeyPress(event)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="search" name="chat_input" data-form-type="other"></textarea>
+                                <textarea id="aiInput" rows="1" placeholder="How can I help you?" oninput="autoResizeTextarea(this)" onkeydown="handleAIKeyPress(event)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="search" name="chat_input" data-form-type="other"></textarea>
                                 <button class="send-button" onclick="sendAI()">
                                     <span style="font-size: 24px;">▶</span>
                                 </button>
@@ -5439,6 +5850,21 @@ class AssistantHandler(BaseHTTPRequestHandler):
             });
             
             alert('提醒已创建');
+
+            // 发送给 Flutter App 添加日历
+            if (window.FlutterApp) {
+                try {
+                    window.FlutterApp.postMessage(JSON.stringify({
+                        type: 'add_calendar_event',
+                        title: 'AI助理: ' + title,
+                        description: content,
+                        startTime: time
+                    }));
+                } catch (e) {
+                    console.error('发送日历事件失败:', e);
+                }
+            }
+            
             closeModal();
             loadReminders();
             const tabElem = document.querySelectorAll('.tab')[3];
@@ -5798,9 +6224,10 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + localStorage.getItem('token')
+                        'Authorization': 'Bearer ' + localStorage.getItem('token'),
+                        'X-Session-ID': getOrCreateSessionId() // ✨ 添加会话ID
                     },
-                    body: JSON.stringify({ 
+                    body: JSON.stringify({
                         message: message,
                         file_id: currentFileId // 传递文件ID
                     })
@@ -5820,15 +6247,44 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 
                 // 处理识别到的计划（如果有）
                 if (data.detected_plans && data.detected_plans.length > 0) {
-                    data.detected_plans.forEach(plan => {
-                        showPlanConfirmation(plan);
-                    });
+                    // TODO: 实现showPlanConfirmation函数
+                    // data.detected_plans.forEach(plan => {
+                    //     showPlanConfirmation(plan);
+                    // });
+                    console.log('检测到计划:', data.detected_plans);
                 }
 
                 // 处理识别到的提醒
                 if (data.detected_reminders && data.detected_reminders.length > 0) {
                     // 刷新提醒列表
                     loadReminders();
+
+                    // 调试：弹窗确认是否进入此逻辑
+                    // alert('Web端捕获到 ' + data.detected_reminders.length + ' 个提醒，准备写入日历');
+
+                    // 发送给 Flutter App 添加日历
+                    if (window.FlutterApp) {
+                        try {
+                            data.detected_reminders.forEach(reminder => {
+                                const message = {
+                                    type: 'add_calendar_event',
+                                    title: 'AI助理: ' + (reminder.content || '提醒事项'),
+                                    description: reminder.content || '',
+                                    startTime: reminder.remind_time
+                                };
+                                // 如果有循环类型，添加到消息中
+                                if (reminder.recurrence) {
+                                    message.recurrence = reminder.recurrence;
+                                }
+                                window.FlutterApp.postMessage(JSON.stringify(message));
+                            });
+                            // alert('✅ 已发送指令给App'); // 成功发送
+                        } catch (e) {
+                            alert('❌ 发送失败: ' + e);
+                        }
+                    } else {
+                        // alert('⚠️ 未检测到 FlutterApp 环境'); // 关键调试点
+                    }
                 }
 
             } catch (error) {
@@ -6122,13 +6578,29 @@ class AssistantHandler(BaseHTTPRequestHandler):
         }
 
         // ==================== 用户认证 ====================
+        // ✨ 获取或生成浏览器会话ID（存储在sessionStorage，关闭浏览器后清空）
+        function getOrCreateSessionId() {
+            let sessionId = sessionStorage.getItem('browser_session_id');
+            if (!sessionId) {
+                // 生成新的会话ID（UUID格式）
+                sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                sessionStorage.setItem('browser_session_id', sessionId);
+                console.log('🔑 生成新的浏览器会话ID:', sessionId);
+            }
+            return sessionId;
+        }
+
         function fetchWithAuth(url, options = {}) {
             const token = localStorage.getItem('token');
+            const sessionId = getOrCreateSessionId(); // ✨ 获取会话ID
             const headers = options.headers || {};
 
             if (token) {
                 headers['Authorization'] = 'Bearer ' + token;
             }
+
+            // ✨ 添加会话ID到请求头
+            headers['X-Session-ID'] = sessionId;
 
             return fetch(url, {
                 ...options,
@@ -8502,6 +8974,19 @@ class AssistantHandler(BaseHTTPRequestHandler):
             if (e.key === 'Escape') {
                 closeModal();
             }
+        });
+
+        // 开机自检逻辑 (调试用)
+        window.addEventListener('load', function() {
+            setTimeout(function() {
+                // alert('Web端代码已更新v3'); 
+
+                if (window.FlutterApp) {
+                    // alert('✅ FlutterApp通信桥接成功');
+                } else {
+                    // alert('⚠️ 未检测到FlutterApp (如果是手机端则有问题)');
+                }
+            }, 1000);
         });
     </script>
 </body>

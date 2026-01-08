@@ -1,0 +1,8 @@
+#!/usr/bin/expect -f
+set timeout 15
+set password "gyq3160GYQ3160"
+
+spawn ssh root@47.109.148.176 "supervisorctl status ai-assistant && echo '---' && tail -10 /var/log/ai-assistant.log"
+expect "password:"
+send "$password\r"
+expect eof

@@ -1,0 +1,21 @@
+#!/usr/bin/expect -f
+set timeout 600
+set password "102330"
+
+# 1. 切换路径
+spawn sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+expect "Password:"
+send "$password\r"
+expect eof
+
+# 2. 接受许可协议
+spawn sudo xcodebuild -license accept
+expect "Password:"
+send "$password\r"
+expect eof
+
+# 3. 运行初始化
+spawn sudo xcodebuild -runFirstLaunch
+expect "Password:"
+send "$password\r"
+expect eof

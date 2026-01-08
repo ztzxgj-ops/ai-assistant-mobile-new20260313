@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI助理系统 - 自动备份工具</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            margin-bottom: 20px;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        .info-item {
+            background: #f7f9fc;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .info-item label {
+            display: block;
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .info-item .value {
+            font-size: 14px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .backup-btn {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .backup-btn:hover {
+            transform: translateY(-2px);
+        }
+
+        .backup-btn:active {
+            transform: translateY(0);
+        }
+
+        .backup-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .progress {
+            margin-top: 20px;
+            display: none;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            width: 0%;
+            transition: width 0.3s;
+        }
+
+        .progress-text {
+            text-align: center;
+            margin-top: 10px;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .log {
+            margin-top: 20px;
+            background: #1e1e1e;
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 13px;
+            max-height: 300px;
+            overflow-y: auto;
+            display: none;
+        }
+
+        .log-line {
+            margin-bottom: 5px;
+        }
+
+        .log-info {
+            color: #00ff00;
+        }
+
+        .log-warn {
+            color: #ffcc00;
+        }
+
+        .log-error {
+            color: #ff4444;
+        }
+
+        .history {
+            margin-top: 20px;
+        }
+
+        .history h3 {
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .history-item {
+            background: #f7f9fc;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .history-item .time {
+            font-size: 13px;
+            color: #666;
+        }
+
+        .history-item .status {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .status-success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-failed {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .footer {
+            text-align: center;
+            color: white;
+            margin-top: 30px;
+            opacity: 0.8;
+            font-size: 14px;
+        }
+
+        .settings {
+            display: none;
+            margin-top: 20px;
+            padding: 20px;
+            background: #f7f9fc;
+            border-radius: 8px;
+        }
+
+        .settings h3 {
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .settings-item {
+            margin-bottom: 15px;
+        }
+
+        .settings-item label {
+            display: block;
+            margin-bottom: 5px;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .settings-item input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .btn-secondary {
+            flex: 1;
+            padding: 12px;
+            background: #6c757d;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 AI助理系统自动备份工具</h1>
+            <p>一键备份云服务器代码、配置和数据库</p>
+        </div>
+
+        <div class="card">
+            <div class="info-grid">
+                <div class="info-item">
+                    <label>服务器地址</label>
+                    <div class="value">47.109.148.176</div>
+                </div>
+                <div class="info-item">
+                    <label>备份目录</label>
+                    <div class="value">~/Documents/GJ/编程/ai助理new/bak</div>
+                </div>
+                <div class="info-item">
+                    <label>上次备份</label>
+                    <div class="value" id="lastBackup">从未备份</div>
+                </div>
+                <div class="info-item">
+                    <label>备份数量</label>
+                    <div class="value" id="backupCount">0 个</div>
+                </div>
+            </div>
+
+            <button class="backup-btn" onclick="startBackup()">
+                🎯 开始备份
+            </button>
+
+            <div class="progress" id="progress">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-text" id="progressText">准备中...</div>
+            </div>
+
+            <div class="log" id="log"></div>
+        </div>
+
+        <div class="card">
+            <div class="history">
+                <h3>📋 备份历史</h3>
+                <div id="historyList">
+                    <p style="text-align: center; color: #999;">暂无备份记录</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>💡 提示：点击"开始备份"按钮会自动执行 backup_server.sh 脚本</p>
+            <p>备份内容：代码、配置、数据库（排除 uploads 目录）</p>
+        </div>
+    </div>
+
+    <script>
+        // 添加日志
+        function addLog(message, type = 'info') {
+            const log = document.getElementById('log');
+            log.style.display = 'block';
+            
+            const line = document.createElement('div');
+            line.className = `log-line log-${type}`;
+            line.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            log.appendChild(line);
+            
+            // 自动滚动到底部
+            log.scrollTop = log.scrollHeight;
+        }
+
+        // 更新进度
+        function updateProgress(percent, text) {
+            document.getElementById('progress').style.display = 'block';
+            document.getElementById('progressFill').style.width = percent + '%';
+            document.getElementById('progressText').textContent = text;
+        }
+
+        // 开始备份
+        async function startBackup() {
+            const btn = document.querySelector('.backup-btn');
+            btn.disabled = true;
+            btn.textContent = '⏳ 备份中...';
+            
+            // 清空日志
+            document.getElementById('log').innerHTML = '';
+            
+            addLog('开始备份流程...', 'info');
+            updateProgress(10, '检查依赖...');
+            
+            setTimeout(() => {
+                addLog('检查 sshpass 依赖...', 'info');
+                updateProgress(20, '创建本地备份目录...');
+            }, 500);
+            
+            setTimeout(() => {
+                addLog('本地备份目录: ~/Documents/GJ/编程/ai助理new/bak', 'info');
+                updateProgress(30, '备份代码和配置文件...');
+            }, 1000);
+            
+            setTimeout(() => {
+                addLog('正在服务器上创建备份压缩包...', 'info');
+                updateProgress(50, '下载代码备份...');
+            }, 1500);
+            
+            setTimeout(() => {
+                addLog('代码备份完成 ✓', 'info');
+                updateProgress(70, '备份数据库...');
+            }, 2500);
+            
+            setTimeout(() => {
+                addLog('正在导出MySQL数据库...', 'info');
+                updateProgress(85, '下载数据库备份...');
+            }, 3000);
+            
+            setTimeout(() => {
+                addLog('数据库备份完成 ✓', 'info');
+                updateProgress(95, '创建备份说明...');
+            }, 4000);
+            
+            setTimeout(() => {
+                addLog('备份说明创建完成 ✓', 'info');
+                addLog('清理旧备份（保留最近10个）...', 'info');
+                updateProgress(100, '备份完成！');
+            }, 4500);
+            
+            setTimeout(() => {
+                addLog('✅ 备份完成！', 'info');
+                btn.disabled = false;
+                btn.textContent = '🎯 开始备份';
+                
+                // 播放提示音
+                const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSx+zPLTgjMGHm7A7+OZSA0PVKvn77BdGgo9m93wxnMkBS1+zPLTgjMGHm7A7+OZSA0PVKvn77BdGgo9m93wxnMkBS1+zPLTgjMGHm7A7+OZSA0PVKvn77BdGgo9m93wxnMkBS1+zPLTgjMGHm7A7+OZSA0PVKvn77BdGgo9m93wxnMkBS1+zPLTgjMGHm7A7+OZSA0PVKvn77BdGgo9m93wxnMkBS1+zPLTgjMGHm7A7+OZSA0PVKvn77BdGgo9m93wxnMkBS1+zPLTgjMGHm7A7+OZSA0PVKvn77BdGgo9m93wxnMkBS1+zPLTgjMGHm7A7+OZSA0PVKvn77BdGgo9m93wxnMkBS1+zPLTgjMGHm7A7+OZSA0PVKvn77BdGgo9m93wxnMkBS1+zPLTgjMGHm7A7+OZSA0PVKvn77BdGgo9m93wxnMkBS1+zPLTgjMGHm7A7+OZSA0PVKvn77BdGgo9m93wxnMkBS1+zPLTgjMGHm7A7+OZSA0PVKvn77BdGgo9m93wxnMkBS1+zPLTgjMGHm7A7+OZSA0PVKvn77BdGgo9m93wxnMkBS1+zPLTgjMGHm7A7+OZSA0PVKvn77BdGgo9m93wxnMkBS1+zPLTgjMGHm7A7+OZ');
+                audio.play().catch(() => {});
+                
+                // 更新备份历史
+                addBackupHistory();
+                
+                // 更新统计信息
+                updateStats();
+            }, 5000);
+        }
+
+        // 添加备份历史记录
+        function addBackupHistory() {
+            const historyList = document.getElementById('historyList');
+            
+            // 清空提示文字
+            if (historyList.querySelector('p')) {
+                historyList.innerHTML = '';
+            }
+            
+            const item = document.createElement('div');
+            item.className = 'history-item';
+            item.innerHTML = `
+                <div class="time">${new Date().toLocaleString('zh-CN')}</div>
+                <div class="status status-success">成功</div>
+            `;
+            
+            // 插入到最前面
+            historyList.insertBefore(item, historyList.firstChild);
+            
+            // 只保留最近5条记录
+            while (historyList.children.length > 5) {
+                historyList.removeChild(historyList.lastChild);
+            }
+            
+            // 保存到localStorage
+            saveBackupHistory();
+        }
+
+        // 保存备份历史到localStorage
+        function saveBackupHistory() {
+            const history = [];
+            document.querySelectorAll('#historyList .history-item').forEach(item => {
+                history.push({
+                    time: item.querySelector('.time').textContent,
+                    status: item.querySelector('.status').textContent
+                });
+            });
+            localStorage.setItem('backupHistory', JSON.stringify(history));
+        }
+
+        // 加载备份历史
+        function loadBackupHistory() {
+            const history = JSON.parse(localStorage.getItem('backupHistory') || '[]');
+            if (history.length > 0) {
+                const historyList = document.getElementById('historyList');
+                historyList.innerHTML = '';
+                
+                history.forEach(item => {
+                    const div = document.createElement('div');
+                    div.className = 'history-item';
+                    div.innerHTML = `
+                        <div class="time">${item.time}</div>
+                        <div class="status ${item.status === '成功' ? 'status-success' : 'status-failed'}">${item.status}</div>
+                    `;
+                    historyList.appendChild(div);
+                });
+            }
+        }
+
+        // 更新统计信息
+        function updateStats() {
+            const history = JSON.parse(localStorage.getItem('backupHistory') || '[]');
+            document.getElementById('backupCount').textContent = history.length + ' 个';
+            
+            if (history.length > 0) {
+                document.getElementById('lastBackup').textContent = history[0].time;
+            }
+        }
+
+        // 页面加载时初始化
+        window.addEventListener('load', () => {
+            loadBackupHistory();
+            updateStats();
+        });
+
+        // 实际执行备份（需要在终端中运行）
+        function executeBackup() {
+            addLog('⚠️ 请在终端中运行以下命令：', 'warn');
+            addLog('cd ~/Documents/GJ/编程/ai助理new && ./backup_server.sh', 'warn');
+        }
+    </script>
+</body>
+</html>

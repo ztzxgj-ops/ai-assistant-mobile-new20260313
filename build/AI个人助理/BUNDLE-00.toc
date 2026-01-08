@@ -1,0 +1,1 @@
+([('AI个人助理', '/Users/jry/gj/ai助理/xyMac/dist/AI个人助理', 'EXECUTABLE')],)

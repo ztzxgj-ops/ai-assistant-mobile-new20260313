@@ -1,0 +1,9 @@
+#!/usr/bin/expect -f
+set timeout 10
+set password "gyq3160GYQ3160"
+set server "47.109.148.176"
+
+spawn ssh root@$server "tail -50 /var/log/ai-assistant-error.log"
+expect "password:"
+send "$password\r"
+expect eof

@@ -1,0 +1,27 @@
+#!/usr/bin/expect -f
+set timeout 30
+set password "gyq3160GYQ3160"
+
+spawn ssh root@47.109.148.176
+expect "password:"
+send "$password\r"
+expect "# "
+
+send "cd /var/www/ai-assistant\r"
+expect "# "
+
+send "python3 -c 'import verification_service'\r"
+expect {
+    "Error" {
+        puts "发现错误！"
+    }
+    "# " {
+        puts "导入成功"
+    }
+}
+
+send "python3 assistant_web.py 2>&1 | head -5\r"
+expect "# "
+
+send "exit\r"
+expect eof

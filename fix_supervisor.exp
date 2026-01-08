@@ -1,0 +1,21 @@
+#!/usr/bin/expect -f
+set timeout 30
+set password "gyq3160GYQ3160"
+
+puts "检查supervisor配置..."
+spawn ssh root@47.109.148.176 "cat /etc/supervisor/conf.d/ai-assistant.conf"
+expect "password:"
+send "$password\r"
+expect eof
+
+puts "\n\n尝试重新加载配置并启动..."
+spawn ssh root@47.109.148.176 "supervisorctl reread && supervisorctl update && supervisorctl start ai-assistant"
+expect "password:"
+send "$password\r"
+expect eof
+
+puts "\n\n检查状态..."
+spawn ssh root@47.109.148.176 "supervisorctl status ai-assistant"
+expect "password:"
+send "$password\r"
+expect eof

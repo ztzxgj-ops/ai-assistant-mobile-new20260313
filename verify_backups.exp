@@ -1,0 +1,18 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+set password "gyq3160GYQ3160"
+set server "47.109.148.176"
+set user "root"
+
+spawn ssh $user@$server "ls -lh /var/www/ai-assistant/bak/ai-assistant-xcode* 2>/dev/null || echo '未找到备份文件'"
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        send "$password\r"
+    }
+}
+expect eof

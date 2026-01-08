@@ -1,0 +1,8 @@
+#!/usr/bin/expect -f
+set timeout 15
+set password "gyq3160GYQ3160"
+
+spawn ssh root@47.109.148.176 "mysql -u ai_assistant -pai_assistant_2024 ai_assistant -e \"SELECT code, contact_value, created_at, expires_at FROM verification_codes WHERE contact_value='394276035@qq.com' ORDER BY created_at DESC LIMIT 1;\""
+expect "password:"
+send "$password\r"
+expect eof
