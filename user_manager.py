@@ -220,7 +220,7 @@ class UserManager:
         """
         try:
             sql = """
-                SELECT id, username, password_hash, phone, avatar_url, chat_background, created_at, last_login
+                SELECT id, username, password_hash, phone, avatar_url, chat_background, theme, created_at, last_login
                 FROM users
                 WHERE id = %s
             """
