@@ -377,6 +377,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     'phone': user['phone'],
                     'avatar_url': user.get('avatar_url', ''),
                     'chat_background': user.get('chat_background', ''),
+                    'theme': user.get('theme', 'light'),
                     'created_at': user.get('created_at', '').strftime('%Y-%m-%d %H:%M:%S') if hasattr(user.get('created_at', ''), 'strftime') else str(user.get('created_at', ''))
                 }
                 self.send_json({'success': True, 'user': user_profile})
