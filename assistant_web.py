@@ -1265,18 +1265,40 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 return
 
             phone = data.get('phone')
+            theme = data.get('theme')
+            chat_background = data.get('chat_background')
 
-            if phone is not None:
-                try:
-                    success = user_manager.update_phone(user_id, phone)
-                    if success:
-                        self.send_json({'success': True, 'message': '资料更新成功'})
-                    else:
-                        self.send_json({'success': False, 'message': '更新失败'}, status=500)
-                except Exception as e:
-                    self.send_json({'success': False, 'error': str(e)}, status=500)
-            else:
+            # 至少需要一个字段
+            if phone is None and theme is None and chat_background is None:
                 self.send_json({'success': False, 'message': '没有提供要更新的数据'}, status=400)
+                return
+
+            try:
+                # 更新电话
+                if phone is not None:
+                    success = user_manager.update_phone(user_id, phone)
+                    if not success:
+                        self.send_json({'success': False, 'message': '更新电话失败'}, status=500)
+                        return
+
+                # 更新主题
+                if theme is not None:
+                    success = user_manager.update_theme(user_id, theme)
+                    if not success:
+                        self.send_json({'success': False, 'message': '更新主题失败'}, status=500)
+                        return
+
+                # 更新对话背景
+                if chat_background is not None:
+                    success = user_manager.update_chat_background(user_id, chat_background)
+                    if not success:
+                        self.send_json({'success': False, 'message': '更新对话背景失败'}, status=500)
+                        return
+
+                self.send_json({'success': True, 'message': '资料更新成功'})
+            except Exception as e:
+                print(f"更新用户资料错误: {e}")
+                self.send_json({'success': False, 'error': str(e)}, status=500)
 
         elif self.path == '/api/user/upload-avatar':
             # 上传头像 (使用 base64 编码,与其他上传接口保持一致)

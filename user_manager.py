@@ -331,6 +331,54 @@ class UserManager:
             print(f"更新用户手机号失败: {e}")
             return False
 
+    def update_theme(self, user_id, theme):
+        """
+        更新用户主题
+
+        参数:
+            user_id: 用户ID
+            theme: 主题名称 (light/dark/auto/candy/sunset/ocean)
+
+        返回:
+            是否成功
+        """
+        try:
+            sql = """
+                UPDATE users
+                SET theme = %s
+                WHERE id = %s
+            """
+            self.db.execute(sql, (theme, user_id))
+            print(f"✅ 用户主题已更新: user_id={user_id}, theme={theme}")
+            return True
+        except Exception as e:
+            print(f"更新用户主题失败: {e}")
+            return False
+
+    def update_chat_background(self, user_id, chat_background):
+        """
+        更新用户对话背景
+
+        参数:
+            user_id: 用户ID
+            chat_background: 对话背景URL路径
+
+        返回:
+            是否成功
+        """
+        try:
+            sql = """
+                UPDATE users
+                SET chat_background = %s
+                WHERE id = %s
+            """
+            self.db.execute(sql, (chat_background, user_id))
+            print(f"✅ 用户对话背景已更新: user_id={user_id}, chat_background={chat_background}")
+            return True
+        except Exception as e:
+            print(f"更新用户对话背景失败: {e}")
+            return False
+
     def update_settings(self, user_id, chat_background=None):
         """
         更新用户设置
