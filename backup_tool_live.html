@@ -451,6 +451,43 @@
             <div class="card">
                 <h2>📦 备份控制</h2>
 
+                <!-- 备份类型选择 -->
+                <div style="margin-bottom: 20px;">
+                    <label style="display: block; font-size: 14px; color: #333; margin-bottom: 10px; font-weight: 600;">
+                        📦 备份类型选择
+                    </label>
+                    <div style="display: grid; grid-template-columns: 1fr; gap: 12px;">
+                        <label style="display: flex; align-items: center; padding: 15px; background: #f7f9fc; border-radius: 8px; cursor: pointer; border: 2px solid #667eea; box-shadow: 0 2px 4px rgba(102, 126, 234, 0.1);">
+                            <input type="radio" name="backupType" value="standard" checked style="margin-right: 12px; width: 20px; height: 20px;">
+                            <div style="flex: 1;">
+                                <div style="font-weight: 600; color: #333; margin-bottom: 4px; font-size: 15px;">📦 标准备份（推荐日常使用）</div>
+                                <div style="font-size: 12px; color: #666; margin-bottom: 6px;">
+                                    云服务器代码 + 数据库 + 配置 + 移动端 + 桌面端 + 依赖包
+                                </div>
+                                <div style="font-size: 11px; color: #999; display: flex; gap: 15px;">
+                                    <span>⏱️ 约3-5分钟</span>
+                                    <span>📦 约50-150MB</span>
+                                    <span style="color: #f59e0b;">⚠️ 不含用户上传文件</span>
+                                </div>
+                            </div>
+                        </label>
+                        <label style="display: flex; align-items: center; padding: 15px; background: #f7f9fc; border-radius: 8px; cursor: pointer; border: 2px solid transparent;">
+                            <input type="radio" name="backupType" value="complete" style="margin-right: 12px; width: 20px; height: 20px;">
+                            <div style="flex: 1;">
+                                <div style="font-weight: 600; color: #333; margin-bottom: 4px; font-size: 15px;">🎯 完整备份（重大版本推荐）</div>
+                                <div style="font-size: 12px; color: #666; margin-bottom: 6px;">
+                                    标准备份 + uploads用户上传文件（头像、图片、文件）
+                                </div>
+                                <div style="font-size: 11px; color: #999; display: flex; gap: 15px;">
+                                    <span>⏱️ 约5-10分钟</span>
+                                    <span>📦 约100-300MB</span>
+                                    <span style="color: #10b981;">✅ 完全备份所有内容</span>
+                                </div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
                 <div class="info-grid">
                     <div class="info-item">
                         <label>服务器地址</label>
@@ -461,12 +498,12 @@
                         <div class="value" id="lastBackupTime">加载中...</div>
                     </div>
                     <div class="info-item">
-                        <label>备份内容</label>
-                        <div class="value">代码+数据库</div>
+                        <label>当前备份类型</label>
+                        <div class="value" id="currentBackupType">快速备份</div>
                     </div>
                     <div class="info-item">
-                        <label>排除目录</label>
-                        <div class="value">uploads/, bak/</div>
+                        <label>备份数量</label>
+                        <div class="value" id="backupCount">0 个</div>
                     </div>
                 </div>
 
@@ -537,12 +574,24 @@
             btn.disabled = true;
             btn.textContent = '⏳ 备份进行中...';
 
+            // 获取选中的备份类型
+            const backupType = document.querySelector('input[name="backupType"]:checked').value;
+
+            // 更新当前备份类型显示
+            const typeNames = {
+                'standard': '标准备份',
+                'complete': '完整备份'
+            };
+            document.getElementById('currentBackupType').textContent = typeNames[backupType];
+
             showProgressBar(true);
             showLogs(true);
             clearLogs();
 
+            addLog(`📦 备份类型: ${typeNames[backupType]}`);
+
             try {
-                const response = await fetch(`${API_BASE}/api/backup`);
+                const response = await fetch(`${API_BASE}/api/backup?type=${backupType}`);
                 const data = await response.json();
 
                 if (data.status === 'started') {
@@ -613,6 +662,7 @@
                 // 更新最后备份时间
                 if (history.length > 0) {
                     document.getElementById('lastBackupTime').textContent = history[0].timestamp;
+                    document.getElementById('backupCount').textContent = `${history.length} 个`;
                 }
 
                 // 生成历史列表HTML
@@ -780,7 +830,32 @@
         // 初始化
         window.addEventListener('load', () => {
             loadHistory();
+            setupBackupTypeListeners();
         });
+
+        // 设置备份类型选择监听
+        function setupBackupTypeListeners() {
+            const radios = document.querySelectorAll('input[name="backupType"]');
+            radios.forEach(radio => {
+                radio.addEventListener('change', function() {
+                    // 移除所有选项的边框
+                    document.querySelectorAll('label').forEach(label => {
+                        if (label.querySelector('input[name="backupType"]')) {
+                            label.style.border = '2px solid transparent';
+                        }
+                    });
+                    // 为选中项添加边框
+                    this.closest('label').style.border = '2px solid #667eea';
+
+                    // 更新当前备份类型显示
+                    const typeNames = {
+                        'standard': '标准备份',
+                        'complete': '完整备份'
+                    };
+                    document.getElementById('currentBackupType').textContent = typeNames[this.value];
+                });
+            });
+        }
     </script>
 </body>
 </html>

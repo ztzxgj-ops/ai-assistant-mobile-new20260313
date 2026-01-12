@@ -1,5 +1,689 @@
 [
   {
+    "id": 41,
+    "timestamp": "2026-01-12 15:30:25",
+    "backup_dir": "backup-20260112-152955",
+    "status": "success",
+    "notes": "完成开发：登录后免密登录",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260112-152955.tar.gz",
+        "size": 11851743
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260112-152955.sql",
+        "size": 697265
+      }
+    }
+  },
+  {
+    "id": 40,
+    "timestamp": "2026-01-12 09:37:38",
+    "backup_dir": "backup-20260112-093713",
+    "status": "success",
+    "notes": "备份类型: 标准备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260112-093713.tar.gz",
+        "size": 11805834
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260112-093713.sql",
+        "size": 695571
+      }
+    }
+  },
+  {
+    "id": 39,
+    "timestamp": "2026-01-12 09:35:57",
+    "backup_dir": "backup-20260112-093533",
+    "status": "success",
+    "notes": "备份类型: 标准备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260112-093533.tar.gz",
+        "size": 11805860
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260112-093533.sql",
+        "size": 695571
+      }
+    }
+  },
+  {
+    "id": 38,
+    "timestamp": "2026-01-12 02:04:16",
+    "backup_dir": "backup-20260112-020405",
+    "status": "success",
+    "notes": "备份类型: 标准备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260112-020405.tar.gz",
+        "size": 11623969
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260112-020405.sql",
+        "size": 694018
+      }
+    }
+  },
+  {
+    "id": 37,
+    "timestamp": "2026-01-12 02:03:34",
+    "backup_dir": "backup-20260112-020323",
+    "status": "success",
+    "notes": "备份类型: 标准备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260112-020323.tar.gz",
+        "size": 11623990
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260112-020323.sql",
+        "size": 694018
+      }
+    }
+  },
+  {
+    "id": 36,
+    "timestamp": "2026-01-12 01:55:30",
+    "backup_dir": "backup-20260112-015519",
+    "status": "success",
+    "notes": "完成 app 文件管理颜色随主题变化。",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260112-015519.tar.gz",
+        "size": 11400152
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260112-015519.sql",
+        "size": 694018
+      }
+    }
+  },
+  {
+    "id": 35,
+    "timestamp": "2026-01-12 00:57:44",
+    "backup_dir": "backup-20260112-005731",
+    "status": "success",
+    "notes": "文件管理中文件检索标签对应显示修复。",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260112-005731.tar.gz",
+        "size": 11399297
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260112-005731.sql",
+        "size": 690534
+      }
+    }
+  },
+  {
+    "id": 34,
+    "timestamp": "2026-01-11 22:15:15",
+    "backup_dir": "backup-20260111-221502",
+    "status": "success",
+    "notes": "1.增加完成文件管理功能；2.增加密码修改功能。",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260111-221502.tar.gz",
+        "size": 11391531
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260111-221502.sql",
+        "size": 688454
+      }
+    }
+  },
+  {
+    "id": 33,
+    "timestamp": "2026-01-11 21:03:08",
+    "backup_dir": "backup-20260111-210254",
+    "status": "success",
+    "notes": "备份类型: 标准备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260111-210254.tar.gz",
+        "size": 11389792
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260111-210254.sql",
+        "size": 687989
+      }
+    }
+  },
+  {
+    "id": 32,
+    "timestamp": "2026-01-11 15:47:20",
+    "backup_dir": "backup-20260111-154627",
+    "status": "success",
+    "notes": "备份类型: 标准备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260111-154627.tar.gz",
+        "size": 11380043
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260111-154627.sql",
+        "size": 719246
+      }
+    }
+  },
+  {
+    "id": 31,
+    "timestamp": "2026-01-11 15:21:34",
+    "backup_dir": "backup-20260111-152034",
+    "status": "success",
+    "notes": "备份类型: 标准备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260111-152034.tar.gz",
+        "size": 11380075
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260111-152034.sql",
+        "size": 719138
+      }
+    }
+  },
+  {
+    "id": 30,
+    "timestamp": "2026-01-11 14:35:12",
+    "backup_dir": "backup-20260111-143425",
+    "status": "success",
+    "notes": "备份类型: 标准备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260111-143425.tar.gz",
+        "size": 11380097
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260111-143425.sql",
+        "size": 719030
+      }
+    }
+  },
+  {
+    "id": 29,
+    "timestamp": "2026-01-11 14:31:37",
+    "backup_dir": "backup-20260111-143042",
+    "status": "success",
+    "notes": "备份类型: 标准备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260111-143042.tar.gz",
+        "size": 11380098
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260111-143042.sql",
+        "size": 719030
+      }
+    }
+  },
+  {
+    "id": 28,
+    "timestamp": "2026-01-11 14:29:14",
+    "backup_dir": "backup-20260111-142826",
+    "status": "success",
+    "notes": "备份类型: 标准备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260111-142826.tar.gz",
+        "size": 11380056
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260111-142826.sql",
+        "size": 719030
+      }
+    }
+  },
+  {
+    "id": 27,
+    "timestamp": "2026-01-11 14:23:18",
+    "backup_dir": "backup-20260111-142318",
+    "status": "failed",
+    "notes": "备份类型: 标准备份",
+    "error": "\n\u001b[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n\u001b[0;34m上传备份到云服务器\u001b[0m\n\u001b[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260111-142318.tar.gz",
+        "size": 11380054
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260111-142318.sql",
+        "size": 0
+      }
+    }
+  },
+  {
+    "id": 26,
+    "timestamp": "2026-01-11 00:10:28",
+    "backup_dir": "backup-20260111-001027",
+    "status": "failed",
+    "notes": "备份类型: 标准备份",
+    "error": "\n\u001b[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n\u001b[0;34m上传备份到云服务器\u001b[0m\n\u001b[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260111-001027.tar.gz",
+        "size": 11377602
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260111-001027.sql",
+        "size": 0
+      }
+    }
+  },
+  {
+    "id": 25,
+    "timestamp": "2026-01-09 16:00:16",
+    "backup_dir": "backup-20260109-155840",
+    "status": "success",
+    "notes": "备份类型: 完整备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260109-155840.tar.gz",
+        "size": 49080265
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260109-155840.sql",
+        "size": 705019
+      }
+    }
+  },
+  {
+    "id": 24,
+    "timestamp": "2026-01-09 15:59:42",
+    "backup_dir": "backup-20260109-155858",
+    "status": "success",
+    "notes": "备份类型: 标准备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260109-155858.tar.gz",
+        "size": 11537603
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260109-155858.sql",
+        "size": 705019
+      }
+    }
+  },
+  {
+    "id": 23,
+    "timestamp": "2026-01-09 15:56:18",
+    "backup_dir": "backup-20260109-155502",
+    "status": "success",
+    "notes": "备份类型: 完整备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260109-155502.tar.gz",
+        "size": 49081936
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260109-155502.sql",
+        "size": 705019
+      }
+    }
+  },
+  {
+    "id": 22,
+    "timestamp": "2026-01-09 15:48:35",
+    "backup_dir": "backup-20260109-154711",
+    "status": "success",
+    "notes": "备份类型: 完整备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260109-154711.tar.gz",
+        "size": 49083848
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260109-154711.sql",
+        "size": 705019
+      }
+    }
+  },
+  {
+    "id": 21,
+    "timestamp": "2026-01-09 15:47:51",
+    "backup_dir": "backup-20260109-154632",
+    "status": "success",
+    "notes": "备份类型: 完整备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260109-154632.tar.gz",
+        "size": 49081304
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260109-154632.sql",
+        "size": 705019
+      }
+    }
+  },
+  {
+    "id": 20,
+    "timestamp": "2026-01-09 15:37:26",
+    "backup_dir": "backup-20260109-153656",
+    "status": "success",
+    "notes": "新备份方式和程序测试（增加云服务器保存备份）。 ",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260109-153656.tar.gz",
+        "size": 11540853
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260109-153656.sql",
+        "size": 705019
+      }
+    }
+  },
+  {
+    "id": 19,
+    "timestamp": "2026-01-09 15:21:37",
+    "backup_dir": "backup-20260109-152117",
+    "status": "success",
+    "notes": "新备份方式和程序测试。\n脚本终端命令：cd /Users/a1-6/Documents/GJ/编程/ai助理new\n                         python3 backup_web_server.py",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260109-152117.tar.gz",
+        "size": 11540840
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260109-152117.sql",
+        "size": 705019
+      }
+    }
+  },
+  {
+    "id": 18,
+    "timestamp": "2026-01-09 15:16:08",
+    "backup_dir": "backup-20260109-151551",
+    "status": "success",
+    "notes": "脚本终端命令：cd /Users/a1-6/Documents/GJ/编程/ai助理new \npython3 backup_web_server.py",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260109-151551.tar.gz",
+        "size": 11538985
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260109-151551.sql",
+        "size": 705019
+      }
+    }
+  },
+  {
+    "id": 17,
+    "timestamp": "2026-01-09 15:09:33",
+    "backup_dir": "backup-20260109-150925",
+    "status": "failed",
+    "notes": "备份类型: 标准备份",
+    "error": "\u001b[0;32m✓\u001b[0m RECOVERY_GUIDE.md\n\u001b[0;32m✓\u001b[0m BACKUP_INFO.txt\n\n正在打包代码和项目文件 (可能需要几分钟)...\n修复文件权限，确保解压后可访问...",
+    "files": {
+      "code": {
+        "name": null,
+        "size": 0
+      },
+      "database": {
+        "name": null,
+        "size": 0
+      }
+    }
+  },
+  {
+    "id": 16,
+    "timestamp": "2026-01-09 15:08:25",
+    "backup_dir": "backup-20260109-150817",
+    "status": "failed",
+    "notes": "备份类型: 标准备份",
+    "error": "\u001b[0;32m✓\u001b[0m RECOVERY_GUIDE.md\n\u001b[0;32m✓\u001b[0m BACKUP_INFO.txt\n\n正在打包代码和项目文件 (可能需要几分钟)...\n修复文件权限，确保解压后可访问...",
+    "files": {
+      "code": {
+        "name": null,
+        "size": 0
+      },
+      "database": {
+        "name": null,
+        "size": 0
+      }
+    }
+  },
+  {
+    "id": 15,
+    "timestamp": "2026-01-09 09:03:40",
+    "backup_dir": "backup-20260109-090311",
+    "status": "success",
+    "notes": "备份类型: 标准备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260109-090311.tar.gz",
+        "size": 11539374
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260109-090311.sql",
+        "size": 700315
+      }
+    }
+  },
+  {
+    "id": 14,
+    "timestamp": "2026-01-09 09:03:10",
+    "backup_dir": "backup-20260109-090246",
+    "status": "success",
+    "notes": "备份类型: 标准备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260109-090246.tar.gz",
+        "size": 11538539
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260109-090246.sql",
+        "size": 700315
+      }
+    }
+  },
+  {
+    "id": 13,
+    "timestamp": "2026-01-09 07:52:12",
+    "backup_dir": "backup-20260109-075158",
+    "status": "success",
+    "notes": "备份类型: 标准备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260109-075158.tar.gz",
+        "size": 11534372
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260109-075158.sql",
+        "size": 699718
+      }
+    }
+  },
+  {
+    "id": 12,
+    "timestamp": "2026-01-09 07:21:30",
+    "backup_dir": "backup-20260109-072117",
+    "status": "success",
+    "notes": "备份类型: 标准备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260109-072117.tar.gz",
+        "size": 11535920
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260109-072117.sql",
+        "size": 699718
+      }
+    }
+  },
+  {
+    "id": 11,
+    "timestamp": "2026-01-09 03:16:27",
+    "backup_dir": "backup-20260109-031615",
+    "status": "success",
+    "notes": "备份类型: 标准备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260109-031615.tar.gz",
+        "size": 11536322
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260109-031615.sql",
+        "size": 699718
+      }
+    }
+  },
+  {
+    "id": 10,
+    "timestamp": "2026-01-09 03:01:38",
+    "backup_dir": "standard_system_backup_20260109_030127",
+    "status": "success",
+    "notes": "备份类型: 标准备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": null,
+        "size": 0
+      },
+      "database": {
+        "name": null,
+        "size": 0
+      }
+    }
+  },
+  {
+    "id": 9,
+    "timestamp": "2026-01-09 02:59:52",
+    "backup_dir": "standard_system_backup_20260109_025940",
+    "status": "success",
+    "notes": "备份类型: 标准备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": null,
+        "size": 0
+      },
+      "database": {
+        "name": null,
+        "size": 0
+      }
+    }
+  },
+  {
+    "id": 8,
+    "timestamp": "2026-01-09 02:59:27",
+    "backup_dir": "standard_system_backup_20260109_025914",
+    "status": "success",
+    "notes": "备份类型: 标准备份",
+    "error": "",
+    "files": {
+      "code": {
+        "name": null,
+        "size": 0
+      },
+      "database": {
+        "name": null,
+        "size": 0
+      }
+    }
+  },
+  {
+    "id": 7,
+    "timestamp": "2026-01-09 02:55:47",
+    "backup_dir": "standard_system_backup_20260109_025543",
+    "status": "failed",
+    "notes": "备份类型: 标准备份",
+    "error": "\n\u001b[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n\u001b[0;34m上传备份到云服务器\u001b[0m\n\u001b[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n",
+    "files": {
+      "code": {
+        "name": null,
+        "size": 0
+      },
+      "database": {
+        "name": null,
+        "size": 0
+      }
+    }
+  },
+  {
+    "id": 6,
+    "timestamp": "2026-01-09 02:55:37",
+    "backup_dir": "standard_system_backup_20260109_025532",
+    "status": "failed",
+    "notes": "备份类型: 标准备份",
+    "error": "\n\u001b[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n\u001b[0;34m上传备份到云服务器\u001b[0m\n\u001b[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n",
+    "files": {
+      "code": {
+        "name": null,
+        "size": 0
+      },
+      "database": {
+        "name": null,
+        "size": 0
+      }
+    }
+  },
+  {
+    "id": 5,
+    "timestamp": "2026-01-09 02:55:29",
+    "backup_dir": "standard_system_backup_20260109_025524",
+    "status": "failed",
+    "notes": "备份类型: 标准备份",
+    "error": "\n\u001b[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n\u001b[0;34m上传备份到云服务器\u001b[0m\n\u001b[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n",
+    "files": {
+      "code": {
+        "name": null,
+        "size": 0
+      },
+      "database": {
+        "name": null,
+        "size": 0
+      }
+    }
+  },
+  {
+    "id": 4,
+    "timestamp": "2026-01-09 01:06:22",
+    "backup_dir": "backup-20260109-010615",
+    "status": "success",
+    "notes": "成功增加：主题设置、对话背景。",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260109-010615.tar.gz",
+        "size": 170835
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260109-010615.sql",
+        "size": 698035
+      }
+    }
+  },
+  {
     "id": 3,
     "timestamp": "2026-01-08 16:56:18",
     "backup_dir": "backup-20260108-165607",
@@ -22,7 +706,7 @@
     "timestamp": "2026-01-08 16:20:19",
     "backup_dir": "backup-20260108-161959",
     "status": "success",
-    "notes": "测试备份系统",
+    "notes": "测试备份系统       脚本终端命令：cd /Users/a1-6/Documents/GJ/编程/ai助理new              python3 backup_web_server.py",
     "error": "",
     "files": {
       "code": {

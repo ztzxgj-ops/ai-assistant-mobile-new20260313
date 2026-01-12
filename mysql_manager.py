@@ -1022,16 +1022,73 @@ class FileManagerMySQL:
 
     def _get_category_from_mime(self, mime_type):
         """根据MIME类型自动识别文件分类"""
-        if not mime_type:
+        if not mime_type or mime_type.strip() == '':
             return 'other'
-        return self.MIME_TO_CATEGORY.get(mime_type, 'other')
+
+        mime_type = mime_type.strip().lower()
+
+        # 1. 尝试精确匹配
+        if mime_type in self.MIME_TO_CATEGORY:
+            return self.MIME_TO_CATEGORY[mime_type]
+
+        # 2. 尝试前缀匹配（处理未在映射表中的MIME类型）
+        if mime_type.startswith('image/'):
+            return 'image'
+        elif mime_type.startswith('video/'):
+            return 'video'
+        elif mime_type.startswith('audio/'):
+            return 'audio'
+        elif mime_type.startswith('text/') or 'document' in mime_type or 'word' in mime_type or 'excel' in mime_type or 'powerpoint' in mime_type or 'sheet' in mime_type or 'presentation' in mime_type:
+            return 'document'
+        elif 'zip' in mime_type or 'rar' in mime_type or 'tar' in mime_type or 'gzip' in mime_type or '7z' in mime_type or 'compress' in mime_type:
+            return 'archive'
+
+        # 3. 默认返回other
+        return 'other'
+
+    def _get_mime_from_extension(self, filename):
+        """根据文件扩展名推断MIME类型"""
+        import os
+        ext = os.path.splitext(filename)[1].lower()
+
+        mime_map = {
+            # 图片
+            '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+            '.gif': 'image/gif', '.bmp': 'image/bmp', '.webp': 'image/webp',
+            '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+            # 视频
+            '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.avi': 'video/x-msvideo',
+            '.mkv': 'video/x-matroska', '.webm': 'video/webm', '.flv': 'video/x-flv',
+            '.wmv': 'video/x-ms-wmv', '.m4v': 'video/x-m4v',
+            # 音频
+            '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
+            '.m4a': 'audio/mp4', '.flac': 'audio/flac', '.aac': 'audio/aac',
+            # 文档
+            '.pdf': 'application/pdf', '.doc': 'application/msword',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.xls': 'application/vnd.ms-excel',
+            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            '.ppt': 'application/vnd.ms-powerpoint',
+            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            '.txt': 'text/plain', '.csv': 'text/csv',
+            # 压缩包
+            '.zip': 'application/zip', '.rar': 'application/x-rar-compressed',
+            '.7z': 'application/x-7z-compressed', '.tar': 'application/x-tar',
+            '.gz': 'application/gzip',
+        }
+
+        return mime_map.get(ext, 'application/octet-stream')
 
     def add_file(self, filename, original_name, file_path, file_size, mime_type=None,
-                 description=None, tags=None, category=None, user_id=None):
+                 description=None, tags=None, category=None, thumbnail_path=None, user_id=None):
         """添加文件记录"""
         # 检查文件大小
         if file_size > self.MAX_FILE_SIZE:
             raise ValueError(f"文件大小超过限制（最大1GB），当前大小: {file_size / (1024*1024):.2f}MB")
+
+        # 如果mime_type为空或为通用类型，根据文件扩展名推断
+        if not mime_type or mime_type == 'application/octet-stream':
+            mime_type = self._get_mime_from_extension(original_name)
 
         # 自动识别分类
         if category is None and mime_type:
@@ -1040,14 +1097,14 @@ class FileManagerMySQL:
         sql = """
             INSERT INTO files
             (user_id, filename, original_name, file_path, file_size, mime_type,
-             description, tags, category)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+             description, tags, category, thumbnail_path)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         tags_json = json.dumps(tags or [], ensure_ascii=False) if tags else None
 
         file_id = self.db.execute(sql, (
             user_id, filename, original_name, file_path, file_size, mime_type,
-            description, tags_json, category or 'other'
+            description, tags_json, category or 'other', thumbnail_path
         ))
         print(f"✅ 文件已添加到数据库: {original_name} (ID={file_id}, 大小={file_size / (1024*1024):.2f}MB)")
         return file_id
@@ -1078,7 +1135,7 @@ class FileManagerMySQL:
 
         sql = f"""
             SELECT id, filename, original_name, file_path, file_size, mime_type,
-                   description, tags, category, download_count, created_at, updated_at
+                   description, tags, category, download_count, thumbnail_path, created_at, updated_at
             FROM files
             WHERE {where_clause}
             ORDER BY created_at DESC
@@ -1115,7 +1172,7 @@ class FileManagerMySQL:
         if user_id is not None:
             sql = """
                 SELECT id, filename, original_name, file_path, file_size, mime_type,
-                       description, tags, category, download_count, created_at, updated_at
+                       description, tags, category, download_count, thumbnail_path, created_at, updated_at
                 FROM files
                 WHERE id = %s AND user_id = %s
             """
@@ -1123,7 +1180,7 @@ class FileManagerMySQL:
         else:
             sql = """
                 SELECT id, filename, original_name, file_path, file_size, mime_type,
-                       description, tags, category, download_count, created_at, updated_at
+                       description, tags, category, download_count, thumbnail_path, created_at, updated_at
                 FROM files
                 WHERE id = %s
             """
@@ -1227,7 +1284,8 @@ class FileManagerMySQL:
                 COUNT(CASE WHEN category = 'video' THEN 1 END) as video_count,
                 COUNT(CASE WHEN category = 'audio' THEN 1 END) as audio_count,
                 COUNT(CASE WHEN category = 'archive' THEN 1 END) as archive_count,
-                COUNT(CASE WHEN category = 'other' THEN 1 END) as other_count
+                COUNT(CASE WHEN category = 'other' THEN 1 END) as other_count,
+                COUNT(CASE WHEN DATE(created_at) = CURDATE() THEN 1 END) as today_uploads
             FROM files
             WHERE user_id = %s
         """
@@ -1243,7 +1301,8 @@ class FileManagerMySQL:
                 'video_count': 0,
                 'audio_count': 0,
                 'archive_count': 0,
-                'other_count': 0
+                'other_count': 0,
+                'today_uploads': 0
             }
 
         # 转换 Decimal 类型为 int/float（确保 JSON 可序列化）
@@ -1256,6 +1315,7 @@ class FileManagerMySQL:
         result['audio_count'] = int(result.get('audio_count', 0))
         result['archive_count'] = int(result.get('archive_count', 0))
         result['other_count'] = int(result.get('other_count', 0))
+        result['today_uploads'] = int(result.get('today_uploads', 0))
 
         # 转换总大小为可读格式
         result['total_size_mb'] = round(total_size / (1024 * 1024), 2)

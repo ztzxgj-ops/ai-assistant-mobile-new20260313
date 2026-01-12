@@ -1,0 +1,22 @@
+PODS:
+  - FlutterMacOS (1.0.0)
+  - reminders (0.0.1):
+    - FlutterMacOS
+
+DEPENDENCIES:
+  - FlutterMacOS (from `Flutter/ephemeral`)
+  - reminders (from `Flutter/ephemeral/.symlinks/plugins/reminders/macos`)
+
+EXTERNAL SOURCES:
+  FlutterMacOS:
+    :path: Flutter/ephemeral
+  reminders:
+    :path: Flutter/ephemeral/.symlinks/plugins/reminders/macos
+
+SPEC CHECKSUMS:
+  FlutterMacOS: 8f6f14fa908a6fb3fba0cd85dbd81ec4b251fb24
+  reminders: dfd6a7a34eb2bd50d18dc55e6292a8a585de397d
+
+PODFILE CHECKSUM: eb5c9a9bfb6e54dafe46129279e62c3398ca7b6a
+
+COCOAPODS: 1.15.2

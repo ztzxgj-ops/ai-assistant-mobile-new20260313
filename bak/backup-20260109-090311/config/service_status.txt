@@ -1,0 +1,1 @@
+ai-assistant                     RUNNING   pid 3663015, uptime 7:59:24

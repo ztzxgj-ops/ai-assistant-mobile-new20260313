@@ -10,6 +10,7 @@ import base64
 import uuid
 import os
 import re
+import subprocess
 from datetime import datetime, timedelta
 from email import message_from_bytes
 from io import BytesIO
@@ -33,6 +34,57 @@ reminder_sys = ai_assistant.reminder
 image_manager = ai_assistant.image_manager
 file_manager = ai_assistant.file_manager
 planner = ai_assistant.planner
+
+def extract_video_thumbnail(video_path, thumbnail_path, size="200x200"):
+    """提取视频第一帧作为缩略图
+
+    Args:
+        video_path: 视频文件路径
+        thumbnail_path: 缩略图保存路径
+        size: 缩略图尺寸，默认 200x200
+
+    Returns:
+        bool: 成功返回 True，失败返回 False
+    """
+    try:
+        # 确保缩略图目录存在
+        thumbnail_dir = os.path.dirname(thumbnail_path)
+        if not os.path.exists(thumbnail_dir):
+            os.makedirs(thumbnail_dir, exist_ok=True)
+
+        # 使用 FFmpeg 提取视频第一帧
+        cmd = [
+            'ffmpeg',
+            '-i', video_path,
+            '-ss', '00:00:01',
+            '-vframes', '1',
+            '-vf', f'scale={size}',
+            '-y',  # 覆盖已存在的文件
+            thumbnail_path
+        ]
+
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30  # 30秒超时
+        )
+
+        if result.returncode == 0 and os.path.exists(thumbnail_path):
+            print(f"✅ 视频缩略图生成成功: {thumbnail_path}")
+            return True
+        else:
+            print(f"❌ 视频缩略图生成失败: {result.stderr.decode('utf-8', errors='ignore')}")
+            return False
+    except subprocess.TimeoutExpired:
+        print(f"❌ 视频缩略图生成超时: {video_path}")
+        return False
+    except FileNotFoundError:
+        print("❌ FFmpeg 未安装，无法生成视频缩略图。请安装: brew install ffmpeg")
+        return False
+    except Exception as e:
+        print(f"❌ 视频缩略图生成异常: {e}")
+        return False
 
 class AssistantHandler(BaseHTTPRequestHandler):
 
@@ -132,6 +184,41 @@ class AssistantHandler(BaseHTTPRequestHandler):
             # 允许加载主页HTML，前端会通过checkLogin()检查Token
             # 如果Token无效会重定向到/login
             self.send_html()
+        elif self.path.startswith('/uploads/'):
+            # 提供静态文件服务（图片、视频、文件等）
+            try:
+                # 移除开头的斜杠，获取相对路径
+                file_path = self.path[1:]  # 去掉开头的 /
+
+                # 安全检查：防止路径遍历攻击
+                if '..' in file_path:
+                    self.send_error(403, 'Forbidden')
+                    return
+
+                # 检查文件是否存在
+                if not os.path.exists(file_path):
+                    self.send_error(404, 'File not found')
+                    return
+
+                # 根据文件扩展名确定 Content-Type
+                import mimetypes
+                content_type, _ = mimetypes.guess_type(file_path)
+                if content_type is None:
+                    content_type = 'application/octet-stream'
+
+                # 读取并发送文件
+                with open(file_path, 'rb') as f:
+                    file_content = f.read()
+
+                self.send_response(200)
+                self.send_header('Content-type', content_type)
+                self.send_header('Content-Length', len(file_content))
+                self.send_header('Cache-Control', 'public, max-age=31536000')  # 缓存1年
+                self.end_headers()
+                self.wfile.write(file_content)
+            except Exception as e:
+                print(f"❌ 提供静态文件失败: {e}")
+                self.send_error(500, f'Internal server error: {e}')
         elif self.path.startswith('/mobile_ui_patch.css'):
             # 提供手机端CSS补丁
             try:
@@ -1061,6 +1148,20 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 with open(file_path, 'wb') as f:
                     f.write(file_bytes)
 
+                # 如果是视频文件，生成缩略图
+                thumbnail_path = None
+                if mime_type and mime_type.startswith('video/'):
+                    # 生成缩略图文件名
+                    thumbnail_filename = f"{uuid.uuid4().hex}.jpg"
+                    thumbnail_dir = os.path.join('uploads', 'thumbnails')
+                    if not os.path.exists(thumbnail_dir):
+                        os.makedirs(thumbnail_dir, exist_ok=True)
+                    thumbnail_full_path = os.path.join(thumbnail_dir, thumbnail_filename)
+
+                    # 提取视频首图
+                    if extract_video_thumbnail(file_path, thumbnail_full_path):
+                        thumbnail_path = thumbnail_full_path
+
                 # 添加到数据库
                 file_id = file_manager.add_file(
                     filename=filename,
@@ -1070,11 +1171,13 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     mime_type=mime_type,
                     description=description,
                     tags=tags,
+                    thumbnail_path=thumbnail_path,
                     user_id=user_id
                 )
 
                 # 返回文件信息 - file_path 格式应为 /uploads/files/xxx.pdf (前端使用)
                 relative_path = f"/{file_path}" if not file_path.startswith('/') else file_path
+                relative_thumbnail = f"/{thumbnail_path}" if thumbnail_path and not thumbnail_path.startswith('/') else thumbnail_path
 
                 file_info = {
                     'id': file_id,
@@ -1082,7 +1185,8 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     'original_name': original_name,
                     'file_path': relative_path,  # 返回格式: /uploads/files/xxx.pdf
                     'file_size': file_size,
-                    'mime_type': mime_type
+                    'mime_type': mime_type,
+                    'thumbnail_path': relative_thumbnail  # 视频缩略图路径
                 }
 
                 self.send_json({'success': True, 'message': '文件上传成功', 'file': file_info})
@@ -2319,7 +2423,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
         window.onload = function() {
             loadAllFiles();
-            loadStats();
+            // loadStats(); // 移除这里的调用，改为在loadAllFiles完成后调用
         };
 
         document.getElementById('fileUpload').addEventListener('change', function(e) {
@@ -2485,7 +2589,20 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     headers: token ? {'Authorization': 'Bearer ' + token} : {}
                 });
                 allFiles = await response.json();
+                console.log(`[DEBUG] 加载了 ${allFiles.length} 个文件`);
+                if (allFiles.length > 0) {
+                    console.log(`[DEBUG] 第一个文件:`, allFiles[0]);
+                    // 统计category分布
+                    const categoryCount = {};
+                    allFiles.forEach(f => {
+                        const cat = f.category || 'undefined';
+                        categoryCount[cat] = (categoryCount[cat] || 0) + 1;
+                    });
+                    console.log(`[DEBUG] Category分布:`, categoryCount);
+                }
                 displayFiles(allFiles);
+                // 在文件加载完成后再加载统计信息
+                loadStats();
             } catch (error) {
                 console.error('加载文件失败:', error);
                 document.getElementById('fileGrid').innerHTML = '<div class="empty-state"><p>加载失败，请刷新重试</p></div>';
@@ -2503,11 +2620,30 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     document.getElementById('totalFiles').textContent = data.stats.total_files || 0;
                     document.getElementById('totalSize').textContent = (data.stats.total_size_mb || 0).toFixed(1) + ' MB';
 
-                    const today = new Date().toISOString().split('T')[0];
-                    const todayCount = allFiles.filter(f =>
+                    // 使用本地日期而不是UTC日期
+                    const now = new Date();
+                    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+                    console.log(`[DEBUG] 客户端当前时间: ${now}`);
+                    console.log(`[DEBUG] 今日日期: ${today}`);
+                    console.log(`[DEBUG] allFiles数量: ${allFiles.length}`);
+
+                    // 显示前3个文件的created_at
+                    if (allFiles.length > 0) {
+                        console.log(`[DEBUG] 前3个文件的created_at:`);
+                        allFiles.slice(0, 3).forEach((f, i) => {
+                            console.log(`  ${i+1}. ${f.original_name}: ${f.created_at}`);
+                        });
+                    }
+
+                    const todayFiles = allFiles.filter(f =>
                         f.created_at && f.created_at.startsWith(today)
-                    ).length;
+                    );
+                    console.log(`[DEBUG] 今日上传的文件:`, todayFiles.map(f => f.original_name));
+
+                    const todayCount = todayFiles.length;
                     document.getElementById('todayUploads').textContent = todayCount;
+                    console.log(`[DEBUG] 今日上传数量: ${todayCount}`);
                 }
             } catch (error) {
                 console.error('加载统计失败:', error);
@@ -2548,9 +2684,15 @@ class AssistantHandler(BaseHTTPRequestHandler):
             event.target.classList.add('active');
 
             if (category === 'all') {
+                console.log(`[DEBUG] 显示所有文件，总数: ${allFiles.length}`);
                 displayFiles(allFiles);
             } else {
                 const filtered = allFiles.filter(f => f.category === category);
+                console.log(`[DEBUG] 过滤 category=${category}，找到 ${filtered.length} 个文件`);
+                console.log(`[DEBUG] allFiles总数: ${allFiles.length}`);
+                if (filtered.length > 0) {
+                    console.log(`[DEBUG] 第一个文件:`, filtered[0]);
+                }
                 displayFiles(filtered);
             }
         }
