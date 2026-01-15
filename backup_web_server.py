@@ -114,12 +114,12 @@ class BackupHandler(BaseHTTPRequestHandler):
                 try:
                     manager = BackupHistoryManager()
                     if backup_dir:
-                        type_names = {"standard": "标准备份", "complete": "完整备份"}
-                        notes = f'备份类型: {type_names.get(backup_type, "标准备份")}'
+                        # 自动生成基于 git 变更的备注
+                        auto_notes = manager.generate_git_notes()
                         manager.add_backup_record(
                             backup_dir,
                             status=status,
-                            notes=notes,
+                            notes=auto_notes,
                             error_msg='' if status == 'success' else '\n'.join(output[-5:])
                         )
                 except Exception as history_error:
