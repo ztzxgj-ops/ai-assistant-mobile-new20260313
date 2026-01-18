@@ -22,11 +22,27 @@ from user_manager import UserManager
 from notification_service import get_notification_service, get_notification_queue
 from reminder_scheduler import get_global_scheduler
 from verification_service import get_verification_manager
+from category_system import (
+    CategoryManager,
+    WorkTaskManager,
+    FinanceManager,
+    AccountManager,
+    DailyRecordManager
+)
+from command_system import get_command_router
+from friendship_manager import FriendshipManager
+from private_message_manager import PrivateMessageManager
+from shared_content_manager import SharedContentManager
+from guestbook_manager import GuestbookManager
 
 db_manager = MySQLManager('mysql_config.json')
 ai_assistant = AIAssistant()
 user_manager = UserManager(db_manager)
 verification_manager = get_verification_manager(db_manager)
+friendship_manager = FriendshipManager(db_manager)
+private_message_manager = PrivateMessageManager(db_manager, friendship_manager)
+shared_content_manager = SharedContentManager(db_manager, friendship_manager)
+guestbook_manager = GuestbookManager(db_manager, friendship_manager)
 
 # 从AI助手获取管理器
 memory = ai_assistant.memory
@@ -34,6 +50,13 @@ reminder_sys = ai_assistant.reminder
 image_manager = ai_assistant.image_manager
 file_manager = ai_assistant.file_manager
 planner = ai_assistant.planner
+
+# 初始化类别系统管理器
+category_manager = CategoryManager()
+work_task_manager = WorkTaskManager()
+finance_manager = FinanceManager()
+account_manager = AccountManager()
+daily_record_manager = DailyRecordManager()
 
 def extract_video_thumbnail(video_path, thumbnail_path, size="200x200"):
     """提取视频第一帧作为缩略图
@@ -236,6 +259,9 @@ class AssistantHandler(BaseHTTPRequestHandler):
         elif self.path == '/image-gallery' or self.path == '/image-gallery.html':
             # 图片库也允许加载，前端会检查Token
             self.send_image_gallery_html()
+        elif self.path == '/social' or self.path == '/social.html' or self.path.startswith('/social?'):
+            # 社交中心页面，前端会检查Token（支持带查询参数的URL）
+            self.send_social_html()
         elif self.path == '/api/chats':
             user_id = self.require_auth()
             if user_id is None:
@@ -257,6 +283,149 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 return
             plans = planner.list_plans(user_id=user_id)
             self.send_json(plans)
+        elif self.path == '/api/categories':
+            # 获取所有类别树（包含子类别）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+            try:
+                tree = category_manager.get_category_tree(user_id=user_id)
+                self.send_json({'success': True, 'categories': tree})
+            except Exception as e:
+                print(f"❌ 获取类别树失败: {e}")
+                self.send_json({'success': False, 'error': str(e)})
+        elif self.path == '/api/work-tasks/grouped':
+            # 获取按子类别分组的工作任务
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+            try:
+                # 获取所有任务
+                all_tasks = work_task_manager.list_tasks(user_id=user_id)
+
+                # 获取工作类别的所有子类别
+                work_category = category_manager.get_category_by_code('work')
+                if not work_category:
+                    self.send_json({'success': False, 'error': '工作类别不存在'})
+                    return
+
+                subcategories = category_manager.get_subcategories(work_category['id'], user_id=user_id)
+
+                # 按子类别分组
+                groups = []
+                subcategory_map = {sub['id']: sub for sub in subcategories}
+
+                # 先添加有子类别的任务组
+                for subcategory in subcategories:
+                    tasks_in_sub = [t for t in all_tasks if t.get('subcategory_id') == subcategory['id']]
+                    if tasks_in_sub:  # 只显示有内容的分组
+                        groups.append({
+                            'subcategory_id': subcategory['id'],
+                            'subcategory_name': subcategory['name'],
+                            'items': tasks_in_sub
+                        })
+
+                # 添加未分类的任务
+                uncategorized_tasks = [t for t in all_tasks if not t.get('subcategory_id')]
+                if uncategorized_tasks:
+                    groups.append({
+                        'subcategory_id': None,
+                        'subcategory_name': '未分类',
+                        'items': uncategorized_tasks
+                    })
+
+                self.send_json({'success': True, 'groups': groups})
+            except Exception as e:
+                print(f"❌ 获取分组任务失败: {e}")
+                import traceback
+                traceback.print_exc()
+                self.send_json({'success': False, 'error': str(e)})
+        elif self.path == '/api/finance-records/grouped':
+            # 获取按子类别分组的财务记录
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+            try:
+                # 获取所有财务记录
+                all_records = finance_manager.list_records(user_id=user_id)
+
+                # 获取财务类别的所有子类别
+                finance_category = category_manager.get_category_by_code('finance')
+                if not finance_category:
+                    self.send_json({'success': False, 'error': '财务类别不存在'})
+                    return
+
+                subcategories = category_manager.get_subcategories(finance_category['id'], user_id=user_id)
+
+                # 按子类别分组
+                groups = []
+                for subcategory in subcategories:
+                    records_in_sub = [r for r in all_records if r.get('subcategory_id') == subcategory['id']]
+                    if records_in_sub:
+                        groups.append({
+                            'subcategory_id': subcategory['id'],
+                            'subcategory_name': subcategory['name'],
+                            'items': records_in_sub
+                        })
+
+                # 添加未分类的记录
+                uncategorized = [r for r in all_records if not r.get('subcategory_id')]
+                if uncategorized:
+                    groups.append({
+                        'subcategory_id': None,
+                        'subcategory_name': '未分类',
+                        'items': uncategorized
+                    })
+
+                self.send_json({'success': True, 'groups': groups})
+            except Exception as e:
+                print(f"❌ 获取分组财务记录失败: {e}")
+                import traceback
+                traceback.print_exc()
+                self.send_json({'success': False, 'error': str(e)})
+        elif self.path == '/api/daily-records/grouped':
+            # 获取按子类别分组的日常记录
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+            try:
+                # 获取所有日常记录
+                all_records = daily_record_manager.list_records(user_id=user_id)
+
+                # 获取记录类别的所有子类别
+                record_category = category_manager.get_category_by_code('record')
+                if not record_category:
+                    self.send_json({'success': False, 'error': '记录类别不存在'})
+                    return
+
+                subcategories = category_manager.get_subcategories(record_category['id'], user_id=user_id)
+
+                # 按子类别分组
+                groups = []
+                for subcategory in subcategories:
+                    records_in_sub = [r for r in all_records if r.get('subcategory_id') == subcategory['id']]
+                    if records_in_sub:
+                        groups.append({
+                            'subcategory_id': subcategory['id'],
+                            'subcategory_name': subcategory['name'],
+                            'items': records_in_sub
+                        })
+
+                # 添加未分类的记录
+                uncategorized = [r for r in all_records if not r.get('subcategory_id')]
+                if uncategorized:
+                    groups.append({
+                        'subcategory_id': None,
+                        'subcategory_name': '未分类',
+                        'items': uncategorized
+                    })
+
+                self.send_json({'success': True, 'groups': groups})
+            except Exception as e:
+                print(f"❌ 获取分组日常记录失败: {e}")
+                import traceback
+                traceback.print_exc()
+                self.send_json({'success': False, 'error': str(e)})
         elif self.path == '/api/reminders':
             user_id = self.require_auth()
             if user_id is None:
@@ -301,6 +470,18 @@ class AssistantHandler(BaseHTTPRequestHandler):
                         )
 
                         print(f"✅ Web端触发提醒: {reminder['content']}")
+
+                        # 通过 WebSocket 推送到移动端
+                        scheduler = get_global_scheduler()
+                        if scheduler and scheduler.ws_server:
+                            try:
+                                print(f"🔍 DEBUG: Web端推送 WebSocket, user_id={user_id}, content={reminder['content']}")
+                                result = scheduler.ws_server.send_reminder(user_id, reminder)
+                                print(f"🔍 DEBUG: Web端 send_reminder 返回值={result}")
+                            except Exception as ws_e:
+                                print(f"⚠️ Web端 WebSocket 推送失败: {ws_e}")
+                                import traceback
+                                traceback.print_exc()
 
                     db_manager.connection.commit()
 
@@ -550,6 +731,197 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 self.send_json({'success': True, 'reminders': reminders})
             except Exception as e:
                 self.send_json({'success': False, 'message': f'错误: {str(e)}'})
+
+        # ========================================
+        # 好友系统API (GET)
+        # ========================================
+
+        elif self.path.startswith('/api/social/users/search'):
+            # 搜索用户
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            # 解析查询参数
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+
+            keyword = params.get('keyword', [''])[0]
+            limit = int(params.get('limit', ['20'])[0])
+
+            if not keyword:
+                self.send_json({'success': False, 'message': '请提供搜索关键词'})
+                return
+
+            users = friendship_manager.search_users(keyword, user_id, limit)
+            self.send_json({'success': True, 'users': users})
+
+        elif self.path == '/api/social/friends/list':
+            # 获取好友列表
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            friends = friendship_manager.get_friends_list(user_id)
+            self.send_json({'success': True, 'friends': friends})
+
+        elif self.path.startswith('/api/social/friends/requests'):
+            # 获取好友请求列表
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            # 解析查询参数
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+
+            status = params.get('status', ['pending'])[0]
+            requests = friendship_manager.get_friend_requests(user_id, status)
+            self.send_json({'success': True, 'requests': requests})
+
+        elif self.path == '/api/social/friends/sent-requests':
+            # 获取已发送的好友请求列表
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            requests = friendship_manager.get_sent_requests(user_id)
+            self.send_json({'success': True, 'requests': requests})
+
+        elif self.path.startswith('/api/social/friends/check'):
+            # 检查好友关系状态
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            # 解析查询参数
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+
+            target_id = params.get('target_id', [''])[0]
+            if not target_id:
+                self.send_json({'success': False, 'message': '请提供目标用户ID'})
+                return
+
+            status = friendship_manager.check_friendship(user_id, int(target_id))
+            self.send_json({'success': True, 'status': status})
+
+        # ========================================
+        # 私信系统API (GET)
+        # ========================================
+
+        elif self.path.startswith('/api/social/messages/conversation'):
+            # 获取与某人的聊天记录
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            # 解析查询参数
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+
+            friend_id = params.get('friend_id', [''])[0]
+            limit = int(params.get('limit', ['50'])[0])
+            offset = int(params.get('offset', ['0'])[0])
+
+            if not friend_id:
+                self.send_json({'success': False, 'message': '请提供好友ID'})
+                return
+
+            messages = private_message_manager.get_conversation(user_id, int(friend_id), limit, offset)
+            self.send_json({'success': True, 'messages': messages})
+
+        elif self.path == '/api/social/messages/conversations':
+            # 获取会话列表
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            conversations = private_message_manager.get_conversation_list(user_id)
+            self.send_json({'success': True, 'conversations': conversations})
+
+        elif self.path == '/api/social/messages/unread-count':
+            # 获取未读消息总数
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            count = private_message_manager.get_unread_count(user_id)
+            self.send_json({'success': True, 'count': count})
+
+        # ========================================
+        # 内容分享系统API (GET)
+        # ========================================
+
+        elif self.path.startswith('/api/social/shares/list'):
+            # 获取分享列表（好友动态）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            # 解析查询参数
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+
+            limit = int(params.get('limit', ['20'])[0])
+            offset = int(params.get('offset', ['0'])[0])
+
+            shares = shared_content_manager.get_share_list(user_id, None, limit, offset)
+            self.send_json({'success': True, 'shares': shares})
+
+        elif self.path.startswith('/api/social/shares/user'):
+            # 获取某用户的分享列表
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            # 解析查询参数
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+
+            target_user_id = params.get('user_id', [''])[0]
+            limit = int(params.get('limit', ['20'])[0])
+            offset = int(params.get('offset', ['0'])[0])
+
+            if not target_user_id:
+                self.send_json({'success': False, 'message': '请提供用户ID'})
+                return
+
+            shares = shared_content_manager.get_user_shares(user_id, int(target_user_id), limit, offset)
+            self.send_json({'success': True, 'shares': shares})
+
+        # ========================================
+        # 留言板系统API (GET)
+        # ========================================
+
+        elif self.path.startswith('/api/social/guestbook/list'):
+            # 获取留言列表
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            # 解析查询参数
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+
+            owner_id = params.get('owner_id', [''])[0]
+            limit = int(params.get('limit', ['50'])[0])
+            offset = int(params.get('offset', ['0'])[0])
+
+            if not owner_id:
+                self.send_json({'success': False, 'message': '请提供留言板主人ID'})
+                return
+
+            messages = guestbook_manager.get_messages(int(owner_id), user_id, limit, offset)
+            self.send_json({'success': True, 'messages': messages})
+
         else:
             self.send_error(404)
     
@@ -851,31 +1223,86 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 self.send_json({'success': False, 'message': f'操作失败：{str(e)}'})
 
         elif self.path == '/api/ai/chat':
-            user_id = self.require_auth()
-            if user_id is None:
-                return
-            token = self.headers.get('Authorization', '').replace('Bearer ', '')
-            session_id = self.headers.get('X-Session-ID', '')  # ✨ 获取会话ID
-            chat_result = ai_assistant.chat(data.get('message', ''), user_id=user_id, file_id=data.get('file_id'), token=token, session_id=session_id)  # ✨ 传递session_id
-            # 处理新的返回格式（包含response、detected_plans、detected_reminders和completed_plans）
-            if isinstance(chat_result, dict):
-                response_data = {
-                    'response': chat_result.get('response', ''),
-                    'detected_plans': chat_result.get('detected_plans', []),
-                    'detected_reminders': chat_result.get('detected_reminders', []),
-                    'completed_plans': chat_result.get('completed_plans', [])
-                }
+            try:
+                print(f"🔍 收到聊天请求: {data.get('message', '')[:50]}")
+                user_id = self.require_auth()
+                if user_id is None:
+                    return
+                token = self.headers.get('Authorization', '').replace('Bearer ', '')
+                session_id = self.headers.get('X-Session-ID', '')  # ✨ 获取会话ID
 
-                # 如果有完成的计划，在响应中添加提示
-                if response_data['completed_plans']:
-                    completed_titles = [p['title'] for p in response_data['completed_plans']]
-                    completion_msg = f"\n\n✅ 已标记为完成：{'、'.join(completed_titles)}"
-                    response_data['response'] += completion_msg
+                # 获取用户消息
+                user_message = data.get('message', '')
 
-                self.send_json(response_data)
-            else:
-                # 向后兼容：如果返回的是字符串
-                self.send_json({'response': chat_result, 'detected_plans': [], 'detected_reminders': [], 'completed_plans': []})
+                # ✨ 优先检查是否是命令系统的命令
+                command_router = get_command_router()
+                command_result = command_router.execute(user_message, user_id)
+
+                if command_result and command_result.get('is_command'):
+                    # ✨ 如果命令返回了上下文信息，保存到AI系统
+                    if 'context' in command_result:
+                        from datetime import datetime
+                        ai_assistant.last_response_context[user_id] = {
+                            'type': command_result['context']['type'],
+                            'data': command_result['context']['data'],
+                            'timestamp': datetime.now()
+                        }
+                        print(f"✅ 已保存命令上下文: type={command_result['context']['type']}, data_count={len(command_result['context']['data'])}")
+
+                    # 是命令，直接返回命令结果
+                    self.send_json({
+                        'response': command_result.get('response', ''),
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': []
+                    })
+                    return
+
+                # 不是命令，继续使用AI处理
+                print(f"🔍 不是命令，调用AI处理: {user_message[:50]}")
+                # 获取用户的AI助理名字
+                user_info = user_manager.get_user_by_id(user_id)
+                ai_assistant_name = user_info.get('ai_assistant_name', '小助手') if user_info else '小助手'
+
+                chat_result = ai_assistant.chat(user_message, user_id=user_id, file_id=data.get('file_id'), token=token, session_id=session_id, ai_assistant_name=ai_assistant_name)  # ✨ 传递session_id和ai_assistant_name
+                print(f"🔍 AI处理完成，返回结果类型: {type(chat_result)}")
+                # 处理新的返回格式（包含response、detected_plans、detected_reminders和completed_plans）
+                if isinstance(chat_result, dict):
+                    response_data = {
+                        'response': chat_result.get('response', ''),
+                        'detected_plans': chat_result.get('detected_plans', []),
+                        'detected_reminders': chat_result.get('detected_reminders', []),
+                        'completed_plans': chat_result.get('completed_plans', [])
+                    }
+
+                    # 如果有完成的计划，在响应中添加提示
+                    if response_data['completed_plans']:
+                        completed_titles = [p['title'] for p in response_data['completed_plans']]
+                        completion_msg = f"\n\n✅ 已标记为完成：{'、'.join(completed_titles)}"
+                        response_data['response'] += completion_msg
+
+                    self.send_json(response_data)
+                else:
+                    # 向后兼容：如果返回的是字符串
+                    self.send_json({'response': chat_result, 'detected_plans': [], 'detected_reminders': [], 'completed_plans': []})
+            except Exception as e:
+                print(f"❌ /api/ai/chat 处理出错: {e}")
+                import traceback
+                traceback.print_exc()
+
+                # ✨ 提供更友好的错误处理，让AI仍然能够回答
+                error_response = f"抱歉，我遇到了一些技术问题。不过我还是可以帮你：\n\n"
+                error_response += "• 输入「帮助」查看可用命令\n"
+                error_response += "• 输入「类别」查看所有功能分类\n"
+                error_response += "• 输入「工作」查看待办事项\n\n"
+                error_response += f"如果问题持续，请联系管理员。错误详情：{str(e)[:100]}"
+
+                self.send_json({
+                    'response': error_response,
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': []
+                })
 
         elif self.path == '/api/ai/clear':
             user_id = self.require_auth()
@@ -1455,6 +1882,56 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 traceback.print_exc()
                 self.send_json({'success': False, 'error': str(e)}, status=500)
 
+        elif self.path == '/api/user/update-ai-avatar':
+            # 更新AI助理头像
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            try:
+                ai_avatar_url = data.get('ai_avatar_url', '')
+
+                # 更新AI头像URL
+                success = user_manager.update_ai_avatar(user_id, ai_avatar_url)
+
+                if success:
+                    self.send_json({
+                        'success': True,
+                        'message': 'AI头像更新成功'
+                    })
+                else:
+                    self.send_json({'success': False, 'message': 'AI头像更新失败'}, status=500)
+            except Exception as e:
+                print(f"更新AI头像错误: {e}")
+                import traceback
+                traceback.print_exc()
+                self.send_json({'success': False, 'error': str(e)}, status=500)
+
+        elif self.path == '/api/user/update-ai-assistant-name':
+            # 更新AI助理名字
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            try:
+                ai_assistant_name = data.get('ai_assistant_name', '小助手')
+
+                # 更新AI助理名字
+                success = user_manager.update_ai_assistant_name(user_id, ai_assistant_name)
+
+                if success:
+                    self.send_json({
+                        'success': True,
+                        'message': 'AI助理名字更新成功'
+                    })
+                else:
+                    self.send_json({'success': False, 'message': 'AI助理名字更新失败'}, status=500)
+            except Exception as e:
+                print(f"更新AI助理名字错误: {e}")
+                import traceback
+                traceback.print_exc()
+                self.send_json({'success': False, 'error': str(e)}, status=500)
+
         elif self.path == '/api/user/change-password':
             # 修改密码
             user_id = self.require_auth()
@@ -1578,6 +2055,296 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     })
             except Exception as e:
                 self.send_json({'success': False, 'message': f'错误: {str(e)}'})
+
+        # ========================================
+        # 好友系统API
+        # ========================================
+
+        elif self.path == '/api/social/friends/request':
+            # 发送好友请求
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            friend_id = data.get('friend_id')
+            if not friend_id:
+                self.send_json({'success': False, 'message': '请提供好友ID'})
+                return
+
+            result = friendship_manager.send_friend_request(user_id, friend_id)
+            self.send_json(result)
+
+        elif self.path == '/api/social/friends/accept':
+            # 接受好友请求
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            friendship_id = data.get('friendship_id')
+            if not friendship_id:
+                self.send_json({'success': False, 'message': '请提供好友关系ID'})
+                return
+
+            result = friendship_manager.accept_friend_request(user_id, friendship_id)
+            self.send_json(result)
+
+        elif self.path == '/api/social/friends/reject':
+            # 拒绝好友请求
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            friendship_id = data.get('friendship_id')
+            if not friendship_id:
+                self.send_json({'success': False, 'message': '请提供好友关系ID'})
+                return
+
+            result = friendship_manager.reject_friend_request(user_id, friendship_id)
+            self.send_json(result)
+
+        elif self.path == '/api/social/friends/delete':
+            # 删除好友
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            friend_id = data.get('friend_id')
+            if not friend_id:
+                self.send_json({'success': False, 'message': '请提供好友ID'})
+                return
+
+            result = friendship_manager.delete_friend(user_id, friend_id)
+            self.send_json(result)
+
+        elif self.path == '/api/social/friends/block':
+            # 拉黑用户
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            target_id = data.get('target_id')
+            if not target_id:
+                self.send_json({'success': False, 'message': '请提供目标用户ID'})
+                return
+
+            result = friendship_manager.block_user(user_id, target_id)
+            self.send_json(result)
+
+        # ========================================
+        # 私信系统API
+        # ========================================
+
+        elif self.path == '/api/social/messages/send':
+            # 发送私信
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            receiver_id = data.get('receiver_id')
+            content = data.get('content', '')
+            message_type = data.get('message_type', 'text')
+            image_id = data.get('image_id')
+
+            if not receiver_id:
+                self.send_json({'success': False, 'message': '请提供接收者ID'})
+                return
+
+            if not content:
+                self.send_json({'success': False, 'message': '消息内容不能为空'})
+                return
+
+            result = private_message_manager.send_message(user_id, receiver_id, content, message_type, image_id)
+            self.send_json(result)
+
+        elif self.path == '/api/social/messages/mark-read':
+            # 标记消息为已读
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            message_ids = data.get('message_ids', [])
+            if not message_ids:
+                self.send_json({'success': False, 'message': '请提供消息ID列表'})
+                return
+
+            result = private_message_manager.mark_as_read(user_id, message_ids)
+            self.send_json(result)
+
+        elif self.path == '/api/social/messages/delete':
+            # 删除消息
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            message_id = data.get('message_id')
+            if not message_id:
+                self.send_json({'success': False, 'message': '请提供消息ID'})
+                return
+
+            result = private_message_manager.delete_message(user_id, message_id)
+            self.send_json(result)
+
+        elif self.path == '/api/social/messages/delete-conversation':
+            # 删除整个会话
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            friend_id = data.get('friend_id')
+            if not friend_id:
+                self.send_json({'success': False, 'message': '请提供好友ID'})
+                return
+
+            result = private_message_manager.delete_conversation(user_id, friend_id)
+            self.send_json(result)
+
+        # ========================================
+        # 内容分享系统API
+        # ========================================
+
+        elif self.path == '/api/social/shares/create':
+            # 创建分享
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            content_type = data.get('content_type', 'text')
+            title = data.get('title')
+            content = data.get('content')
+            image_id = data.get('image_id')
+            visibility = data.get('visibility', 'friends')
+            tags = data.get('tags', [])
+
+            if not content and not image_id:
+                self.send_json({'success': False, 'message': '内容或图片至少提供一个'})
+                return
+
+            result = shared_content_manager.create_share(user_id, content_type, title, content, image_id, visibility, tags)
+            self.send_json(result)
+
+        elif self.path == '/api/social/shares/delete':
+            # 删除分享
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            share_id = data.get('share_id')
+            if not share_id:
+                self.send_json({'success': False, 'message': '请提供分享ID'})
+                return
+
+            result = shared_content_manager.delete_share(user_id, share_id)
+            self.send_json(result)
+
+        elif self.path == '/api/social/shares/like':
+            # 点赞分享
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            share_id = data.get('share_id')
+            if not share_id:
+                self.send_json({'success': False, 'message': '请提供分享ID'})
+                return
+
+            result = shared_content_manager.like_share(user_id, share_id)
+            self.send_json(result)
+
+        elif self.path == '/api/social/shares/unlike':
+            # 取消点赞
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            share_id = data.get('share_id')
+            if not share_id:
+                self.send_json({'success': False, 'message': '请提供分享ID'})
+                return
+
+            result = shared_content_manager.unlike_share(user_id, share_id)
+            self.send_json(result)
+
+        elif self.path == '/api/social/shares/view':
+            # 增加浏览次数
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            share_id = data.get('share_id')
+            if not share_id:
+                self.send_json({'success': False, 'message': '请提供分享ID'})
+                return
+
+            result = shared_content_manager.increment_view_count(share_id)
+            self.send_json(result)
+
+        # ========================================
+        # 留言板系统API
+        # ========================================
+
+        elif self.path == '/api/social/guestbook/post':
+            # 发表留言
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            owner_id = data.get('owner_id')
+            content = data.get('content', '')
+            is_public = data.get('is_public', True)
+            parent_id = data.get('parent_id')
+
+            if not owner_id:
+                self.send_json({'success': False, 'message': '请提供留言板主人ID'})
+                return
+
+            if not content:
+                self.send_json({'success': False, 'message': '留言内容不能为空'})
+                return
+
+            result = guestbook_manager.post_message(owner_id, user_id, content, is_public, parent_id)
+            self.send_json(result)
+
+        elif self.path == '/api/social/guestbook/delete':
+            # 删除留言
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            message_id = data.get('message_id')
+            if not message_id:
+                self.send_json({'success': False, 'message': '请提供留言ID'})
+                return
+
+            result = guestbook_manager.delete_message(user_id, message_id)
+            self.send_json(result)
+
+        elif self.path == '/api/social/guestbook/like':
+            # 点赞留言
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            message_id = data.get('message_id')
+            if not message_id:
+                self.send_json({'success': False, 'message': '请提供留言ID'})
+                return
+
+            result = guestbook_manager.like_message(user_id, message_id)
+            self.send_json(result)
+
+        elif self.path == '/api/social/guestbook/unlike':
+            # 取消点赞
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            message_id = data.get('message_id')
+            if not message_id:
+                self.send_json({'success': False, 'message': '请提供留言ID'})
+                return
+
+            result = guestbook_manager.unlike_message(user_id, message_id)
+            self.send_json(result)
 
         else:
             self.send_error(404)
@@ -1829,6 +2596,19 @@ class AssistantHandler(BaseHTTPRequestHandler):
         self.send_header('Content-type', 'text/html; charset=utf-8')
         self.end_headers()
         self.wfile.write(html_content.encode('utf-8'))
+
+    def send_social_html(self):
+        """发送社交中心页面"""
+        try:
+            with open('social.html', 'r', encoding='utf-8') as f:
+                html_content = f.read()
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(html_content.encode('utf-8'))
+        except Exception as e:
+            print(f"❌ 读取 social.html 失败: {e}")
+            self.send_error(404, 'Social page not found')
 
     def send_file_manager_html(self):
         """发送文件管理页面"""
@@ -2128,6 +2908,165 @@ class AssistantHandler(BaseHTTPRequestHandler):
             background: #cc0000;
         }
 
+        .btn-share {
+            background: #17a2b8;
+            color: white;
+        }
+
+        .btn-share:hover {
+            background: #138496;
+        }
+
+        /* 好友选择弹窗 */
+        .share-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 10000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .share-modal.active {
+            display: flex;
+        }
+
+        .share-modal-content {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+
+        .share-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .share-modal-header h2 {
+            font-size: 20px;
+            color: #333;
+        }
+
+        .share-modal-close {
+            background: none;
+            border: none;
+            font-size: 28px;
+            cursor: pointer;
+            color: #999;
+            line-height: 1;
+        }
+
+        .share-modal-close:hover {
+            color: #333;
+        }
+
+        .friend-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .friend-item {
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .friend-item:hover {
+            border-color: #667eea;
+            background: #f8f9fa;
+        }
+
+        .friend-item.selected {
+            border-color: #667eea;
+            background: #e3f2fd;
+        }
+
+        .friend-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            margin-right: 12px;
+        }
+
+        .friend-info {
+            flex: 1;
+        }
+
+        .friend-name {
+            font-size: 15px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .friend-status {
+            font-size: 12px;
+            color: #999;
+        }
+
+        .share-modal-footer {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
+        .share-modal-footer button {
+            padding: 10px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .share-modal-footer .btn-cancel {
+            background: #e0e0e0;
+            color: #666;
+        }
+
+        .share-modal-footer .btn-cancel:hover {
+            background: #d0d0d0;
+        }
+
+        .share-modal-footer .btn-confirm {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .share-modal-footer .btn-confirm:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .share-modal-footer .btn-confirm:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
         /* 列表布局样式 - 表格式 */
         .file-list {
             width: 100%;
@@ -2413,6 +3352,26 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
         <div id="fileGrid" class="file-grid">
             <div class="empty-state">正在加载文件...</div>
+        </div>
+    </div>
+
+    <!-- 好友选择弹窗 -->
+    <div id="shareModal" class="share-modal">
+        <div class="share-modal-content">
+            <div class="share-modal-header">
+                <h2>📤 分享文件给好友</h2>
+                <button class="share-modal-close" onclick="closeShareModal()">×</button>
+            </div>
+            <div id="shareFileName" style="margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 8px; font-size: 14px; color: #666;">
+                正在分享：<span id="shareFileNameText" style="color: #333; font-weight: 600;"></span>
+            </div>
+            <div id="friendList" class="friend-list">
+                <div style="text-align: center; padding: 20px; color: #999;">正在加载好友列表...</div>
+            </div>
+            <div class="share-modal-footer">
+                <button class="btn-cancel" onclick="closeShareModal()">取消</button>
+                <button class="btn-confirm" id="confirmShareBtn" onclick="confirmShare()" disabled>确认分享</button>
+            </div>
         </div>
     </div>
 
@@ -2741,6 +3700,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                                 </div>
                                 <div class="actions">
                                     <button class="btn-download" onclick="downloadFile(${file.id}, '${file.original_name}')">📥 下载</button>
+                                    <button class="btn-share" onclick="shareFile(${file.id}, '${file.original_name}', '${file.category}')">📤 分享</button>
                                     <button class="btn-delete" onclick="deleteFile(${file.id})">🗑️ 删除</button>
                                 </div>
                             </div>
@@ -2775,6 +3735,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                                     <div class="file-list-cell" title="${fileType}">${fileType}</div>
                                     <div class="file-list-actions">
                                         <button class="btn-download" onclick="downloadFile(${file.id}, '${file.original_name}')">下载</button>
+                                        <button class="btn-share" onclick="shareFile(${file.id}, '${file.original_name}', '${file.category}')">分享</button>
                                         <button class="btn-delete" onclick="deleteFile(${file.id})">删除</button>
                                     </div>
                                 </div>
@@ -2821,6 +3782,129 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 console.error('删除失败:', error);
                 alert('删除失败，请重试');
             }
+        }
+
+        // 分享功能相关变量
+        let currentShareFile = null;
+        let selectedFriendId = null;
+
+        // 打开分享弹窗
+        async function shareFile(fileId, fileName, category) {
+            currentShareFile = { id: fileId, name: fileName, category: category };
+            selectedFriendId = null;
+
+            // 更新文件名显示
+            document.getElementById('shareFileNameText').textContent = fileName;
+
+            // 显示弹窗
+            document.getElementById('shareModal').classList.add('active');
+
+            // 加载好友列表
+            await loadFriendList();
+        }
+
+        // 加载好友列表
+        async function loadFriendList() {
+            try {
+                const token = localStorage.getItem('token');
+                const response = await fetch('/ai/api/social/friends', {
+                    headers: {
+                        'Authorization': 'Bearer ' + token
+                    }
+                });
+
+                const data = await response.json();
+                const friendList = document.getElementById('friendList');
+
+                if (!data.friends || data.friends.length === 0) {
+                    friendList.innerHTML = '<div style="text-align: center; padding: 20px; color: #999;">暂无好友，请先添加好友</div>';
+                    return;
+                }
+
+                // 渲染好友列表
+                friendList.innerHTML = data.friends.map(friend => {
+                    const avatarText = friend.friend_username ? friend.friend_username.charAt(0).toUpperCase() : '?';
+                    return `
+                        <div class="friend-item" onclick="selectFriend(${friend.friend_id}, '${friend.friend_username}')">
+                            <div class="friend-avatar">${avatarText}</div>
+                            <div class="friend-info">
+                                <div class="friend-name">${friend.friend_username}</div>
+                                <div class="friend-status">点击选择</div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+            } catch (error) {
+                console.error('加载好友列表失败:', error);
+                document.getElementById('friendList').innerHTML = '<div style="text-align: center; padding: 20px; color: #f44336;">加载失败，请重试</div>';
+            }
+        }
+
+        // 选择好友
+        function selectFriend(friendId, friendName) {
+            selectedFriendId = friendId;
+
+            // 更新UI选中状态
+            document.querySelectorAll('.friend-item').forEach(item => {
+                item.classList.remove('selected');
+            });
+            event.target.closest('.friend-item').classList.add('selected');
+
+            // 启用确认按钮
+            document.getElementById('confirmShareBtn').disabled = false;
+        }
+
+        // 确认分享
+        async function confirmShare() {
+            if (!selectedFriendId || !currentShareFile) {
+                alert('请选择要分享的好友');
+                return;
+            }
+
+            try {
+                const token = localStorage.getItem('token');
+
+                // 构建消息内容
+                const messageContent = `分享了文件：${currentShareFile.name}`;
+                const messageType = currentShareFile.category === 'image' ? 'image' : 'file';
+
+                // 发送私信
+                const response = await fetch('/ai/api/social/messages/send', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({
+                        receiver_id: selectedFriendId,
+                        content: messageContent,
+                        message_type: messageType,
+                        image_id: currentShareFile.id
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    alert('分享成功！');
+                    closeShareModal();
+                } else {
+                    alert('分享失败: ' + (result.message || '未知错误'));
+                }
+
+            } catch (error) {
+                console.error('分享失败:', error);
+                alert('分享失败，请重试');
+            }
+        }
+
+        // 关闭分享弹窗
+        function closeShareModal() {
+            document.getElementById('shareModal').classList.remove('active');
+            currentShareFile = null;
+            selectedFriendId = null;
+            document.getElementById('confirmShareBtn').disabled = true;
         }
 
         function getFileIcon(category, mimeType) {
@@ -4626,6 +5710,9 @@ class AssistantHandler(BaseHTTPRequestHandler):
             <div class="drawer-item" onclick="window.open('/ai/file-manager', '_blank'); closeMobileMenu();">
                 <span style="margin-right: 12px; font-size: 18px;">📁</span>文件管理
             </div>
+            <div class="drawer-item" onclick="window.location.href='/ai/social'; closeMobileMenu();">
+                <span style="margin-right: 12px; font-size: 18px;">👥</span>社交中心
+            </div>
 
             <div class="drawer-divider"></div>
             
@@ -5002,7 +6089,16 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 </div>
                 <p style="color:#666; font-size:0.8em; margin-top:10px;">选择颜色后，点击下方保存按钮生效</p>
             </div>
-            
+
+            <div class="form-group" style="background:#f8f9fa; padding:15px; border-radius:8px; margin-bottom:20px;">
+                <label style="font-size:1.1em; margin-bottom:15px; display:block;">🤖 AI助理名字</label>
+                <p style="color:#666; font-size:0.9em; margin-bottom:10px;">给你的AI助理取个名字吧</p>
+                <input type="text" id="aiAssistantName" placeholder="例如：小智、小助手、阿福等"
+                       style="width:100%; padding:10px; border:1px solid #ddd; border-radius:6px; background:white; font-size:14px;"
+                       maxlength="20">
+                <p style="color:#999; font-size:0.75em; margin-top:8px;">💡 设置后，AI会记住这个名字并在对话中使用</p>
+            </div>
+
             <div class="form-group">
                 <label style="font-size:1.1em; margin-bottom:15px; display:block;">👔 更换AI秘书</label>
                 <p style="color:#aaa; font-size:0.9em; margin-bottom:20px;">选择您喜欢的AI助理形象</p>
@@ -6640,11 +7736,11 @@ class AssistantHandler(BaseHTTPRequestHandler):
         async function saveAssistantSettings() {
             // 1. 保存助理类型到本地
             localStorage.setItem('assistantType', currentAssistant);
-            
+
             // 2. 保存背景颜色到服务器
             const picker = document.getElementById('bgColorPicker');
             const bgColor = picker ? picker.value : null;
-            
+
             if (bgColor) {
                 try {
                     const response = await fetchWithAuth('/api/user/settings', {
@@ -6659,6 +7755,27 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     }
                 } catch (e) {
                     console.error('保存设置出错:', e);
+                }
+            }
+
+            // 3. 保存AI助理名字到服务器
+            const aiNameInput = document.getElementById('aiAssistantName');
+            const aiAssistantName = aiNameInput ? aiNameInput.value.trim() : '';
+
+            if (aiAssistantName) {
+                try {
+                    const response = await fetchWithAuth('/api/user/update-ai-assistant-name', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            ai_assistant_name: aiAssistantName
+                        })
+                    });
+                    const data = await response.json();
+                    if (!data.success) {
+                        console.error('保存AI助理名字失败:', data.message);
+                    }
+                } catch (e) {
+                    console.error('保存AI助理名字出错:', e);
                 }
             }
 
@@ -7100,6 +8217,12 @@ class AssistantHandler(BaseHTTPRequestHandler):
                             picker.value = user.chat_background;
                         }
                     }
+
+                    // 加载AI助理名字
+                    const aiNameInput = document.getElementById('aiAssistantName');
+                    if (aiNameInput && user.ai_assistant_name) {
+                        aiNameInput.value = user.ai_assistant_name;
+                    }
                 } else {
                     console.error('Invalid profile data:', data);
                     alert('加载用户信息失败: ' + (data.message || '未知错误'));
@@ -7447,7 +8570,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 const welcomeTextElem = document.getElementById('welcomeText');
                 if (welcomeTextElem) {
                     const username = localStorage.getItem('username') || '访客';
-                    typeWriter(welcomeTextElem, `你好，${username}！我是你的私人助理，有什么可以帮你的吗？`, 80);
+                    typeWriter(welcomeTextElem, `怕忘事儿？交给我，随时帮你记、帮你找～`, 80);
                 }
             } catch (e) {}
 
@@ -9163,19 +10286,27 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
 def run_server(port=8000):
     """运行服务器"""
-    # ❌ 禁用所有后端提醒调度器（改用前端Electron轮询通知）
-    # reminder_sys.start_monitoring()  # 禁用ReminderSystemMySQL的监控
-    # scheduler = get_global_scheduler(db_manager=db_manager)
-    # scheduler.start()  # 禁用ReminderScheduler的调度
-    print("⚠️  所有后端提醒调度器已禁用，使用前端Electron通知")
+    # ✅ 启用提醒调度器和 WebSocket 推送
+    print("🚀 正在启动提醒调度器和 WebSocket 服务器...")
+    scheduler = get_global_scheduler(db_manager=db_manager)
+    scheduler.start()
+    print("✅ 提醒调度器已启动（30秒检查间隔）")
+
+    # 启动 WebSocket 服务器
+    if scheduler.ws_server:
+        scheduler.ws_server.start()
+        print("✅ WebSocket 服务器已启动在端口 8001")
+    else:
+        print("⚠️ WebSocket 服务器未初始化")
 
     server = HTTPServer(('', port), AssistantHandler)
 
     print(f"\n{'='*60}")
     print(f"🤖 个人助手系统 - Web版")
     print(f"{'='*60}")
-    print(f"\n✅ 服务器已启动: http://localhost:{port}")
-    print(f"✅ 提醒调度器已启动（30秒检查间隔）")
+    print(f"\n✅ HTTP 服务器: http://localhost:{port}")
+    print(f"✅ WebSocket 服务器: ws://localhost:8001")
+    print(f"✅ 提醒推送: 已启用")
     print(f"\n💡 按 Ctrl+C 停止")
     print(f"{'='*60}\n")
 
