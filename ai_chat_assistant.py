@@ -1671,8 +1671,19 @@ class AIAssistant:
         for result_type, items in grouped.items():
             response += f"📌 {result_type}（共{len(items)}条）：\n"
             for item in items:
-                content = item['content'][:80]  # 截断长内容
-                timestamp = item['timestamp'][:10] if item['timestamp'] else '未知'
+                content = item['content'][:80] if item['content'] else '（无内容）'  # 截断长内容
+
+                # 处理timestamp，可能是datetime对象或字符串
+                timestamp = item['timestamp']
+                if timestamp:
+                    if isinstance(timestamp, str):
+                        timestamp = timestamp[:10]  # 字符串，取前10个字符
+                    else:
+                        # datetime对象，转换为字符串
+                        timestamp = str(timestamp)[:10]
+                else:
+                    timestamp = '未知'
+
                 response += f"  {idx}. {content}\n     [{timestamp}]\n"
                 idx += 1
             response += "\n"
