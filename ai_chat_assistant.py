@@ -17,6 +17,15 @@ from mysql_manager import (
 )
 # 导入新的提醒调度器
 from reminder_scheduler import get_global_scheduler
+# 导入命令系统
+from command_system import get_command_router
+# 导入类别系统管理器
+from category_system import WorkTaskManager, DailyRecordManager, CategoryManager
+# 导入开发日志管理器
+try:
+    from development_log import DevelopmentLogManager
+except ImportError:
+    DevelopmentLogManager = None
 
 class AIAssistant:
     """AI聊天助手 (MySQL版本)"""
@@ -31,6 +40,19 @@ class AIAssistant:
         self.reminder = ReminderSystemMySQL(self.db)
         self.image_manager = ImageManagerMySQL(self.db, 'uploads/images')
         self.file_manager = FileManagerMySQL(self.db, 'uploads/files')
+
+        # 初始化工作任务管理器（新分类系统）
+        self.work_task_manager = WorkTaskManager('mysql_config.json')
+
+        # 初始化开发日志管理器
+        if DevelopmentLogManager:
+            try:
+                self.dev_log = DevelopmentLogManager()
+            except Exception as e:
+                print(f"初始化开发日志管理器失败: {e}")
+                self.dev_log = None
+        else:
+            self.dev_log = None
 
         # 改为按用户ID存储对话历史的字典
         self.conversation_history = {}  # {user_id: [conversation_list]}
@@ -66,6 +88,10 @@ class AIAssistant:
         # 待验证的查询缓存 {user_id: original_query}
         self.pending_verification_queries = {}
 
+        # ✨ 上下文跟踪器：记录每个用户最后一次AI显示的内容
+        # 格式：{user_id: {'type': 'work_list'/'plan_list'/etc, 'data': [...], 'timestamp': ...}}
+        self.last_response_context = {}
+
         
     def load_config(self):
         """加载AI配置"""
@@ -83,55 +109,221 @@ class AIAssistant:
             'temperature': 0.5,
             'max_tokens': 300
         }
-    
-    def get_smart_context(self, user_message, user_id=None):
-        """智能两阶段搜索：先找相关数据，再给AI"""
+
+    def get_all_work_items(self, user_id, status_filter=None):
+        """
+        查询 work_tasks 表的数据（已完成 work_plans 数据迁移）
+
+        Args:
+            user_id: 用户ID
+            status_filter: 状态过滤 ('pending', 'completed', None=全部)
+
+        Returns:
+            list: 工作项列表，统一格式
+        """
+        all_items = []
+
+        # 查询 work_tasks 表（已包含迁移的 work_plans 数据）
+        try:
+            tasks = self.work_task_manager.list_tasks(user_id=user_id)
+            for task in tasks:
+                # 统一数据格式
+                item = {
+                    'id': task.get('id'),
+                    'title': task.get('title', ''),
+                    'content': task.get('content', ''),
+                    'description': task.get('content', ''),  # 别名
+                    'status': task.get('status', 'pending'),
+                    'priority': task.get('priority', 'medium'),
+                    'due_date': task.get('due_date'),
+                    'deadline': task.get('due_date'),  # 别名
+                    'created_at': task.get('created_at', ''),
+                    'updated_at': task.get('updated_at', ''),
+                    'completed_at': task.get('completed_at', ''),
+                    'source': 'work_tasks',  # 标识来源
+                    'subcategory_id': task.get('subcategory_id'),
+                    'sort_order': task.get('sort_order', 0),
+                    'tags': task.get('tags')  # 支持标签
+                }
+                all_items.append(item)
+        except Exception as e:
+            print(f"⚠️ 查询 work_tasks 失败: {e}")
+
+        # 根据 status_filter 过滤
+        if status_filter == 'pending':
+            all_items = [item for item in all_items
+                        if item['status'] not in ['completed', '已完成', 'cancelled', '已取消']]
+        elif status_filter == 'completed':
+            all_items = [item for item in all_items
+                        if item['status'] in ['completed', '已完成']]
+
+        # 按创建时间倒序排序（最新的在前）
+        all_items.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+
+        return all_items
+
+    def _search_daily_records(self, keyword, user_id):
+        """
+        ✨ 搜索daily_records表（记录类别）
+        """
+        try:
+            with self.db.get_cursor() as cursor:
+                sql = """
+                    SELECT id, title, content, created_at, subcategory_id
+                    FROM daily_records
+                    WHERE user_id = %s AND (title LIKE %s OR content LIKE %s)
+                    ORDER BY created_at DESC
+                    LIMIT 20
+                """
+                cursor.execute(sql, (user_id, f"%{keyword}%", f"%{keyword}%"))
+                results = cursor.fetchall()
+
+                # 转换为字典格式
+                records = []
+                for row in results:
+                    records.append({
+                        'id': row[0],
+                        'title': row[1],
+                        'content': row[2],
+                        'created_at': row[3],
+                        'subcategory_id': row[4]
+                    })
+                return records
+        except Exception as e:
+            print(f"❌ 搜索daily_records出错: {e}")
+            return []
+
+    def _search_guestbook(self, keyword, user_id):
+        """
+        ✨ 搜索guestbook_messages表（留言墙）
+        """
+        try:
+            with self.db.get_cursor() as cursor:
+                sql = """
+                    SELECT id, content, created_at, author_id
+                    FROM guestbook_messages
+                    WHERE owner_id = %s AND content LIKE %s
+                    ORDER BY created_at DESC
+                    LIMIT 20
+                """
+                cursor.execute(sql, (user_id, f"%{keyword}%"))
+                results = cursor.fetchall()
+
+                # 转换为字典格式
+                records = []
+                for row in results:
+                    records.append({
+                        'id': row[0],
+                        'title': '留言墙',
+                        'content': row[1],
+                        'created_at': row[2],
+                        'source': 'guestbook'
+                    })
+                return records
+        except Exception as e:
+            print(f"❌ 搜索guestbook出错: {e}")
+            return []
+
+    def _extract_keywords_from_message(self, user_message):
+        """
+        ✨ 改进的关键词提取：不依赖白名单，直接从用户输入提取所有有意义的词
+        使用简单的中文分词策略
+        """
         keywords = []
+
+        # 1. 提取数字
         numbers = re.findall(r'\d+', user_message)
         keywords.extend(numbers)
 
-        important_words = [
-            # 工作相关
-            '贷款', '公积金', '政策', '会议', '报告', '计划', '任务', '工作',
-            '额度', '房屋', '套数', '调整', '材料', '方案', '总结',
-            # 个人信息相关
-            '心情', '老公', '老婆', '生气', '伯乐', '手机', '电话', '号码',
-            '高俊', '金荣莹', '名字', '叫', '生日', '出生', '年龄', '身份证',
-            # 时间相关
-            '今天', '昨天', '最近', '明天', '后天', '年', '月', '日',
-            # 保存查询相关
-            '保存', '记住', '记录', '查询', '查看', '相关', '信息',
-            # 账号密码相关
-            '账号', '密码', '用户名', '登录', '注册', '验证码',
-            # 应用平台相关
-            '网站', 'app', '应用', '平台', '系统', '稿定'
-        ]
-        for word in important_words:
-            if word in user_message:
-                keywords.append(word)
+        # 2. 提取中文词汇（长度2-10的连续中文字符）
+        # 这样可以捕获任何中文词，包括"留言墙"、"图片"等
+        chinese_words = re.findall(r'[\u4e00-\u9fff]{2,10}', user_message)
+        keywords.extend(chinese_words)
+
+        # 3. 提取英文词汇
+        english_words = re.findall(r'[a-zA-Z]+', user_message)
+        keywords.extend(english_words)
+
+        # 4. 移除重复和过短的词
+        keywords = list(set(keywords))
+        keywords = [k for k in keywords if len(str(k)) >= 2]
+
+        # 5. 定义停用词（无搜索意义的词）
+        stopwords = {
+            '的', '了', '吗', '呢', '啊', '哦', '嗯', '是', '有', '没有',
+            '我', '你', '他', '她', '它', '们', '这', '那', '什么', '哪',
+            '怎么', '为什么', '如何', '请', '谢谢', '好的', '可以', '不',
+            '和', '或', '但', '因为', '所以', '如果', '那么', '一', '二',
+            '三', '四', '五', '六', '七', '八', '九', '十', '百', '千',
+            '万', '个', '件', '条', '张', '次', '下', '上', '中', '里',
+            '在', '到', '从', '给', '被', '把', '让', '使', '叫', '要',
+            '想', '能', '会', '应该', '必须', '可能', '也许', '就', '才',
+            '又', '还', '都', '很', '太', '最', '比', '像', '似', '等',
+            '及', '与', '而', '则', '否', '若', '乃', '矣', '焉', '耳'
+        }
+
+        # 6. 过滤停用词
+        keywords = [k for k in keywords if k not in stopwords]
+
+        print(f"🔍 改进的关键词提取: 用户输入='{user_message}' -> 提取的关键词={keywords}")
+
+        return keywords
+
+    def get_smart_context(self, user_message, user_id=None, ai_assistant_name='小助手'):
+        """✨ 改进的智能两阶段搜索：不依赖白名单，直接搜索用户输入的所有关键词"""
+
+        # ✨ 使用改进的关键词提取方法，替代旧的白名单机制
+        keywords = self._extract_keywords_from_message(user_message)
 
         # 智能日期扩展：如果用户输入日期相关的查询，扩展关键词
         date_keywords = self._expand_date_keywords(user_message)
         keywords.extend(date_keywords)
 
+        # 移除重复
+        keywords = list(set(keywords))
+
         relevant_chats = []
-        # 提取用户输入的核心主题词（非通用词）
-        core_keywords = []
-        generic_words = ['保存', '记住', '记录', '查询', '查看', '相关', '信息',
-                         '账号', '密码', '用户名', '登录', '注册', '验证码',
-                         '网站', 'app', '应用', '平台', '系统']
 
-        for keyword in keywords:
-            if keyword not in generic_words:
-                core_keywords.append(keyword)
-
-        # 优先使用核心关键词搜索
-        search_keywords = core_keywords if core_keywords else keywords
-
-        if search_keywords:
-            for keyword in search_keywords[:3]:  # 限制最多3个关键词，避免过度匹配
+        # ✨ 改进：直接使用提取的关键词搜索，不再过滤
+        if keywords:
+            for keyword in keywords[:5]:  # 增加到5个关键词以提高搜索覆盖率
                 results = self.memory.search_by_keyword(keyword, user_id=user_id)
                 relevant_chats.extend(results)
+                print(f"🔍 搜索关键词'{keyword}'，找到{len(results)}条结果")
+
+                # ✨ 新增：也搜索daily_records表（记录类别）
+                try:
+                    daily_results = self._search_daily_records(keyword, user_id)
+                    if daily_results:
+                        print(f"🔍 在daily_records中搜索'{keyword}'，找到{len(daily_results)}条结果")
+                        # 将daily_records转换为消息格式
+                        for record in daily_results:
+                            relevant_chats.append({
+                                'timestamp': record.get('created_at', ''),
+                                'content': f"[记录] {record.get('title', '')} - {record.get('content', '')[:100]}",
+                                'role': 'user',
+                                'source': 'daily_records',
+                                'record_id': record.get('id')
+                            })
+                except Exception as e:
+                    print(f"🔍 搜索daily_records出错: {e}")
+
+                # ✨ 新增：也搜索guestbook_messages表（留言墙）
+                try:
+                    guestbook_results = self._search_guestbook(keyword, user_id)
+                    if guestbook_results:
+                        print(f"🔍 在guestbook中搜索'{keyword}'，找到{len(guestbook_results)}条结果")
+                        # 将guestbook转换为消息格式
+                        for record in guestbook_results:
+                            relevant_chats.append({
+                                'timestamp': record.get('created_at', ''),
+                                'content': f"[留言墙] {record.get('content', '')[:100]}",
+                                'role': 'user',
+                                'source': 'guestbook',
+                                'record_id': record.get('id')
+                            })
+                except Exception as e:
+                    print(f"🔍 搜索guestbook出错: {e}")
 
         if not relevant_chats:
             relevant_chats = self.memory.get_recent_conversations(10, user_id=user_id)
@@ -145,14 +337,14 @@ class AIAssistant:
                 unique_chats.append(chat)
 
         relevant_plans = []
-        all_plans = self.planner.list_plans(user_id=user_id)
+        all_items = self.get_all_work_items(user_id, status_filter=None)  # 获取所有工作（合并两表）
         # 过滤掉已完成的任务
-        pending_plans = [p for p in all_plans if p.get('status') not in ['completed', '已完成']]
+        pending_plans = [p for p in all_items if p.get('status') not in ['completed', '已完成']]
         # 获取已完成的任务
-        completed_plans = [p for p in all_plans if p.get('status') in ['completed', '已完成']]
+        completed_plans = [p for p in all_items if p.get('status') in ['completed', '已完成']]
 
         print(f"🔍 DEBUG get_smart_context: user_message='{user_message}'")
-        print(f"🔍 DEBUG: all_plans数量={len(all_plans)}, pending_plans数量={len(pending_plans)}, completed_plans数量={len(completed_plans)}")
+        print(f"🔍 DEBUG: all_items数量={len(all_items)}, pending_plans数量={len(pending_plans)}, completed_plans数量={len(completed_plans)}")
 
         # 特殊处理：如果用户查询"已完成工作"，返回指定时间范围内已完成的计划
         if any(w in user_message for w in ['已完成工作', '已完成', '完成的工作', '显示已完成']):
@@ -177,9 +369,19 @@ class AIAssistant:
                     days = int(day_match.group(1))
 
             time_ago = datetime.now() - timedelta(days=days)
+            time_ago_str = time_ago.strftime('%Y-%m-%d')
             # 过滤指定时间范围内完成的工作
-            recent_completed = [p for p in completed_plans
-                              if p.get('updated_at') and p['updated_at'] >= time_ago.strftime('%Y-%m-%d')]
+            recent_completed = []
+            for p in completed_plans:
+                if p.get('updated_at'):
+                    # 统一转换为字符串进行比较
+                    updated_at = p['updated_at']
+                    if isinstance(updated_at, datetime):
+                        updated_at = updated_at.strftime('%Y-%m-%d')
+                    elif isinstance(updated_at, str):
+                        updated_at = updated_at[:10]  # 只取日期部分
+                    if updated_at >= time_ago_str:
+                        recent_completed.append(p)
             relevant_plans = recent_completed
             print(f"🔍 DEBUG: 触发已完成工作查询，时间范围={days}天，返回{len(relevant_plans)}个已完成计划")
         # 特殊处理：如果用户查询的是"工作"、"当前工作"、"未完成工作"等，直接返回所有未完成计划
@@ -187,19 +389,23 @@ class AIAssistant:
             relevant_plans = pending_plans
             print(f"🔍 DEBUG: 触发工作查询特殊处理，返回{len(relevant_plans)}个未完成计划")
         elif keywords:
-            for plan in pending_plans:
+            # ✨ 改进：使用改进的关键词搜索工作计划
+            for plan in all_items:  # 搜索所有计划（包括已完成的）
                 for keyword in keywords:
-                    if (keyword in plan['title'] or
-                        keyword in plan['description'] or
-                        keyword in str(plan.get('deadline', ''))):
+                    # 模糊匹配：检查关键词是否在标题、描述或截止日期中
+                    if (str(keyword).lower() in str(plan.get('title', '')).lower() or
+                        str(keyword).lower() in str(plan.get('description', '')).lower() or
+                        str(keyword).lower() in str(plan.get('deadline', '')).lower()):
                         relevant_plans.append(plan)
+                        print(f"🔍 工作计划匹配: 关键词='{keyword}' 匹配到计划='{plan.get('title', '')}'")
                         break
         else:
-            relevant_plans = [p for p in all_plans if p['status'] not in ['已完成', '已取消']]
+            relevant_plans = [p for p in all_items if p['status'] not in ['已完成', '已取消']]
         
-        context = f"""你是个人助手AI，严格基于用户的记录和计划回答问题。
+        context = f"""你是{ai_assistant_name}，用户的个人助手AI，严格基于用户的记录和计划回答问题。
 
 重要规则：
+0. **你的名字是"{ai_assistant_name}"，在对话中请使用这个名字称呼自己，不要使用"Assistant"或其他名字**
 1. **必须基于下方的聊天记录和计划列表来回答问题**
 2. **当用户问"工作"、"当前工作"、"未完成工作"时，必须列出下方的所有未完成计划**
 3. **当用户问"已完成工作"、"显示已完成"时，必须列出下方的所有已完成计划**
@@ -215,10 +421,17 @@ class AIAssistant:
 用户查询的主题：{user_message}
 当前时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}
 
-相关聊天记录({len(unique_chats)}条):
+        相关聊天记录({len(unique_chats)}条):
 """
-        
-        for chat in unique_chats[:15]:
+
+        # ✨ 调试：打印对话记录数量
+        print(f"🔍 DEBUG: unique_chats数量={len(unique_chats)}, relevant_plans数量={len(relevant_plans)}")
+        if unique_chats:
+            print(f"🔍 DEBUG: 前3条对话记录:")
+            for i, chat in enumerate(unique_chats[:3]):
+                print(f"  {i+1}. [{chat.get('timestamp', 'N/A')}] {chat.get('content', 'N/A')[:50]}")
+
+        for chat in unique_chats:
             context += f"[{chat['timestamp']}] {chat['content']}\n"
 
         if relevant_plans:
@@ -249,7 +462,7 @@ class AIAssistant:
                     context += f"{idx}. {plan['title']}{completed_time}\n"
             else:
                 context += f"\n**未完成的工作计划（共{len(relevant_plans)}个，请用序号列出，格式: 1. 标题）：**\n"
-                for idx, plan in enumerate(relevant_plans[:10], 1):
+                for idx, plan in enumerate(relevant_plans, 1):
                     context += f"{idx}. {plan['title']}\n"
         else:
             # 根据查询类型给出不同的提示
@@ -526,17 +739,96 @@ class AIAssistant:
             print(f"❌ 安全检查出错: {e}")
             return None
 
-    def chat(self, user_message, user_id=None, file_id=None, token=None, session_id=None):
+    def chat(self, user_message, user_id=None, file_id=None, token=None, session_id=None, ai_assistant_name='小助手'):
         """处理用户消息（✨新增session_id参数用于浏览器会话验证）"""
         # 检查是否是安全验证相关命令
         security_result = self.process_security_command(user_message, user_id, token, session_id)
         if security_result:
             return security_result
 
+        # ✨ 上下文检查：优先检查用户输入是否引用了上一次显示的内容
+        context_result = self.check_context_reference(user_message, user_id)
+        if context_result:
+            print(f"🔍 检测到上下文引用，自动路由到: {context_result}")
+            # 递归调用chat处理转换后的命令
+            return self.chat(context_result, user_id, file_id, token, session_id, ai_assistant_name)
+
+        # ✨ 新增：检查"X相关"模式，模糊匹配子类别
+        if '相关' in user_message:
+            fuzzy_result = self._fuzzy_match_subcategory(user_message, user_id)
+            if fuzzy_result:
+                print(f"🔍 检测到模糊匹配，转换为: {fuzzy_result}")
+                # 递归调用chat处理转换后的命令
+                return self.chat(fuzzy_result, user_id, file_id, token, session_id, ai_assistant_name)
+
+        # ✨ 新增：检查是否是新命令系统的命令
+        try:
+            command_router = get_command_router()
+            command_result = command_router.execute(user_message, user_id)
+            if command_result:
+                # ✨ 检查命令结果是否包含列表，如果是则保存上下文
+                response_text = command_result.get('response', '')
+
+                # 检查是否是工作任务列表
+                if '未完成的工作任务' in response_text and '个）：' in response_text:
+                    work_mgr = WorkTaskManager('mysql_config.json')
+                    pending_tasks = work_mgr.list_tasks(user_id, status='pending')
+                    if pending_tasks:
+                        self.last_response_context[user_id] = {
+                            'type': 'work_list',
+                            'data': pending_tasks,
+                            'timestamp': datetime.now()
+                        }
+                        print(f"🔍 保存工作列表上下文，共{len(pending_tasks)}个任务")
+
+                # ✨ 新增：检查是否是记录列表（如"📝 最近的ai助理："）
+                elif '📝 最近的' in response_text and '：' in response_text:
+                    # 提取子类别名称
+                    match = re.search(r'📝 最近的(.+?)：', response_text)
+                    if match:
+                        subcategory_name = match.group(1)
+                        # 获取该子类别的记录
+                        try:
+                            record_mgr = DailyRecordManager('mysql_config.json')
+                            # 直接通过SQL查询子类别ID
+                            query = "SELECT id FROM subcategories WHERE name = %s AND user_id = %s LIMIT 1"
+                            result = self.db.query(query, (subcategory_name, user_id))
+
+                            if result:
+                                subcategory_id = result[0]['id']
+                                records = record_mgr.list_records(user_id, subcategory_id=subcategory_id)
+                                if records:
+                                    self.last_response_context[user_id] = {
+                                        'type': 'daily_records',
+                                        'data': records,
+                                        'timestamp': datetime.now()
+                                    }
+                                    print(f"🔍 保存记录列表上下文({subcategory_name})，共{len(records)}条记录")
+                        except Exception as e:
+                            print(f"⚠️ 保存记录上下文失败: {e}")
+
+                return command_result
+        except Exception as e:
+            print(f"⚠️ 命令系统执行错误: {e}")
+
         # 检查是否是快捷命令
         shortcut_result = self.process_shortcut_command(user_message, user_id)
         if shortcut_result:
             return shortcut_result
+
+        # ✨ 新增：过滤过短的无意义输入（防止关键词搜索返回不相关结果）
+        stripped_message = user_message.strip()
+        # 如果输入只有1-2个英文字符（非中文），且不是数字，返回提示
+        # 中文2字词（如"工资"、"会议"）仍然允许搜索
+        if len(stripped_message) <= 2 and not stripped_message.isdigit():
+            # 检查是否全是ASCII字符（英文字母等）
+            if all(ord(c) < 128 for c in stripped_message):
+                return {
+                    'response': f'💡 您输入的内容"{stripped_message}"过短，我无法理解。\n\n您可以：\n• 输入"帮助"查看可用命令\n• 输入"类别"查看所有类别\n• 输入完整的问题或命令',
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': []
+                }
 
         # ✨ 先检查是否是"标记为已完成"的意图（避免被"已完成工作查询"误判）
         # 判断标准：包含序号格式（X.、第X、X项等）+ 完成关键词
@@ -544,12 +836,19 @@ class AIAssistant:
         has_complete_intent = any(kw in user_message for kw in complete_keywords_check)
 
         # 检查是否包含序号格式（而不是简单的数字）
-        # 序号格式：5.、第5、5项、任务5等
+        # 序号格式：5.、第5、5项、任务5、完成 5等
         # 排除时间表达：X个月、X天、X周等
         has_task_number = False
         if not re.search(r'\d+\s*[个](月|年|星期|周|天)', user_message):  # 排除时间表达
-            # 匹配序号格式
-            has_task_number = bool(re.search(r'(\d+[\.。、]|第\s*\d+|\d+\s*项|[工作任务]\s*\d+)', user_message))
+            # 匹配序号格式，包括：
+            # - 数字后跟点号：1.、2。
+            # - 第X：第1、第2
+            # - 数字后跟"项"：1项、2项
+            # - 工作/任务后跟数字：工作1、任务2
+            # - ✨ 操作词+空格+数字：完成 1、删除 2
+            has_task_number = bool(re.search(r'(\d+[\.。、]|第\s*\d+|\d+\s*项|[工作任务]\s*\d+|(完成|删除|标记|做完|搞定)\s+\d+)', user_message))
+
+        print(f"🔍 DEBUG: has_complete_intent={has_complete_intent}, has_task_number={has_task_number}, message='{user_message}'")
 
         if has_complete_intent and has_task_number:
             # 这是标记完成的意图，先执行完成检测
@@ -575,13 +874,21 @@ class AIAssistant:
 
         # ✨ 直接处理"当前工作"/"未完成工作"查询（不通过AI，避免token限制导致显示不全）
         if any(w in user_message for w in ['当前工作', '未完成工作', '未完成', '待办']) or user_message.strip() == '工作':
-            all_plans = self.planner.list_plans(user_id=user_id)
-            pending_plans = [p for p in all_plans if p.get('status') not in ['completed', '已完成', 'cancelled', '已取消']]
+            # 使用合并查询获取所有未完成的工作（work_plans + work_tasks）
+            pending_items = self.get_all_work_items(user_id, status_filter='pending')
 
-            if pending_plans:
-                response = f"📋 未完成的工作计划（共{len(pending_plans)}个）：\n\n"
-                for idx, plan in enumerate(pending_plans, 1):
-                    response += f"{idx}. {plan['title']}\n"
+            if pending_items:
+                response = f"📋 未完成的工作（共{len(pending_items)}个）：\n\n"
+                for idx, item in enumerate(pending_items, 1):
+                    # 所有数据现在都来自 work_tasks 表
+                    response += f"{idx}. {item['title']}\n"
+
+                # ✨ 保存上下文：记录显示了工作列表
+                self.last_response_context[user_id] = {
+                    'type': 'work_list',
+                    'data': pending_items,
+                    'timestamp': datetime.now()
+                }
             else:
                 response = "✅ 目前没有未完成的工作"
 
@@ -601,8 +908,8 @@ class AIAssistant:
 
         # ✨ 直接处理"已完成工作"查询（不通过AI，避免token限制导致显示不全）
         if any(w in user_message for w in ['已完成工作', '已完成', '完成的工作', '显示已完成']):
-            all_plans = self.planner.list_plans(user_id=user_id)
-            completed_plans = [p for p in all_plans if p.get('status') in ['completed', '已完成']]
+            # 使用合并查询获取所有已完成的工作（work_plans + work_tasks）
+            completed_items = self.get_all_work_items(user_id, status_filter='completed')
 
             # 判断是否是精确日期查询（今天、昨天、前天、X月X日/号）
             exact_date = None
@@ -634,7 +941,7 @@ class AIAssistant:
 
             # 如果是精确日期查询，使用精确匹配
             if exact_date:
-                recent_completed = [p for p in completed_plans
+                recent_completed = [p for p in completed_items
                                   if p.get('updated_at') and p['updated_at'][:10] == exact_date]
             else:
                 # 提取时间范围（如"3个月"、"1周"、"30天"、"近2天"）
@@ -663,19 +970,30 @@ class AIAssistant:
                 # 过滤指定时间范围内完成的工作
                 from datetime import timedelta
                 time_ago = datetime.now() - timedelta(days=days)
-                recent_completed = [p for p in completed_plans
-                                  if p.get('updated_at') and p['updated_at'] >= time_ago.strftime('%Y-%m-%d')]
+                time_ago_str = time_ago.strftime('%Y-%m-%d')
+                recent_completed = []
+                for p in completed_items:
+                    if p.get('updated_at'):
+                        # 统一转换为字符串进行比较
+                        updated_at = p['updated_at']
+                        if isinstance(updated_at, datetime):
+                            updated_at = updated_at.strftime('%Y-%m-%d')
+                        elif isinstance(updated_at, str):
+                            updated_at = updated_at[:10]  # 只取日期部分
+                        if updated_at >= time_ago_str:
+                            recent_completed.append(p)
 
             if recent_completed:
                 response = f"✅ {time_desc}已完成的工作（共{len(recent_completed)}个）：\n\n"
-                for idx, plan in enumerate(recent_completed, 1):
+                for idx, item in enumerate(recent_completed, 1):
+                    # 所有数据现在都来自 work_tasks 表
                     completed_time = ""
-                    if plan.get('updated_at'):
-                        if isinstance(plan['updated_at'], str):
-                            completed_time = f" (完成于: {plan['updated_at'][:10]})"
-                        elif isinstance(plan['updated_at'], datetime):
-                            completed_time = f" (完成于: {plan['updated_at'].strftime('%Y-%m-%d')})"
-                    response += f"{idx}. {plan['title']}{completed_time}\n"
+                    if item.get('updated_at'):
+                        if isinstance(item['updated_at'], str):
+                            completed_time = f" (完成于: {item['updated_at'][:10]})"
+                        elif isinstance(item['updated_at'], datetime):
+                            completed_time = f" (完成于: {item['updated_at'].strftime('%Y-%m-%d')})"
+                    response += f"{idx}. {item['title']}{completed_time}\n"
             else:
                 response = f"✅ {time_desc}没有已完成的工作"
 
@@ -701,7 +1019,7 @@ class AIAssistant:
             print(f"🔍 DEBUG chat: 需要验证，返回拦截消息")
             return verification_check
 
-        context = self.get_smart_context(user_message, user_id)
+        context = self.get_smart_context(user_message, user_id, ai_assistant_name)
 
         try:
             if self.model_type == 'openai':
@@ -709,7 +1027,9 @@ class AIAssistant:
             else:
                 response = self._fallback_response(user_message, user_id)
         except Exception as e:
-            response = f"⚠️ AI暂不可用\n\n{self._fallback_response(user_message, user_id)}"
+            print(f"⚠️ AI调用失败: {e}")
+            # ✨ 优雅降级：使用 fallback 响应，不显示错误信息
+            response = self._fallback_response(user_message, user_id)
 
         # 将对话添加到该用户的历史中
         user_key = user_id or 'default'
@@ -738,6 +1058,13 @@ class AIAssistant:
 
         # 检测并完成工作计划
         completed_plans = self.detect_and_complete_plans(user_message, user_id)
+
+        # ✨ 自动检测和记录开发需求
+        if self.dev_log:
+            try:
+                self.auto_detect_dev_requirement(user_message, response, user_id)
+            except Exception as e:
+                print(f"⚠️ 自动记录开发日志失败: {e}")
 
         # ✨ 安全检查：在返回前检查输出内容（使用session_id）
         security_result = self.check_output_security(response, user_id, session_id)
@@ -1093,6 +1420,136 @@ class AIAssistant:
         except Exception as e:
             print(f"🔍 DEBUG: 验证检查出错: {e}")
             return None
+
+    def check_context_reference(self, user_message, user_id):
+        """检查用户输入是否引用了上一次显示的内容
+
+        如果用户说"删除1."、"完成2."等，且上一次显示了列表，
+        则自动转换为完整命令，如"工作 删除 1"
+        """
+        print(f"🔍 DEBUG check_context_reference: user_id={user_id}, message='{user_message}'")
+
+        if not user_id or user_id not in self.last_response_context:
+            print(f"🔍 DEBUG: 没有找到上下文 (user_id={user_id}, has_context={user_id in self.last_response_context if user_id else False})")
+            return None
+
+        # ✨ 防止无限递归：如果消息已经是完整命令格式，不再转换
+        # 完整命令格式：以命令词开头（工作、计划、财务等）
+        command_words = ['工作', '计划', '财务', '账号', '提醒', '记录', '类别', '帮助', '日记', '随想', '信息', '学习笔记']
+        if any(user_message.strip().startswith(word) for word in command_words):
+            print(f"🔍 DEBUG: 消息已是完整命令格式，跳过转换")
+            return None
+
+        context = self.last_response_context[user_id]
+        context_type = context.get('type')
+        print(f"🔍 DEBUG: 找到上下文类型={context_type}")
+
+        # 检测引用模式：操作词 + 序号
+        # 支持：删除1. / 删除1 / 完成2. / 完成2 / 第3个删除 等
+        import re
+
+        # 操作关键词映射
+        action_keywords = {
+            '删除': '删除',
+            '完成': '完成',
+            '标记': '完成',
+            '做完': '完成',
+            '搞定': '完成',
+        }
+
+        # 检查是否包含操作词
+        detected_action = None
+        for keyword, action in action_keywords.items():
+            if keyword in user_message:
+                detected_action = action
+                print(f"🔍 DEBUG: 检测到操作词='{keyword}' -> '{action}'")
+                break
+
+        # 提取序号
+        numbers = re.findall(r'\d+', user_message)
+        print(f"🔍 DEBUG: 提取到的序号={numbers}")
+
+        # 如果有操作词和序号，且上下文是列表类型
+        if detected_action and numbers:
+            # ✨ 保留所有序号，用点号连接（支持批量操作）
+            numbers_str = '.'.join(numbers)
+
+            # 根据上下文类型转换为完整命令
+            if context_type == 'work_list':
+                result = f"工作 {detected_action} {numbers_str}"
+                print(f"🔍 DEBUG: 转换为完整命令='{result}'")
+                return result
+            elif context_type == 'plan_list':
+                result = f"计划 {detected_action} {numbers_str}"
+                print(f"🔍 DEBUG: 转换为完整命令='{result}'")
+                return result
+            elif context_type == 'daily_records':
+                # ✨ 对于daily_records，转换为"记录 操作 序号"命令
+                result = f"记录 {detected_action} {numbers_str}"
+                print(f"🔍 DEBUG: 转换为完整命令='{result}'")
+                return result
+
+        print(f"🔍 DEBUG: 未匹配到上下文引用模式")
+        return None
+
+    def _fuzzy_match_subcategory(self, user_message, user_id):
+        """模糊匹配子类别名称
+
+        支持格式：
+        - "ai相关" → 查找包含"ai"的子类别
+        - "助理相关" → 查找包含"助理"的子类别
+        - "ai相关 内容" → 查找包含"ai"的子类别并添加内容
+        """
+        # 提取"X相关"中的关键词X
+        match = re.search(r'(.+?)相关', user_message)
+        if not match:
+            return None
+
+        keyword = match.group(1).strip()
+        if not keyword:
+            return None
+
+        # 查询数据库中包含该关键词的子类别
+        from category_system import CategoryManager
+        category_mgr = CategoryManager()
+
+        # 获取所有子类别
+        all_categories = category_mgr.get_all_categories()
+        matched_subcategories = []
+
+        for category in all_categories:
+            query = """
+                SELECT * FROM subcategories
+                WHERE category_id = %s
+                ORDER BY sort_order, id
+            """
+            subcategories = category_mgr.query(query, (category['id'],))
+
+            for sub in subcategories:
+                # 检查子类别名称是否包含关键词
+                if keyword in sub['name']:
+                    matched_subcategories.append(sub['name'])
+
+        if len(matched_subcategories) == 0:
+            # 没有找到匹配的子类别
+            return None
+        elif len(matched_subcategories) == 1:
+            # 找到唯一匹配，转换为该子类别命令
+            subcategory_name = matched_subcategories[0]
+            # 提取"相关"后面的内容（如果有）
+            remaining = user_message.split('相关', 1)[1].strip() if '相关' in user_message else ''
+            if remaining:
+                return f"{subcategory_name} {remaining}"
+            else:
+                return subcategory_name
+        else:
+            # 找到多个匹配，暂时返回第一个（未来可以改进为让用户选择）
+            subcategory_name = matched_subcategories[0]
+            remaining = user_message.split('相关', 1)[1].strip() if '相关' in user_message else ''
+            if remaining:
+                return f"{subcategory_name} {remaining}"
+            else:
+                return subcategory_name
 
     def process_shortcut_command(self, user_message, user_id=None):
         """处理快捷命令 - 工作: 和 计划:（兼容中文冒号）"""
@@ -1597,22 +2054,43 @@ class AIAssistant:
         - "第3个任务做完了"
         - "明早8点半上班完成了"
         """
+        print(f"🔍 DEBUG detect_and_complete_plans 被调用: message='{user_message}', user_id={user_id}")
+
         if user_id is None:
             return []
 
         # 完成意图的关键词
-        complete_keywords = ['完成', '做完', '做好', '已完成', '搞定', '弄好', '结束']
+        complete_keywords = ['完成', '做完', '做好', '已完成', '搞定', '弄好', '结束', '删除']
 
         # 检查是否包含完成意图
         has_complete_intent = any(kw in user_message for kw in complete_keywords)
+        print(f"🔍 DEBUG has_complete_intent={has_complete_intent}")
         if not has_complete_intent:
             return []
 
         completed_plans = []
 
-        # 获取用户的未完成计划
-        all_plans = self.planner.list_plans(user_id=user_id)
-        pending_plans = [p for p in all_plans if p['status'] not in ['已完成', '已取消', 'completed', 'cancelled']]
+        # ✨ 修复：不再使用全局 data_type，而是根据每个 item 的 source 字段来判断
+        pending_plans = []
+
+        # 检查是否有保存的上下文
+        if user_id in self.last_response_context:
+            context = self.last_response_context[user_id]
+            context_type = context.get('type')
+
+            if context_type == 'work_list':
+                # 工作列表上下文（可能包含 work_plans 和 work_tasks 的混合数据）
+                pending_plans = [t for t in context.get('data', []) if t.get('status') in ['pending', '未完成']]
+                print(f"🔍 使用work_list上下文，共{len(pending_plans)}个待完成项目")
+            elif context_type == 'daily_records':
+                # daily_records上下文
+                pending_plans = context.get('data', [])
+                print(f"🔍 使用daily_records表上下文，共{len(pending_plans)}条记录")
+
+        # 如果没有上下文，使用合并查询获取所有未完成的工作
+        if not pending_plans:
+            pending_plans = self.get_all_work_items(user_id, status_filter='pending')
+            print(f"🔍 使用合并查询获取未完成工作，共{len(pending_plans)}个")
 
         if not pending_plans:
             return []
@@ -1629,15 +2107,30 @@ class AIAssistant:
         # 改进：支持更灵活的格式，包括末尾的数字
         multi_numbers = re.findall(r'\b(\d+)\b', user_message)
         # 过滤掉"已完成"等词中可能出现的数字
+        # ✨ 修复：只有当数字在关键词之前时才提取前缀（如"1.2.3.已完成"）
+        # 对于"完成 1"这种格式（关键词在数字之前），不做处理
         if '已完成' in user_message or '完成' in user_message or '标注' in user_message:
-            # 只保留句子开头部分的数字（在"已完成"/"完成"/"标注"之前）
+            # 检查是否是"数字在关键词之前"的格式
+            keyword_pos = -1
+            keyword_used = ''
             if '已完成' in user_message:
-                prefix = user_message.split('已完成')[0]
+                keyword_pos = user_message.find('已完成')
+                keyword_used = '已完成'
             elif '标注' in user_message:
-                prefix = user_message.split('标注')[0]
+                keyword_pos = user_message.find('标注')
+                keyword_used = '标注'
             else:
-                prefix = user_message.split('完成')[0]
-            multi_numbers = re.findall(r'\b(\d+)\b', prefix)
+                keyword_pos = user_message.find('完成')
+                keyword_used = '完成'
+
+            # 检查第一个数字的位置
+            first_number_match = re.search(r'\b(\d+)\b', user_message)
+            if first_number_match:
+                first_number_pos = first_number_match.start()
+                # 只有当数字在关键词之前时，才提取前缀
+                if first_number_pos < keyword_pos:
+                    prefix = user_message.split(keyword_used)[0]
+                    multi_numbers = re.findall(r'\b(\d+)\b', prefix)
 
         # ✨ 排除时间表达式中的数字（如"1个月"、"2天"）
         if multi_numbers and re.search(r'\d+\s*[个](月|年|星期|周|天)', user_message):
@@ -1648,25 +2141,53 @@ class AIAssistant:
         if multi_numbers and len(multi_numbers) >= 1:
             # 处理多个序号
             print(f"🔍 检测到多个序号: {multi_numbers}")
+            print(f"🔍 pending_plans数量={len(pending_plans)}")
             for num_str in multi_numbers:
                 index = int(num_str) - 1  # 转换为0-based索引
+                print(f"🔍 处理序号{num_str}, index={index}")
                 if 0 <= index < len(pending_plans):
                     plan = pending_plans[index]
-                    # 更新计划状态
-                    success = self.planner.update_plan(
-                        plan['id'],
-                        user_id=user_id,
-                        status='completed'
-                    )
+                    print(f"🔍 找到记录: id={plan.get('id')}, source={plan.get('source')}, title={plan.get('content', plan.get('title', ''))[:30]}")
+                    # ✨ 根据 source 字段判断数据来源并调用相应的更新方法
+                    success = False
+                    source = plan.get('source', '')
+
+                    if source == 'daily_records':
+                        # daily_records表：更新状态为completed
+                        try:
+                            record_mgr = DailyRecordManager('mysql_config.json')
+                            print(f"🔍 调用update_record_status: record_id={plan['id']}, user_id={user_id}")
+                            success = record_mgr.update_record_status(plan['id'], 'completed', user_id)
+                            print(f"🔍 update_record_status返回: {success}")
+                            if success:
+                                print(f"✅ 已标记记录为完成(序号{num_str}): {plan.get('content', plan.get('title', ''))[:50]}")
+                            else:
+                                print(f"❌ 标记记录失败(序号{num_str}): {plan.get('content', plan.get('title', ''))[:50]}")
+                        except Exception as e:
+                            print(f"❌ 更新daily_records失败: {e}")
+                            import traceback
+                            traceback.print_exc()
+                            success = False
+                    elif source == 'work_tasks':
+                        # work_tasks表：更新状态为completed
+                        success = self.work_task_manager.update_task_status(plan['id'], 'completed', user_id)
+                        if success:
+                            print(f"✅ 已标记任务为完成(序号{num_str}): {plan['title']}")
+                    else:
+                        # 兼容旧数据：默认使用work_tasks表（work_plans已迁移）
+                        print(f"⚠️ 项目{num_str}没有source字段，默认使用work_tasks表")
+                        success = self.work_task_manager.update_task_status(plan['id'], 'completed', user_id)
+                        if success:
+                            print(f"✅ 已标记任务为完成(序号{num_str}): {plan['title']}")
+
                     if success:
                         completed_plans.append({
                             'id': plan['id'],
-                            'title': plan['title'],
+                            'title': plan.get('content', plan.get('title', ''))[:50],
                             'method': 'multi_index'
                         })
-                        print(f"✅ 已标记计划为完成(序号{num_str}): {plan['title']}")
                 else:
-                    print(f"⚠️ 序号{num_str}超出范围，未完成计划总数={len(pending_plans)}")
+                    print(f"⚠️ 序号{num_str}超出范围，总数={len(pending_plans)}")
 
             if completed_plans:
                 # 清空该用户的对话历史，避免AI参考过时信息
@@ -1680,45 +2201,54 @@ class AIAssistant:
                 index = int(match.group(1)) - 1  # 转换为0-based索引
                 if 0 <= index < len(pending_plans):
                     plan = pending_plans[index]
-                    # 更新计划状态
-                    success = self.planner.update_plan(
-                        plan['id'],
-                        user_id=user_id,
-                        status='completed'
-                    )
+                    # ✨ 根据 source 字段判断数据来源并调用相应的更新方法
+                    success = False
+                    source = plan.get('source', '')
+
+                    if source == 'daily_records':
+                        record_mgr = DailyRecordManager('mysql_config.json')
+                        success = record_mgr.update_record_status(plan['id'], 'completed', user_id)
+                    elif source == 'work_tasks':
+                        success = self.work_task_manager.update_task_status(plan['id'], 'completed', user_id)
+                    else:
+                        # 兼容旧数据：默认使用work_tasks表（work_plans已迁移）
+                        print(f"⚠️ 项目没有source字段，默认使用work_tasks表")
+                        success = self.work_task_manager.update_task_status(plan['id'], 'completed', user_id)
+
                     if success:
                         completed_plans.append({
                             'id': plan['id'],
-                            'title': plan['title'],
+                            'title': plan.get('content', plan.get('title', ''))[:50],
                             'method': 'index'
                         })
-                        print(f"✅ 已标记计划为完成: {plan['title']}")
-                        # 清空该用户的对话历史，避免AI参考过时信息
+                        print(f"✅ 已标记为完成: {plan.get('content', plan.get('title', ''))[:50]}")
                         self.clear_conversation(user_id=user_id)
-                        # 删除数据库中包含已完成任务标题的消息记录
-                        self.memory.delete_messages_by_keywords([plan['title']], user_id=user_id)
+                        if source != 'daily_records':
+                            self.memory.delete_messages_by_keywords([plan.get('title', '')], user_id=user_id)
                     return completed_plans
 
         # 方式2: 通过关键词匹配标题
-        # 提取用户消息中的关键词（排除完成相关的词）
         msg_clean = user_message
         for kw in complete_keywords + ['第', '项', '个', '工作', '任务', '了', '的', '我', '要', '在']:
             msg_clean = msg_clean.replace(kw, ' ')
 
-        # 提取可能的关键词
         keywords = [w.strip() for w in msg_clean.split() if len(w.strip()) >= 2]
 
         # 尝试匹配计划标题
         for keyword in keywords:
             for plan in pending_plans:
-                title = plan.get('title', '')
+                title = plan.get('content', plan.get('title', ''))
                 if keyword in title or title in user_message:
-                    # 找到匹配的计划
-                    success = self.planner.update_plan(
-                        plan['id'],
-                        user_id=user_id,
-                        status='completed'
-                    )
+                    # ✨ 根据数据类型调用不同的处理方法
+                    success = False
+                    if data_type == 'daily_records':
+                        record_mgr = DailyRecordManager('mysql_config.json')
+                        success = record_mgr.update_record_status(plan['id'], 'completed', user_id)
+                    elif data_type == 'work_tasks':
+                        work_mgr = WorkTaskManager('mysql_config.json')
+                        success = work_mgr.update_task_status(plan['id'], 'completed', user_id)
+                    else:
+                        success = self.planner.update_plan(plan['id'], user_id=user_id, status='completed')
                     if success:
                         completed_plans.append({
                             'id': plan['id'],
@@ -1759,12 +2289,9 @@ class AIAssistant:
                 
                 if results:
                     response = f"🔍 找到 {len(results)} 条包含「{keyword}」的记录：\n\n"
-                    for i, chat in enumerate(results[:10], 1):
+                    for i, chat in enumerate(results, 1):
                         response += f"{i}. [{chat['timestamp']}] {chat['content']}\n"
-                    
-                    if len(results) > 10:
-                        response += f"\n...还有 {len(results) - 10} 条相关记录"
-                    
+
                     return response
                 else:
                     return f"没有找到包含「{keyword}」的记录"
@@ -1788,7 +2315,7 @@ class AIAssistant:
 
             if plans:
                 response = f"📅 找到 {len(plans)} 个计划:\n\n"
-                for plan in plans[:10]:
+                for plan in plans:
                     response += f"• [{plan['status']}] {plan['title']}\n"
                     response += f"  截止: {plan['deadline']} | {plan['priority']}\n\n"
                 return response
@@ -1807,3 +2334,89 @@ class AIAssistant:
 📊 总结: "帮我总结"
 
 试试问我具体问题吧！"""
+
+    def auto_detect_dev_requirement(self, user_message, ai_response, user_id):
+        """自动检测和记录开发需求
+
+        检测规则：
+        1. 用户提出开发需求（包含：修复、添加、实现、开发、优化等关键词）
+        2. AI回复表示理解并开始工作
+        3. 自动创建开发日志
+
+        完成检测：
+        1. AI回复包含"已完成"、"修复完成"、"实现完成"等
+        2. 自动更新最近的进行中日志为已完成
+        """
+        if not self.dev_log:
+            return
+
+        # 开发需求关键词
+        requirement_keywords = [
+            '修复', '添加', '实现', '开发', '优化', '改进', '增加',
+            '创建', '设计', '调整', '更新', '完善', '解决', '处理'
+        ]
+
+        # 完成关键词
+        completion_keywords = [
+            '已完成', '修复完成', '实现完成', '开发完成', '优化完成',
+            '已修复', '已实现', '已添加', '已创建', '已优化',
+            '完成了', '搞定了', '弄好了', '做完了'
+        ]
+
+        # 检测是否是开发需求
+        has_requirement = any(kw in user_message for kw in requirement_keywords)
+
+        # 检测AI是否表示开始工作（回复中包含"让我"、"我来"、"开始"等）
+        ai_start_keywords = ['让我', '我来', '开始', '好的', '我会', '我将']
+        ai_starts_work = any(kw in ai_response for kw in ai_start_keywords)
+
+        # 如果是开发需求且AI开始工作，创建开发日志
+        if has_requirement and ai_starts_work:
+            # 提取需求描述（取用户消息的前50个字符）
+            requirement = user_message[:50]
+            if len(user_message) > 50:
+                requirement += '...'
+
+            # 检查是否已有相同的进行中任务
+            in_progress = self.dev_log.get_in_progress_logs()
+            # 避免重复创建（如果最近5分钟内有相似的任务）
+            from datetime import datetime, timedelta
+            now = datetime.now()
+            for log in in_progress:
+                log_time = datetime.strptime(log['start_time'], '%Y-%m-%d %H:%M:%S')
+                if (now - log_time).total_seconds() < 300:  # 5分钟内
+                    if log['requirement'][:30] == requirement[:30]:
+                        print(f"⚠️ 跳过重复的开发需求: {requirement[:30]}")
+                        return
+
+            # 创建开发日志
+            log_id = self.dev_log.add_requirement(requirement, user_message)
+            print(f"✅ 自动创建开发日志 #{log_id}: {requirement}")
+
+        # 检测是否完成了开发任务
+        has_completion = any(kw in ai_response for kw in completion_keywords)
+
+        if has_completion:
+            # 获取最近的进行中任务
+            in_progress = self.dev_log.get_in_progress_logs()
+            if in_progress:
+                # 取最新的一个任务
+                latest = in_progress[-1]
+
+                # 提取完成情况描述（从AI回复中提取关键信息）
+                # 尝试提取"已XXX"或"完成了XXX"的部分
+                completion_desc = ""
+                for line in ai_response.split('\n'):
+                    if any(kw in line for kw in completion_keywords):
+                        completion_desc = line.strip()
+                        break
+
+                if not completion_desc:
+                    completion_desc = ai_response[:100]
+                    if len(ai_response) > 100:
+                        completion_desc += '...'
+
+                # 更新为已完成
+                self.dev_log.update_completion(latest['id'], completion_desc)
+                print(f"✅ 自动标记开发日志 #{latest['id']} 为已完成: {completion_desc[:50]}")
+
