@@ -167,30 +167,26 @@ class AIAssistant:
         ✨ 搜索daily_records表（记录类别）
         """
         try:
-            with self.db.get_cursor() as cursor:
-                sql = """
-                    SELECT id, title, content, created_at, subcategory_id
-                    FROM daily_records
-                    WHERE user_id = %s AND (title LIKE %s OR content LIKE %s)
-                    ORDER BY created_at DESC
-                    LIMIT 20
-                """
-                cursor.execute(sql, (user_id, f"%{keyword}%", f"%{keyword}%"))
-                results = cursor.fetchall()
+            # 使用query方法而不是直接使用cursor
+            sql = """
+                SELECT id, title, content, created_at, subcategory_id
+                FROM daily_records
+                WHERE user_id = %s AND (title LIKE %s OR content LIKE %s)
+                ORDER BY created_at DESC
+                LIMIT 20
+            """
+            results = self.db.query(sql, (user_id, f"%{keyword}%", f"%{keyword}%"))
 
-                # 转换为字典格式
-                records = []
-                for row in results:
-                    records.append({
-                        'id': row[0],
-                        'title': row[1],
-                        'content': row[2],
-                        'created_at': row[3],
-                        'subcategory_id': row[4]
-                    })
-                return records
+            print(f"🔍 DEBUG _search_daily_records: keyword='{keyword}', user_id={user_id}, 找到{len(results)}条结果")
+            if results:
+                print(f"🔍 DEBUG: 第一条结果: {results[0]}")
+
+            # 结果已经是字典格式
+            return results
         except Exception as e:
             print(f"❌ 搜索daily_records出错: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
     def _search_guestbook(self, keyword, user_id):
@@ -198,30 +194,35 @@ class AIAssistant:
         ✨ 搜索guestbook_messages表（留言墙）
         """
         try:
-            with self.db.get_cursor() as cursor:
-                sql = """
-                    SELECT id, content, created_at, author_id
-                    FROM guestbook_messages
-                    WHERE owner_id = %s AND content LIKE %s
-                    ORDER BY created_at DESC
-                    LIMIT 20
-                """
-                cursor.execute(sql, (user_id, f"%{keyword}%"))
-                results = cursor.fetchall()
+            # 使用query方法而不是直接使用cursor
+            sql = """
+                SELECT id, content, created_at, author_id
+                FROM guestbook_messages
+                WHERE owner_id = %s AND content LIKE %s
+                ORDER BY created_at DESC
+                LIMIT 20
+            """
+            results = self.db.query(sql, (user_id, f"%{keyword}%"))
 
-                # 转换为字典格式
-                records = []
-                for row in results:
-                    records.append({
-                        'id': row[0],
-                        'title': '留言墙',
-                        'content': row[1],
-                        'created_at': row[2],
-                        'source': 'guestbook'
-                    })
-                return records
+            print(f"🔍 DEBUG _search_guestbook: keyword='{keyword}', user_id={user_id}, 找到{len(results)}条结果")
+            if results:
+                print(f"🔍 DEBUG: 第一条结果: {results[0]}")
+
+            # 转换为统一格式
+            records = []
+            for row in results:
+                records.append({
+                    'id': row.get('id'),
+                    'title': '留言墙',
+                    'content': row.get('content'),
+                    'created_at': row.get('created_at'),
+                    'source': 'guestbook'
+                })
+            return records
         except Exception as e:
             print(f"❌ 搜索guestbook出错: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
     def _extract_keywords_from_message(self, user_message):
@@ -1576,6 +1577,7 @@ class AIAssistant:
         ✨ 全面搜索"X相关"的所有数据
         搜索所有数据表中包含关键词的信息
         """
+        print(f"🔍 开始全面搜索: keyword='{keyword}', user_id={user_id}")
         all_results = []
 
         # 1. 搜索聊天记录 (messages)
@@ -1605,6 +1607,8 @@ class AIAssistant:
                         'timestamp': record.get('created_at', ''),
                         'source': 'daily_records'
                     })
+            else:
+                print(f"🔍 在daily_records中未找到结果")
         except Exception as e:
             print(f"❌ 搜索daily_records出错: {e}")
 
@@ -1620,6 +1624,8 @@ class AIAssistant:
                         'timestamp': record.get('created_at', ''),
                         'source': 'guestbook'
                     })
+            else:
+                print(f"🔍 在guestbook中未找到结果")
         except Exception as e:
             print(f"❌ 搜索guestbook出错: {e}")
 
@@ -1636,9 +1642,12 @@ class AIAssistant:
                         'timestamp': plan.get('created_at', ''),
                         'source': 'work_plans'
                     })
+            else:
+                print(f"🔍 在work_plans中未找到结果")
         except Exception as e:
             print(f"❌ 搜索work_plans出错: {e}")
 
+        print(f"🔍 全面搜索完成，共找到{len(all_results)}条结果")
         return all_results
 
     def _format_comprehensive_search_results(self, keyword, results):
