@@ -169,10 +169,11 @@ class AIAssistant:
         try:
             # 使用query方法而不是直接使用cursor
             sql = """
-                SELECT id, title, content, created_at, subcategory_id
-                FROM daily_records
-                WHERE user_id = %s AND (title LIKE %s OR content LIKE %s)
-                ORDER BY created_at DESC
+                SELECT dr.id, dr.title, dr.content, dr.created_at, dr.subcategory_id, s.name as subcategory_name
+                FROM daily_records dr
+                LEFT JOIN subcategories s ON dr.subcategory_id = s.id
+                WHERE dr.user_id = %s AND (dr.title LIKE %s OR dr.content LIKE %s)
+                ORDER BY dr.created_at DESC
                 LIMIT 20
             """
             results = self.db.query(sql, (user_id, f"%{keyword}%", f"%{keyword}%"))
@@ -1601,8 +1602,10 @@ class AIAssistant:
             if daily_results:
                 print(f"🔍 在daily_records中找到{len(daily_results)}条结果")
                 for record in daily_results:
+                    # 使用子类别名称作为分类，如果没有则使用"日常记录"
+                    subcategory_name = record.get('subcategory_name') or '日常记录'
                     all_results.append({
-                        'type': '日常记录',
+                        'type': f'{subcategory_name}记录',
                         'content': f"{record.get('title', '')} - {record.get('content', '')}",
                         'timestamp': record.get('created_at', ''),
                         'source': 'daily_records'
