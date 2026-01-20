@@ -753,13 +753,18 @@ class AIAssistant:
             # 递归调用chat处理转换后的命令
             return self.chat(context_result, user_id, file_id, token, session_id, ai_assistant_name)
 
-        # ✨ 新增：检查"X相关"模式，模糊匹配子类别
+        # ✨ 新增：检查"X相关"模式，模糊匹配子类别或全面搜索
         if '相关' in user_message:
             fuzzy_result = self._fuzzy_match_subcategory(user_message, user_id)
             if fuzzy_result:
-                print(f"🔍 检测到模糊匹配，转换为: {fuzzy_result}")
-                # 递归调用chat处理转换后的命令
-                return self.chat(fuzzy_result, user_id, file_id, token, session_id, ai_assistant_name)
+                # 检查是否是全面搜索结果（字典格式）
+                if isinstance(fuzzy_result, dict) and fuzzy_result.get('is_comprehensive_search'):
+                    print(f"🔍 返回全面搜索结果")
+                    return fuzzy_result
+                else:
+                    # 是子类别命令，递归调用
+                    print(f"🔍 检测到模糊匹配，转换为: {fuzzy_result}")
+                    return self.chat(fuzzy_result, user_id, file_id, token, session_id, ai_assistant_name)
 
         # ✨ 新增：检查是否是新命令系统的命令
         try:
@@ -1496,9 +1501,13 @@ class AIAssistant:
         """模糊匹配子类别名称
 
         支持格式：
-        - "ai相关" → 查找包含"ai"的子类别
-        - "助理相关" → 查找包含"助理"的子类别
+        - "ai相关" → 查找包含"ai"的子类别，如果没有则全面搜索
+        - "助理相关" → 查找包含"助理"的子类别，如果没有则全面搜索
         - "ai相关 内容" → 查找包含"ai"的子类别并添加内容
+
+        ✨ 新增逻辑：
+        - 如果找到子类别，返回子类别命令
+        - 如果没找到子类别，进行全面搜索并返回搜索结果
         """
         # 提取"X相关"中的关键词X
         match = re.search(r'(.+?)相关', user_message)
@@ -1531,8 +1540,19 @@ class AIAssistant:
                     matched_subcategories.append(sub['name'])
 
         if len(matched_subcategories) == 0:
-            # 没有找到匹配的子类别
-            return None
+            # ✨ 没有找到匹配的子类别，进行全面搜索
+            print(f"🔍 未找到子类别匹配'{keyword}'，进行全面搜索...")
+            search_results = self._comprehensive_search_related(keyword, user_id)
+            formatted_results = self._format_comprehensive_search_results(keyword, search_results)
+
+            # 返回搜索结果而不是None
+            return {
+                'response': formatted_results,
+                'is_comprehensive_search': True,
+                'detected_plans': [],
+                'detected_reminders': [],
+                'completed_plans': []
+            }
         elif len(matched_subcategories) == 1:
             # 找到唯一匹配，转换为该子类别命令
             subcategory_name = matched_subcategories[0]
@@ -1550,6 +1570,105 @@ class AIAssistant:
                 return f"{subcategory_name} {remaining}"
             else:
                 return subcategory_name
+
+    def _comprehensive_search_related(self, keyword, user_id):
+        """
+        ✨ 全面搜索"X相关"的所有数据
+        搜索所有数据表中包含关键词的信息
+        """
+        all_results = []
+
+        # 1. 搜索聊天记录 (messages)
+        try:
+            chat_results = self.memory.search_by_keyword(keyword, user_id=user_id)
+            if chat_results:
+                print(f"🔍 在messages中找到{len(chat_results)}条结果")
+                for chat in chat_results:
+                    all_results.append({
+                        'type': '聊天记录',
+                        'content': chat.get('content', ''),
+                        'timestamp': chat.get('timestamp', ''),
+                        'source': 'messages'
+                    })
+        except Exception as e:
+            print(f"❌ 搜索messages出错: {e}")
+
+        # 2. 搜索日常记录 (daily_records)
+        try:
+            daily_results = self._search_daily_records(keyword, user_id)
+            if daily_results:
+                print(f"🔍 在daily_records中找到{len(daily_results)}条结果")
+                for record in daily_results:
+                    all_results.append({
+                        'type': '日常记录',
+                        'content': f"{record.get('title', '')} - {record.get('content', '')}",
+                        'timestamp': record.get('created_at', ''),
+                        'source': 'daily_records'
+                    })
+        except Exception as e:
+            print(f"❌ 搜索daily_records出错: {e}")
+
+        # 3. 搜索留言墙 (guestbook_messages)
+        try:
+            guestbook_results = self._search_guestbook(keyword, user_id)
+            if guestbook_results:
+                print(f"🔍 在guestbook中找到{len(guestbook_results)}条结果")
+                for record in guestbook_results:
+                    all_results.append({
+                        'type': '留言墙',
+                        'content': record.get('content', ''),
+                        'timestamp': record.get('created_at', ''),
+                        'source': 'guestbook'
+                    })
+        except Exception as e:
+            print(f"❌ 搜索guestbook出错: {e}")
+
+        # 4. 搜索工作计划 (work_plans)
+        try:
+            plans = self.planner.list_plans(user_id=user_id)
+            plan_results = [p for p in plans if keyword in p.get('title', '') or keyword in p.get('description', '')]
+            if plan_results:
+                print(f"🔍 在work_plans中找到{len(plan_results)}条结果")
+                for plan in plan_results:
+                    all_results.append({
+                        'type': '工作计划',
+                        'content': f"{plan.get('title', '')} - {plan.get('description', '')}",
+                        'timestamp': plan.get('created_at', ''),
+                        'source': 'work_plans'
+                    })
+        except Exception as e:
+            print(f"❌ 搜索work_plans出错: {e}")
+
+        return all_results
+
+    def _format_comprehensive_search_results(self, keyword, results):
+        """
+        ✨ 格式化全面搜索结果
+        """
+        if not results:
+            return f"没有记录'{keyword}'相关信息"
+
+        response = f"🔍 找到 {len(results)} 条与'{keyword}'相关的信息：\n\n"
+
+        # 按类型分组显示
+        grouped = {}
+        for result in results:
+            result_type = result['type']
+            if result_type not in grouped:
+                grouped[result_type] = []
+            grouped[result_type].append(result)
+
+        idx = 1
+        for result_type, items in grouped.items():
+            response += f"📌 {result_type}（共{len(items)}条）：\n"
+            for item in items:
+                content = item['content'][:80]  # 截断长内容
+                timestamp = item['timestamp'][:10] if item['timestamp'] else '未知'
+                response += f"  {idx}. {content}\n     [{timestamp}]\n"
+                idx += 1
+            response += "\n"
+
+        return response
 
     def process_shortcut_command(self, user_message, user_id=None):
         """处理快捷命令 - 工作: 和 计划:（兼容中文冒号）"""
