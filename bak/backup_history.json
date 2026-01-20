@@ -1,5 +1,24 @@
 [
   {
+    "id": 91,
+    "timestamp": "2026-01-20 18:12:42",
+    "backup_dir": "backup-20260120-181211",
+    "status": "success",
+    "notes": "变更: 1.实现三种搜索模式：纯X查询（类别）、X相关查询（除聊天外的所有数据）、X所有查询（包含聊天的所有数据）;2.改进搜索结果显示：使用子类别名称而不是通用分类;3.取消显示数量限制。",
+    "error": "",
+    "git_commit": "c162aa632c601589356911fdb2e27248da447616",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260120-181211.tar.gz",
+        "size": 12052504
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260120-181211.sql",
+        "size": 903214
+      }
+    }
+  },
+  {
     "id": 90,
     "timestamp": "2026-01-19 17:33:49",
     "backup_dir": "backup-20260119-173222",

@@ -1745,9 +1745,134 @@ class AIAssistant:
 
         return response
 
+    def _handle_save_record(self, content, user_id, cmd='保存'):
+        """处理保存/记录命令
+
+        将内容保存到"记录"类别下的daily_records表
+        """
+        if not user_id:
+            return {
+                'response': '❌ 请先登录后再使用此功能',
+                'detected_plans': [],
+                'is_shortcut': True
+            }
+
+        try:
+            from category_system import DailyRecordManager, CategoryManager
+
+            # 获取"记录"类别的ID
+            category_mgr = CategoryManager()
+
+            # 查询"记录"类别
+            query = "SELECT id FROM categories WHERE code = %s"
+            result = category_mgr.query(query, ('record',))
+
+            if not result:
+                # 如果"记录"类别不存在，创建它
+                print(f"⚠️ '记录'类别不存在，正在创建...")
+                category_mgr.add_category(
+                    name='记录',
+                    code='record',
+                    icon='📝',
+                    description='日常记录'
+                )
+                # 重新查询
+                result = category_mgr.query(query, ('record',))
+
+            category_id = result[0]['id']
+
+            # 查询"记录"类别下是否有"默认"子类别
+            query = "SELECT id FROM subcategories WHERE category_id = %s AND code = %s"
+            sub_result = category_mgr.query(query, (category_id, 'default'))
+
+            if not sub_result:
+                # 如果"默认"子类别不存在，创建它
+                print(f"⚠️ '记录'类别下的'默认'子类别不存在，正在创建...")
+                category_mgr.add_subcategory(
+                    category_id=category_id,
+                    name='默认',
+                    code='default',
+                    description='默认记录'
+                )
+                # 重新查询
+                sub_result = category_mgr.query(query, (category_id, 'default'))
+
+            subcategory_id = sub_result[0]['id']
+
+            # 保存记录到daily_records表
+            record_mgr = DailyRecordManager()
+
+            # 提取标题（第一行或前50个字符）
+            lines = content.split('\n')
+            title = lines[0][:50] if lines[0] else '无标题'
+
+            # 保存记录
+            record_mgr.add_record(
+                user_id=user_id,
+                title=title,
+                content=content,
+                subcategory_id=subcategory_id,
+                tags=cmd  # 使用命令名作为标签
+            )
+
+            # 保存到聊天记录
+            self.memory.add_message('user', f"{cmd}: {content}", user_id=user_id)
+            self.memory.add_message('assistant', f"✅ 已保存到'记录'类别", user_id=user_id)
+
+            response = f"✅ 已保存到'记录'类别\n\n📝 标题：{title}"
+            if len(content) > 50:
+                response += f"\n📄 内容：{content[:50]}..."
+            else:
+                response += f"\n📄 内容：{content}"
+
+            return {
+                'response': response,
+                'detected_plans': [],
+                'is_shortcut': True
+            }
+        except Exception as e:
+            print(f"❌ 保存记录失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'response': f"❌ 保存失败: {str(e)}",
+                'detected_plans': [],
+                'is_shortcut': True
+            }
+
     def process_shortcut_command(self, user_message, user_id=None):
-        """处理快捷命令 - 工作: 和 计划:（兼容中文冒号）"""
+        """处理快捷命令 - 工作: 和 计划: 和 保存: 和 记录:（兼容中文冒号和空格）"""
         message = user_message.strip()
+
+        # ✨ 新增：检查是否是"保存"或"记录"命令（支持多种格式）
+        # 支持格式：保存 xxx、保存：xxx、保存:xxx、记录 xxx、记录：xxx、记录:xxx
+        save_commands = ['保存', '记录']
+        for cmd in save_commands:
+            # 检查"保存 xxx"格式（空格分隔）
+            if message.startswith(f'{cmd} '):
+                content = message[len(cmd)+1:].strip()
+                if content:
+                    return self._handle_save_record(content, user_id, cmd)
+                else:
+                    return {
+                        'response': f"⚠️ 请提供{cmd}内容：{cmd} (你的内容)",
+                        'detected_plans': [],
+                        'is_shortcut': True
+                    }
+            # 检查"保存：xxx"或"保存:xxx"格式（冒号分隔）
+            elif message.startswith(f'{cmd}：') or message.startswith(f'{cmd}:'):
+                if message.startswith(f'{cmd}：'):
+                    content = message[len(cmd)+1:].strip()
+                else:
+                    content = message[len(cmd)+1:].strip()
+                if content:
+                    return self._handle_save_record(content, user_id, cmd)
+                else:
+                    return {
+                        'response': f"⚠️ 请提供{cmd}内容：{cmd}：(你的内容)",
+                        'detected_plans': [],
+                        'is_shortcut': True
+                    }
 
         # 检查是否是"工作:"或"工作："命令（兼容中英文冒号）
         if message.startswith('工作:') or message.startswith('工作：'):
