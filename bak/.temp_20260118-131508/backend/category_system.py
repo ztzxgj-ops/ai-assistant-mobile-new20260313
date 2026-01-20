@@ -1,0 +1,401 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+分类管理系统
+支持7大类别的层级管理：工作、计划、财务、账号密码、提醒、文件、记录
+"""
+
+from mysql_manager import MySQLManager
+
+
+class CategoryManager(MySQLManager):
+    """类别管理器"""
+
+    def __init__(self, config_file='mysql_config.json'):
+        super().__init__(config_file)
+        print("✅ 类别管理器已初始化")
+
+    def get_all_categories(self, user_id=None):
+        """获取所有一级类别"""
+        query = "SELECT * FROM categories ORDER BY sort_order, id"
+        return self.query(query)
+
+    def get_category_by_code(self, code):
+        """根据代码获取类别"""
+        query = "SELECT * FROM categories WHERE code = %s"
+        results = self.query(query, (code,))
+        return results[0] if results else None
+
+    def get_subcategories(self, category_id, user_id=None):
+        """获取指定类别的子类别"""
+        if user_id:
+            # 获取系统默认 + 用户自定义的子类别
+            query = """
+                SELECT * FROM subcategories
+                WHERE category_id = %s AND (user_id IS NULL OR user_id = %s)
+                ORDER BY sort_order, id
+            """
+            return self.query(query, (category_id, user_id))
+        else:
+            # 只获取系统默认子类别
+            query = """
+                SELECT * FROM subcategories
+                WHERE category_id = %s AND user_id IS NULL
+                ORDER BY sort_order, id
+            """
+            return self.query(query, (category_id,))
+
+    def add_category(self, name, code, icon='', description='', user_id=None):
+        """添加自定义一级类别（仅管理员）"""
+        query = """
+            INSERT INTO categories (name, code, icon, description, is_system)
+            VALUES (%s, %s, %s, %s, FALSE)
+        """
+        return self.execute(query, (name, code, icon, description))
+
+    def add_subcategory(self, category_id, name, code, description='', user_id=None):
+        """添加子类别"""
+        query = """
+            INSERT INTO subcategories (category_id, name, code, description, user_id)
+            VALUES (%s, %s, %s, %s, %s)
+        """
+        return self.execute(query, (category_id, name, code, description, user_id))
+
+    def delete_subcategory(self, subcategory_id, user_id):
+        """删除子类别（仅用户自己创建的）"""
+        query = "DELETE FROM subcategories WHERE id = %s AND user_id = %s"
+        return self.execute(query, (subcategory_id, user_id))
+
+    def get_category_tree(self, user_id=None):
+        """获取完整的类别树结构"""
+        categories = self.get_all_categories(user_id)
+        tree = []
+
+        for category in categories:
+            subcategories = self.get_subcategories(category['id'], user_id)
+            tree.append({
+                'id': category['id'],
+                'name': category['name'],
+                'code': category['code'],
+                'icon': category['icon'],
+                'description': category['description'],
+                'subcategories': subcategories
+            })
+
+        return tree
+
+
+class WorkTaskManager(MySQLManager):
+    """工作任务管理器"""
+
+    def __init__(self, config_file='mysql_config.json'):
+        super().__init__(config_file)
+
+    def add_task(self, user_id, title, content='', priority='medium',
+                 subcategory_id=None, due_date=None):
+        """添加工作任务"""
+        query = """
+            INSERT INTO work_tasks
+            (user_id, title, content, priority, subcategory_id, due_date, status)
+            VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+        """
+        return self.execute(query, (user_id, title, content, priority, subcategory_id, due_date))
+
+    def list_tasks(self, user_id, status=None, subcategory_id=None):
+        """列出任务"""
+        if status:
+            if subcategory_id:
+                query = """
+                    SELECT * FROM work_tasks
+                    WHERE user_id = %s AND status = %s AND subcategory_id = %s
+                    ORDER BY sort_order, priority DESC, created_at DESC
+                """
+                result = self.query(query, (user_id, status, subcategory_id))
+            else:
+                query = """
+                    SELECT * FROM work_tasks
+                    WHERE user_id = %s AND status = %s
+                    ORDER BY sort_order, priority DESC, created_at DESC
+                """
+                result = self.query(query, (user_id, status))
+        else:
+            query = """
+                SELECT * FROM work_tasks
+                WHERE user_id = %s
+                ORDER BY sort_order, priority DESC, created_at DESC
+            """
+            result = self.query(query, (user_id,))
+
+        # ✨ 添加 source 字段，标识数据来源
+        for task in result:
+            task['source'] = 'work_tasks'
+
+        return result
+
+    def update_task_status(self, task_id, status, user_id):
+        """更新任务状态"""
+        query = """
+            UPDATE work_tasks
+            SET status = %s, completed_at = IF(%s = 'completed', NOW(), NULL)
+            WHERE id = %s AND user_id = %s
+        """
+        return self.execute(query, (status, status, task_id, user_id))
+
+    def update_task_order(self, task_id, sort_order, user_id):
+        """更新任务排序"""
+        query = "UPDATE work_tasks SET sort_order = %s WHERE id = %s AND user_id = %s"
+        return self.execute(query, (sort_order, task_id, user_id))
+
+    def delete_task(self, task_id, user_id):
+        """删除任务"""
+        query = "DELETE FROM work_tasks WHERE id = %s AND user_id = %s"
+        return self.execute(query, (task_id, user_id))
+
+
+class FinanceManager(MySQLManager):
+    """财务记录管理器"""
+
+    def __init__(self, config_file='mysql_config.json'):
+        super().__init__(config_file)
+
+    def add_record(self, user_id, type, amount, title, description='',
+                   record_date=None, subcategory_id=None, tags=''):
+        """添加财务记录"""
+        if not record_date:
+            from datetime import datetime
+            record_date = datetime.now().strftime('%Y-%m-%d')
+
+        query = """
+            INSERT INTO finance_records
+            (user_id, type, amount, title, description, record_date, subcategory_id, tags)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        return self.execute(query, (user_id, type, amount, title, description,
+                                   record_date, subcategory_id, tags))
+
+    def list_records(self, user_id, type=None, start_date=None, end_date=None, status='pending'):
+        """列出财务记录"""
+        conditions = ["user_id = %s"]
+        params = [user_id]
+
+        if type:
+            conditions.append("type = %s")
+            params.append(type)
+        if start_date:
+            conditions.append("record_date >= %s")
+            params.append(start_date)
+        if end_date:
+            conditions.append("record_date <= %s")
+            params.append(end_date)
+        if status:
+            conditions.append("status = %s")
+            params.append(status)
+
+        query = f"""
+            SELECT * FROM finance_records
+            WHERE {' AND '.join(conditions)}
+            ORDER BY record_date DESC, created_at DESC
+        """
+        return self.query(query, tuple(params))
+
+    def get_summary(self, user_id, start_date=None, end_date=None):
+        """获取财务汇总"""
+        conditions = ["user_id = %s"]
+        params = [user_id]
+
+        if start_date:
+            conditions.append("record_date >= %s")
+            params.append(start_date)
+        if end_date:
+            conditions.append("record_date <= %s")
+            params.append(end_date)
+
+        query = f"""
+            SELECT
+                type,
+                SUM(amount) as total,
+                COUNT(*) as count
+            FROM finance_records
+            WHERE {' AND '.join(conditions)}
+            GROUP BY type
+        """
+        return self.query(query, tuple(params))
+
+
+    def update_finance_status(self, record_id, status, user_id):
+        """更新财务记录状态"""
+        query = """
+            UPDATE finance_records
+            SET status = %s, completed_at = IF(%s = 'completed', NOW(), NULL)
+            WHERE id = %s AND user_id = %s
+        """
+        with self.get_cursor() as cursor:
+            cursor.execute(query, (status, status, record_id, user_id))
+            return cursor.rowcount > 0
+
+    def delete_finance_record(self, record_id, user_id):
+        """删除财务记录"""
+        query = "DELETE FROM finance_records WHERE id = %s AND user_id = %s"
+        return self.execute(query, (record_id, user_id))
+
+
+class AccountManager(MySQLManager):
+    """账号密码管理器"""
+
+    def __init__(self, config_file='mysql_config.json'):
+        super().__init__(config_file)
+
+    def add_account(self, user_id, platform, account, password,
+                   email='', phone='', notes='', url='', subcategory_id=None, tags=''):
+        """添加账号（密码需要加密）"""
+        # 简单加密（实际应使用更安全的加密方式）
+        import base64
+        password_encrypted = base64.b64encode(password.encode()).decode()
+
+        query = """
+            INSERT INTO account_credentials
+            (user_id, platform, account, password_encrypted, email, phone,
+             notes, url, subcategory_id, tags)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        return self.execute(query, (user_id, platform, account, password_encrypted,
+                                   email, phone, notes, url, subcategory_id, tags))
+
+    def list_accounts(self, user_id, subcategory_id=None, status='pending'):
+        """列出账号（不返回密码）"""
+        conditions = ["user_id = %s"]
+        params = [user_id]
+
+        if subcategory_id:
+            conditions.append("subcategory_id = %s")
+            params.append(subcategory_id)
+        if status:
+            conditions.append("status = %s")
+            params.append(status)
+
+        query = f"""
+            SELECT id, platform, account, email, phone, url, tags, created_at
+            FROM account_credentials
+            WHERE {' AND '.join(conditions)}
+            ORDER BY platform, created_at DESC
+        """
+        return self.query(query, tuple(params))
+
+    def get_account_detail(self, account_id, user_id):
+        """获取账号详情（包含密码，需要验证）"""
+        query = """
+            SELECT * FROM account_credentials
+            WHERE id = %s AND user_id = %s
+        """
+        results = self.query(query, (account_id, user_id))
+        if results:
+            account = results[0]
+            # 解密密码
+            import base64
+            account['password'] = base64.b64decode(account['password_encrypted']).decode()
+            return account
+        return None
+
+    def update_account_status(self, account_id, status, user_id):
+        """更新账号状态"""
+        query = """
+            UPDATE account_credentials
+            SET status = %s, completed_at = IF(%s = 'completed', NOW(), NULL)
+            WHERE id = %s AND user_id = %s
+        """
+        with self.get_cursor() as cursor:
+            cursor.execute(query, (status, status, account_id, user_id))
+            return cursor.rowcount > 0
+
+    def delete_account(self, account_id, user_id):
+        """删除账号"""
+        query = "DELETE FROM account_credentials WHERE id = %s AND user_id = %s"
+        return self.execute(query, (account_id, user_id))
+
+
+class DailyRecordManager(MySQLManager):
+    """日常记录管理器"""
+
+    def __init__(self, config_file='mysql_config.json'):
+        super().__init__(config_file)
+
+    def add_record(self, user_id, content, title='', record_date=None,
+                   subcategory_id=None, mood='', weather='', tags='', is_private=False):
+        """添加记录"""
+        if not record_date:
+            from datetime import datetime
+            record_date = datetime.now().strftime('%Y-%m-%d')
+
+        query = """
+            INSERT INTO daily_records
+            (user_id, title, content, record_date, subcategory_id,
+             mood, weather, tags, is_private)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        return self.execute(query, (user_id, title, content, record_date,
+                                   subcategory_id, mood, weather, tags, is_private))
+
+    def list_records(self, user_id, subcategory_id=None, start_date=None, end_date=None, status='pending'):
+        """列出记录"""
+        conditions = ["user_id = %s"]
+        params = [user_id]
+
+        if subcategory_id:
+            conditions.append("subcategory_id = %s")
+            params.append(subcategory_id)
+        if start_date:
+            conditions.append("record_date >= %s")
+            params.append(start_date)
+        if end_date:
+            conditions.append("record_date <= %s")
+            params.append(end_date)
+        if status:
+            conditions.append("status = %s")
+            params.append(status)
+
+        query = f"""
+            SELECT * FROM daily_records
+            WHERE {' AND '.join(conditions)}
+            ORDER BY record_date DESC, created_at DESC
+        """
+        print(f"🔍 DEBUG list_records: query={query}, params={tuple(params)}")
+        result = self.query(query, tuple(params))
+        print(f"🔍 DEBUG list_records: 返回{len(result)}条记录")
+
+        # ✨ 添加 source 字段，标识数据来源
+        for record in result:
+            record['source'] = 'daily_records'
+
+        return result
+
+    def search_records(self, user_id, keyword):
+        """搜索记录"""
+        query = """
+            SELECT * FROM daily_records
+            WHERE user_id = %s AND (title LIKE %s OR content LIKE %s)
+            ORDER BY record_date DESC
+        """
+        pattern = f"%{keyword}%"
+        result = self.query(query, (user_id, pattern, pattern))
+
+        # ✨ 添加 source 字段，标识数据来源
+        for record in result:
+            record['source'] = 'daily_records'
+
+        return result
+
+    def delete_record(self, record_id, user_id):
+        """删除记录"""
+        query = "DELETE FROM daily_records WHERE id = %s AND user_id = %s"
+        return self.execute(query, (record_id, user_id))
+
+    def update_record_status(self, record_id, status, user_id):
+        """更新记录状态"""
+        query = """
+            UPDATE daily_records
+            SET status = %s, completed_at = IF(%s = 'completed', NOW(), NULL)
+            WHERE id = %s AND user_id = %s
+        """
+        with self.get_cursor() as cursor:
+            cursor.execute(query, (status, status, record_id, user_id))
+            return cursor.rowcount > 0  # 返回是否有行被更新

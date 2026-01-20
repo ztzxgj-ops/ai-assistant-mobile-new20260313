@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Personal Assistant - 登录</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .login-container {
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            width: 400px;
+            max-width: 90%;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #333;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+            font-weight: 500;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .input-with-button {
+            display: flex;
+            gap: 10px;
+        }
+
+        .input-with-button input {
+            flex: 1;
+        }
+
+        .input-with-button button {
+            width: 120px;
+            padding: 12px;
+            margin: 0;
+            font-size: 13px;
+            white-space: nowrap;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: opacity 0.3s;
+        }
+
+        .input-with-button button:hover:not(:disabled) {
+            opacity: 0.9;
+        }
+
+        .input-with-button button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 10px;
+            transition: opacity 0.3s;
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        .error-message {
+            color: #e74c3c;
+            font-size: 14px;
+            margin-top: 10px;
+            text-align: center;
+        }
+
+        .success-message {
+            color: #27ae60;
+            font-size: 14px;
+            margin-top: 10px;
+            text-align: center;
+        }
+
+        .toggle-form {
+            text-align: center;
+            margin-top: 20px;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .toggle-form a {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 500;
+            margin: 0 5px;
+        }
+
+        .toggle-form a:hover {
+            text-decoration: underline;
+        }
+
+        .label-required {
+            color: #e74c3c;
+        }
+
+        .info-text {
+            color: #666;
+            font-size: 13px;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <h1>AI Personal Assistant</h1>
+
+        <!-- 登录表单 -->
+        <div id="loginForm">
+            <div class="form-group">
+                <label for="login-username">用户名</label>
+                <input type="text" id="login-username" placeholder="请输入用户名">
+            </div>
+            <div class="form-group">
+                <label for="login-password">密码</label>
+                <input type="password" id="login-password" placeholder="请输入密码">
+            </div>
+            <button onclick="handleLogin()">登录</button>
+            <div class="error-message" id="login-error"></div>
+            <div class="toggle-form">
+                还没有账号？<a href="#" onclick="toggleForms(); return false;">注册</a> |
+                <a href="reset-password.html">忘记密码？</a>
+            </div>
+        </div>
+
+        <!-- 注册表单 -->
+        <div id="registerForm" style="display: none;">
+            <div class="form-group">
+                <label for="reg-username">用户名</label>
+                <input type="text" id="reg-username" placeholder="请输入用户名">
+            </div>
+            <div class="form-group">
+                <label for="reg-password">密码</label>
+                <input type="password" id="reg-password" placeholder="请输入密码（至少6位）">
+            </div>
+            <div class="form-group">
+                <label for="reg-email">邮箱 <span class="label-required">*</span></label>
+                <div class="input-with-button">
+                    <input type="email" id="reg-email" placeholder="请输入邮箱">
+                    <button type="button" id="send-email-code" onclick="sendVerificationCode('email')">
+                        发送验证码
+                    </button>
+                </div>
+                <div class="info-text">邮箱用于注册验证和密码找回</div>
+            </div>
+            <div class="form-group">
+                <label for="reg-phone">手机号（可选）</label>
+                <div class="input-with-button">
+                    <input type="text" id="reg-phone" placeholder="请输入手机号，如 13800138000">
+                    <button type="button" id="send-phone-code" onclick="sendVerificationCode('phone')" disabled style="opacity: 0.5;">
+                        发送短信
+                    </button>
+                </div>
+                <div class="info-text">手机号可选，暂不支持短信验证</div>
+            </div>
+            <div class="form-group">
+                <label for="reg-verification-code">验证码 <span class="label-required">*</span></label>
+                <input type="text" id="reg-verification-code" placeholder="请输入6位验证码" maxlength="6">
+                <div class="info-text">验证码已发送至您的邮箱，有效期10分钟</div>
+            </div>
+            <button onclick="handleRegister()">注册</button>
+            <div class="error-message" id="register-error"></div>
+            <div class="success-message" id="register-success"></div>
+            <div class="toggle-form">
+                已有账号？<a href="#" onclick="toggleForms(); return false;">登录</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 倒计时计时器
+        let countdownTimer = null;
+
+        function toggleForms() {
+            const loginForm = document.getElementById('loginForm');
+            const registerForm = document.getElementById('registerForm');
+
+            if (loginForm.style.display === 'none') {
+                loginForm.style.display = 'block';
+                registerForm.style.display = 'none';
+                // 清空错误信息
+                document.getElementById('login-error').textContent = '';
+                document.getElementById('register-error').textContent = '';
+                document.getElementById('register-success').textContent = '';
+            } else {
+                loginForm.style.display = 'none';
+                registerForm.style.display = 'block';
+                // 清空错误信息
+                document.getElementById('login-error').textContent = '';
+                document.getElementById('register-error').textContent = '';
+                document.getElementById('register-success').textContent = '';
+            }
+        }
+
+        async function handleLogin() {
+            const username = document.getElementById('login-username').value.trim();
+            const password = document.getElementById('login-password').value;
+            const errorEl = document.getElementById('login-error');
+
+            if (!username || !password) {
+                errorEl.textContent = '请输入用户名和密码';
+                return;
+            }
+
+            try {
+                const result = await window.electronAPI.login(username, password);
+
+                if (result.success && result.data.success) {
+                    // 保存token
+                    localStorage.setItem('token', result.data.token);
+                    localStorage.setItem('username', result.data.username);
+                    localStorage.setItem('user_id', result.data.user_id);
+
+                    // 跳转到主页面
+                    window.location.href = 'index.html';
+                } else {
+                    errorEl.textContent = result.data?.message || '登录失败';
+                }
+            } catch (error) {
+                errorEl.textContent = '登录出错：' + error.message;
+            }
+        }
+
+        async function sendVerificationCode(type) {
+            const emailInput = document.getElementById('reg-email');
+            const phoneInput = document.getElementById('reg-phone');
+            const errorEl = document.getElementById('register-error');
+
+            let contactValue;
+            if (type === 'email') {
+                contactValue = emailInput.value.trim();
+                if (!contactValue) {
+                    errorEl.textContent = '请输入邮箱地址';
+                    return;
+                }
+                // 简单邮箱格式验证
+                if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactValue)) {
+                    errorEl.textContent = '请输入正确的邮箱地址';
+                    return;
+                }
+            } else {
+                contactValue = phoneInput.value.trim();
+                if (!contactValue) {
+                    errorEl.textContent = '请输入手机号';
+                    return;
+                }
+                // 简单手机号格式验证
+                if (!/^1[3-9]\d{9}$/.test(contactValue)) {
+                    errorEl.textContent = '请输入正确的手机号（11位）';
+                    return;
+                }
+            }
+
+            // 发送请求
+            try {
+                const result = await window.electronAPI.sendVerificationCode(
+                    type,
+                    contactValue,
+                    'register'
+                );
+
+                if (result.success && result.data.success) {
+                    errorEl.textContent = '';
+                    alert(result.data.message);
+
+                    // 开始倒计时（60秒）
+                    const buttonId = type === 'email' ? 'send-email-code' : 'send-phone-code';
+                    startCountdown(buttonId, 60);
+                } else {
+                    errorEl.textContent = result.data?.message || '发送失败';
+                }
+            } catch (error) {
+                errorEl.textContent = '发送出错：' + error.message;
+            }
+        }
+
+        function startCountdown(buttonId, seconds) {
+            const button = document.getElementById(buttonId);
+            button.disabled = true;
+            let countdown = seconds;
+
+            countdownTimer = setInterval(() => {
+                countdown--;
+                button.textContent = `${countdown}秒后重试`;
+
+                if (countdown <= 0) {
+                    clearInterval(countdownTimer);
+                    button.disabled = false;
+                    button.textContent = type === 'email' ? '发送验证码' : '发送短信';
+                }
+            }, 1000);
+        }
+
+        async function handleRegister() {
+            const username = document.getElementById('reg-username').value.trim();
+            const password = document.getElementById('reg-password').value;
+            const email = document.getElementById('reg-email').value.trim();
+            const phone = document.getElementById('reg-phone').value.trim();
+            const verificationCode = document.getElementById('reg-verification-code').value.trim();
+            const errorEl = document.getElementById('register-error');
+            const successEl = document.getElementById('register-success');
+
+            // 清除消息
+            errorEl.textContent = '';
+            successEl.textContent = '';
+
+            // 验证输入
+            if (!username || !password) {
+                errorEl.textContent = '请输入用户名和密码';
+                return;
+            }
+
+            if (password.length < 6) {
+                errorEl.textContent = '密码至少需要6位';
+                return;
+            }
+
+            if (!email && !phone) {
+                errorEl.textContent = '请至少提供邮箱或手机号';
+                return;
+            }
+
+            if (!verificationCode) {
+                errorEl.textContent = '请输入验证码';
+                return;
+            }
+
+            if (!/^\d{6}$/.test(verificationCode)) {
+                errorEl.textContent = '验证码必须是6位数字';
+                return;
+            }
+
+            try {
+                const result = await window.electronAPI.registerWithVerification({
+                    username,
+                    password,
+                    email,
+                    phone,
+                    verification_code: verificationCode
+                });
+
+                if (result.success && result.data.success) {
+                    // 注册成功后自动登录
+                    localStorage.setItem('token', result.data.token);
+                    localStorage.setItem('username', result.data.username);
+                    localStorage.setItem('user_id', result.data.user_id);
+
+                    successEl.textContent = '注册成功！正在跳转...';
+
+                    // 延迟1秒后跳转
+                    setTimeout(() => {
+                        window.location.href = 'index.html';
+                    }, 1000);
+                } else {
+                    errorEl.textContent = result.data?.message || '注册失败';
+                }
+            } catch (error) {
+                errorEl.textContent = '注册出错：' + error.message;
+            }
+        }
+
+        // 回车键提交
+        document.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                if (document.getElementById('loginForm').style.display !== 'none') {
+                    handleLogin();
+                } else {
+                    handleRegister();
+                }
+            }
+        });
+
+        // 检查是否已登录
+        window.addEventListener('load', () => {
+            const token = localStorage.getItem('token');
+            if (token) {
+                window.location.href = 'index.html';
+            }
+        });
+    </script>
+</body>
+</html>

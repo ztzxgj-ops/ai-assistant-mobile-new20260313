@@ -1,0 +1,8 @@
+# Python dependencies for AI Personal Assistant
+# 注意：sqlite3是Python内置模块，无需安装
+
+# 如果需要使用OpenAI兼容的客户端
+# openai>=1.0.0
+
+# 打包工具
+pyinstaller>=6.0.0

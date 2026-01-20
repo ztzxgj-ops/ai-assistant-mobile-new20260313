@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 始终用中文交流、对话
 
+按照要求完成开发和修复后，在测试前应将修改内容部署到云服务器http://47.109.148.176/ai/
+
 ## 声音提示规则 (Audio Notification Rules)
 
 **重要：在以下情况必须播放系统提示音以提醒用户查看屏幕**

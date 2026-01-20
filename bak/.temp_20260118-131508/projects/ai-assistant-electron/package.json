@@ -1,0 +1,88 @@
+{
+  "name": "ai-personal-assistant",
+  "version": "1.0.0",
+  "description": "AI个人助理 - 桌面版（连接云服务器）",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "npx electron-builder",
+    "build:mac": "npx electron-builder --mac",
+    "build:win": "npx electron-builder --win",
+    "build:linux": "npx electron-builder --linux"
+  },
+  "keywords": [
+    "AI",
+    "personal assistant",
+    "electron",
+    "desktop app"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+  },
+  "devDependencies": {
+    "electron": "28.0.0",
+    "electron-builder": "^24.0.0"
+  },
+  "build": {
+    "appId": "com.yourname.ai-assistant",
+    "productName": "AI个人助理",
+    "files": [
+      "main.js",
+      "preload.js",
+      "assets/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "darkModeSupport": true
+    },
+    "win": {
+      "icon": "assets/icons/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64", "ia32"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "linux": {
+      "icon": "assets/icons/icon.png",
+      "category": "Utility",
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    },
+    "dmg": {
+      "title": "AI个人助理",
+      "window": {
+        "width": 600,
+        "height": 400
+      }
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>输入历史记录功能测试</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .input-section {
+            margin-bottom: 30px;
+        }
+
+        label {
+            display: block;
+            color: #333;
+            font-weight: 600;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+
+        .input-wrapper {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+
+        textarea {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+            resize: none;
+            min-height: 44px;
+            max-height: 120px;
+            transition: border-color 0.3s;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        button {
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            font-size: 14px;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .info-box {
+            background: #f5f5f5;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            font-size: 13px;
+            color: #555;
+            line-height: 1.6;
+        }
+
+        .history-section {
+            margin-top: 30px;
+        }
+
+        .history-title {
+            color: #333;
+            font-weight: 600;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+
+        .history-list {
+            background: #f9f9f9;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .history-item {
+            padding: 12px;
+            border-bottom: 1px solid #e0e0e0;
+            font-size: 13px;
+            color: #333;
+            word-break: break-all;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .history-item:last-child {
+            border-bottom: none;
+        }
+
+        .history-item:hover {
+            background: #f0f0f0;
+        }
+
+        .history-index {
+            color: #999;
+            font-size: 12px;
+            margin-right: 10px;
+            min-width: 30px;
+        }
+
+        .history-text {
+            flex: 1;
+        }
+
+        .empty-history {
+            padding: 20px;
+            text-align: center;
+            color: #999;
+            font-size: 13px;
+        }
+
+        .clear-btn {
+            background: #ff6b6b;
+            padding: 8px 16px;
+            font-size: 12px;
+            margin-top: 10px;
+            width: 100%;
+        }
+
+        .clear-btn:hover {
+            box-shadow: 0 10px 20px rgba(255, 107, 107, 0.3);
+        }
+
+        .status {
+            margin-top: 15px;
+            padding: 10px;
+            background: #e8f5e9;
+            border-radius: 4px;
+            color: #2e7d32;
+            font-size: 12px;
+            display: none;
+        }
+
+        .status.show {
+            display: block;
+        }
+
+        .keys-hint {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            font-size: 13px;
+            color: #856404;
+        }
+
+        .keys-hint strong {
+            display: block;
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📝 输入历史记录功能测试</h1>
+        <p class="subtitle">测试向上/向下按键查看历史输入</p>
+
+        <div class="keys-hint">
+            <strong>⌨️ 快捷键说明：</strong>
+            ↑ 向上箭头：查看上一条历史<br>
+            ↓ 向下箭头：查看下一条历史<br>
+            Enter：发送消息<br>
+            Shift+Enter：换行
+        </div>
+
+        <div class="info-box">
+            <strong>✨ 功能说明：</strong><br>
+            • 输入消息后按 Enter 发送<br>
+            • 发送的消息会自动保存到历史记录<br>
+            • 最多保留最近 10 条历史记录<br>
+            • 重复的连续消息不会被保存<br>
+            • 历史记录保存在浏览器本地存储中
+        </div>
+
+        <div class="input-section">
+            <label for="messageInput">输入消息：</label>
+            <div class="input-wrapper">
+                <textarea id="messageInput" placeholder="输入消息，按 Enter 发送..." autocomplete="off"></textarea>
+                <button onclick="sendMessage()">发送</button>
+            </div>
+            <div class="status" id="status"></div>
+        </div>
+
+        <div class="history-section">
+            <div class="history-title">📋 历史记录（最近 10 条）</div>
+            <div class="history-list" id="historyList">
+                <div class="empty-history">暂无历史记录</div>
+            </div>
+            <button class="clear-btn" onclick="clearHistory()">清空历史记录</button>
+        </div>
+    </div>
+
+    <script>
+        // 输入历史记录管理
+        let inputHistory = [];
+        let historyIndex = -1;
+        let currentDraft = '';
+
+        // 初始化历史记录
+        function initHistory() {
+            try {
+                inputHistory = JSON.parse(localStorage.getItem('chatInputHistory') || '[]');
+            } catch (e) {
+                console.error('加载输入历史失败', e);
+                inputHistory = [];
+            }
+            updateHistoryDisplay();
+        }
+
+        // 保存输入历史记录
+        function saveInputHistory(text) {
+            if (!text || !text.trim()) return;
+            text = text.trim();
+
+            // 避免保存重复的连续消息
+            if (inputHistory.length > 0 && inputHistory[inputHistory.length - 1] === text) {
+                showStatus('⚠️ 重复消息，未保存');
+                return;
+            }
+
+            inputHistory.push(text);
+            // 只保留最近10条
+            if (inputHistory.length > 10) {
+                inputHistory = inputHistory.slice(inputHistory.length - 10);
+            }
+
+            localStorage.setItem('chatInputHistory', JSON.stringify(inputHistory));
+            historyIndex = -1; // 重置索引
+            updateHistoryDisplay();
+            showStatus('✅ 消息已保存到历史记录');
+        }
+
+        // 自动调整textarea高度
+        function autoResizeTextarea(textarea) {
+            if (!textarea) return;
+            textarea.style.height = 'auto';
+            const maxHeight = 120;
+            const minHeight = 44;
+            let newHeight = textarea.scrollHeight;
+
+            if (newHeight < minHeight) {
+                newHeight = minHeight;
+            } else if (newHeight > maxHeight) {
+                newHeight = maxHeight;
+                textarea.style.overflowY = 'auto';
+            } else {
+                textarea.style.overflowY = 'hidden';
+            }
+
+            textarea.style.height = newHeight + 'px';
+        }
+
+        // 按键处理
+        function handleKeyPress(event) {
+            const input = event.target;
+
+            // Enter键发送
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+                return;
+            }
+
+            // 上键：查看上一条历史
+            if (event.key === 'ArrowUp') {
+                if (input.selectionStart === 0 && input.selectionEnd === 0) {
+                    if (historyIndex === -1) {
+                        if (inputHistory.length > 0) {
+                            currentDraft = input.value;
+                            historyIndex = inputHistory.length - 1;
+                            event.preventDefault();
+                            input.value = inputHistory[historyIndex];
+                            autoResizeTextarea(input);
+                            showStatus(`📍 显示历史记录 ${historyIndex + 1}/${inputHistory.length}`);
+                        }
+                    } else if (historyIndex > 0) {
+                        historyIndex--;
+                        event.preventDefault();
+                        input.value = inputHistory[historyIndex];
+                        autoResizeTextarea(input);
+                        showStatus(`📍 显示历史记录 ${historyIndex + 1}/${inputHistory.length}`);
+                    }
+                }
+            }
+
+            // 下键：查看下一条历史
+            if (event.key === 'ArrowDown') {
+                if (input.selectionStart === input.value.length) {
+                    if (historyIndex !== -1) {
+                        event.preventDefault();
+                        if (historyIndex < inputHistory.length - 1) {
+                            historyIndex++;
+                            input.value = inputHistory[historyIndex];
+                            autoResizeTextarea(input);
+                            showStatus(`📍 显示历史记录 ${historyIndex + 1}/${inputHistory.length}`);
+                        } else {
+                            historyIndex = -1;
+                            input.value = currentDraft;
+                            autoResizeTextarea(input);
+                            showStatus('📝 返回到当前输入');
+                        }
+                    }
+                }
+            }
+        }
+
+        // 发送消息
+        function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+
+            if (!message) {
+                showStatus('⚠️ 请输入消息');
+                return;
+            }
+
+            // 保存历史记录
+            saveInputHistory(message);
+
+            // 清空输入
+            input.value = '';
+            autoResizeTextarea(input);
+            historyIndex = -1;
+            currentDraft = '';
+            input.focus();
+        }
+
+        // 清空历史记录
+        function clearHistory() {
+            if (confirm('确定要清空所有历史记录吗？')) {
+                inputHistory = [];
+                localStorage.removeItem('chatInputHistory');
+                historyIndex = -1;
+                currentDraft = '';
+                updateHistoryDisplay();
+                showStatus('✅ 历史记录已清空');
+            }
+        }
+
+        // 更新历史记录显示
+        function updateHistoryDisplay() {
+            const historyList = document.getElementById('historyList');
+
+            if (inputHistory.length === 0) {
+                historyList.innerHTML = '<div class="empty-history">暂无历史记录</div>';
+                return;
+            }
+
+            historyList.innerHTML = inputHistory.map((item, index) => `
+                <div class="history-item">
+                    <span class="history-index">#${index + 1}</span>
+                    <span class="history-text">${escapeHtml(item)}</span>
+                </div>
+            `).join('');
+        }
+
+        // 显示状态消息
+        function showStatus(message) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.classList.add('show');
+            setTimeout(() => {
+                status.classList.remove('show');
+            }, 3000);
+        }
+
+        // HTML转义
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            const input = document.getElementById('messageInput');
+            input.addEventListener('keydown', handleKeyPress);
+            input.addEventListener('input', () => autoResizeTextarea(input));
+            initHistory();
+            input.focus();
+        });
+    </script>
+</body>
+</html>

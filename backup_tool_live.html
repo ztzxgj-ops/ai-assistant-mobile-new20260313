@@ -447,6 +447,40 @@
         </div>
 
         <div class="content">
+            <!-- 开发日志管理区 -->
+            <div class="card">
+                <h2>📝 开发日志管理</h2>
+
+                <div style="margin-bottom: 20px;">
+                    <label style="display: block; font-size: 14px; color: #333; margin-bottom: 8px; font-weight: 600;">
+                        添加开发需求
+                    </label>
+                    <input type="text" id="requirementInput" placeholder="输入开发需求（如：修复完成命令功能）"
+                           style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; margin-bottom: 8px;">
+                    <textarea id="detailsInput" placeholder="详细说明（可选）"
+                              style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; resize: vertical; min-height: 60px; margin-bottom: 10px;"></textarea>
+                    <button class="btn btn-primary" onclick="addDevRequirement()">➕ 添加需求</button>
+                </div>
+
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; font-size: 14px; color: #333; margin-bottom: 8px; font-weight: 600;">
+                        进行中的开发任务
+                    </label>
+                    <div id="inProgressLogs" style="max-height: 200px; overflow-y: auto;">
+                        <div style="text-align: center; color: #999; padding: 15px;">加载中...</div>
+                    </div>
+                </div>
+
+                <div style="margin-bottom: 10px;">
+                    <label style="display: block; font-size: 14px; color: #333; margin-bottom: 8px; font-weight: 600;">
+                        最近完成的任务
+                    </label>
+                    <div id="completedLogs" style="max-height: 200px; overflow-y: auto;">
+                        <div style="text-align: center; color: #999; padding: 15px;">加载中...</div>
+                    </div>
+                </div>
+            </div>
+
             <!-- 备份控制区 -->
             <div class="card">
                 <h2>📦 备份控制</h2>
@@ -687,7 +721,7 @@
                             </div>
 
                             <div class="history-actions">
-                                <button class="btn-notes" onclick="showEditNotes(${item.id}, '${item.notes || ''}')">✏️ 编辑备注</button>
+                                <button class="btn-notes btn-edit-notes" data-id="${item.id}">✏️ 编辑备注</button>
                                 ${item.status === 'success' ? `<button class="btn-restore-action" onclick="prepareRestore('${item.backup_dir}')">🔄 恢复备份</button>` : ''}
                             </div>
                         </div>
@@ -701,6 +735,24 @@
                     if (item.notes) {
                         document.getElementById(`notes-display-${item.id}`).innerHTML = item.notes;
                     }
+                });
+
+                // 绑定编辑备注按钮事件（使用事件委托）
+                document.querySelectorAll('.btn-edit-notes').forEach(btn => {
+                    btn.addEventListener('click', function() {
+                        const id = parseInt(this.dataset.id);
+                        // 从显示区域获取当前备注内容
+                        const notesDiv = document.getElementById(`notes-display-${id}`);
+                        let currentNotes = '';
+                        if (notesDiv) {
+                            // 如果是"无备注"的span，则为空
+                            const emptySpan = notesDiv.querySelector('.history-notes-empty');
+                            if (!emptySpan) {
+                                currentNotes = notesDiv.textContent || '';
+                            }
+                        }
+                        showEditNotes(id, currentNotes);
+                    });
                 });
 
             } catch (error) {
@@ -827,9 +879,161 @@
             setTimeout(() => alert.classList.remove('active'), 5000);
         }
 
+        // ========== 开发日志管理 ==========
+
+        // 加载开发日志
+        async function loadDevLogs() {
+            try {
+                const response = await fetch(`${API_BASE}/api/dev_logs`);
+                const logs = await response.json();
+
+                // 分类日志
+                const inProgress = logs.filter(log => log.status === 'in_progress');
+                const completed = logs.filter(log => log.status === 'completed').slice(0, 10);
+
+                // 显示进行中的任务
+                const inProgressDiv = document.getElementById('inProgressLogs');
+                if (inProgress.length === 0) {
+                    inProgressDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 15px;">暂无进行中的任务</div>';
+                } else {
+                    let html = '';
+                    inProgress.forEach(log => {
+                        html += `
+                            <div style="background: #fff3cd; padding: 12px; border-radius: 6px; margin-bottom: 8px; border-left: 4px solid #ffc107;">
+                                <div style="font-weight: 600; color: #333; margin-bottom: 4px;">
+                                    🔧 ${log.requirement}
+                                </div>
+                                ${log.details ? `<div style="font-size: 12px; color: #666; margin-bottom: 8px;">${log.details}</div>` : ''}
+                                <div style="font-size: 11px; color: #999; margin-bottom: 8px;">
+                                    开始时间: ${log.start_time}
+                                </div>
+                                <div style="display: flex; gap: 6px;">
+                                    <button class="btn-notes" onclick="completeDevLog(${log.id})" style="font-size: 11px; padding: 4px 8px;">✅ 标记完成</button>
+                                    <button class="btn-notes" onclick="deleteDevLog(${log.id})" style="font-size: 11px; padding: 4px 8px; background: #dc3545;">🗑️ 删除</button>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    inProgressDiv.innerHTML = html;
+                }
+
+                // 显示已完成的任务
+                const completedDiv = document.getElementById('completedLogs');
+                if (completed.length === 0) {
+                    completedDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 15px;">暂无已完成的任务</div>';
+                } else {
+                    let html = '';
+                    completed.forEach(log => {
+                        const isBackuped = log.backup_time ? '✅ 已备份' : '⚠️ 未备份';
+                        const backupColor = log.backup_time ? '#28a745' : '#ffc107';
+                        html += `
+                            <div style="background: #f9f9f9; padding: 12px; border-radius: 6px; margin-bottom: 8px; border-left: 4px solid #28a745;">
+                                <div style="font-weight: 600; color: #333; margin-bottom: 4px;">
+                                    ${log.requirement}
+                                </div>
+                                <div style="font-size: 12px; color: #666; margin-bottom: 4px;">
+                                    ✅ ${log.completion}
+                                </div>
+                                <div style="font-size: 11px; color: #999;">
+                                    完成时间: ${log.completion_time} | <span style="color: ${backupColor};">${isBackuped}</span>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    completedDiv.innerHTML = html;
+                }
+
+            } catch (error) {
+                console.error('加载开发日志失败:', error);
+                document.getElementById('inProgressLogs').innerHTML = `<div style="color: #d32f2f;">加载失败: ${error.message}</div>`;
+            }
+        }
+
+        // 添加开发需求
+        async function addDevRequirement() {
+            const requirement = document.getElementById('requirementInput').value.trim();
+            const details = document.getElementById('detailsInput').value.trim();
+
+            if (!requirement) {
+                showAlert('❌ 请输入开发需求', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/api/dev_log/add`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ requirement, details })
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    showAlert('✅ 开发需求已添加', 'success');
+                    document.getElementById('requirementInput').value = '';
+                    document.getElementById('detailsInput').value = '';
+                    loadDevLogs();
+                } else {
+                    showAlert('❌ 添加失败', 'error');
+                }
+            } catch (error) {
+                showAlert('❌ 错误: ' + error.message, 'error');
+            }
+        }
+
+        // 标记完成
+        async function completeDevLog(logId) {
+            const completion = prompt('请输入完成情况描述（如：已修复XX功能，添加了XX特性）：');
+            if (!completion) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/api/dev_log/complete`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ log_id: logId, completion })
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    showAlert('✅ 已标记为完成', 'success');
+                    loadDevLogs();
+                } else {
+                    showAlert('❌ 更新失败', 'error');
+                }
+            } catch (error) {
+                showAlert('❌ 错误: ' + error.message, 'error');
+            }
+        }
+
+        // 删除开发日志
+        async function deleteDevLog(logId) {
+            if (!confirm('确定要删除这条开发日志吗？')) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/api/dev_log/delete`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ log_id: logId })
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    showAlert('✅ 已删除', 'success');
+                    loadDevLogs();
+                } else {
+                    showAlert('❌ 删除失败', 'error');
+                }
+            } catch (error) {
+                showAlert('❌ 错误: ' + error.message, 'error');
+            }
+        }
+
         // 初始化
         window.addEventListener('load', () => {
             loadHistory();
+            loadDevLogs();  // 加载开发日志
             setupBackupTypeListeners();
         });
 

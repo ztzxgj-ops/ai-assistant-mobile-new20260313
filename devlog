@@ -1,0 +1,38 @@
+#!/bin/bash
+# 开发日志快捷命令
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+case "$1" in
+    add)
+        # 添加需求: devlog add "需求描述" ["详细说明"]
+        python3 auto_log_requirement.py add "$2" "$3"
+        ;;
+    done)
+        # 标记完成: devlog done "完成情况"
+        python3 auto_log_requirement.py complete "$2"
+        ;;
+    auto)
+        # 自动识别: devlog auto "用户消息"
+        python3 auto_log_requirement.py auto "$2"
+        ;;
+    list)
+        # 列出所有: devlog list
+        python3 auto_log_requirement.py list
+        ;;
+    *)
+        echo "📝 开发日志管理工具"
+        echo ""
+        echo "用法:"
+        echo "  devlog add \"需求描述\" [\"详细说明\"]  - 添加开发需求"
+        echo "  devlog done \"完成情况\"               - 标记最新任务完成"
+        echo "  devlog auto \"用户消息\"               - 自动识别需求"
+        echo "  devlog list                           - 列出所有日志"
+        echo ""
+        echo "示例:"
+        echo "  devlog add \"修复登录问题\""
+        echo "  devlog done \"已修复，测试通过\""
+        echo "  devlog auto \"希望实现自动备份功能\""
+        ;;
+esac

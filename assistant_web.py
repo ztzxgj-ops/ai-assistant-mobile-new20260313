@@ -14,6 +14,7 @@ import subprocess
 from datetime import datetime, timedelta
 from email import message_from_bytes
 from io import BytesIO
+from decimal import Decimal
 
 # 初始化数据库和管理器
 from mysql_manager import MySQLManager
@@ -547,9 +548,29 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 return
 
             # 获取文件信息并检查权限
-            file_info = file_manager.get_file(file_id, user_id=user_id)
+            # 首先尝试获取文件（不限制user_id）
+            file_info = file_manager.get_file(file_id)
             if not file_info:
-                self.send_error(404, '文件不存在或无权访问')
+                self.send_error(404, '文件不存在')
+                return
+
+            # 检查权限：文件所有者 或 通过私信接收到该文件的用户
+            is_owner = file_info['user_id'] == user_id
+            is_shared_to_user = False
+
+            if not is_owner:
+                # 检查是否通过私信分享给当前用户
+                check_sql = """
+                    SELECT COUNT(*) as count FROM private_messages
+                    WHERE receiver_id = %s
+                    AND (file_id = %s OR image_id = %s)
+                    AND message_type IN ('file', 'image')
+                """
+                result = db_manager.query_one(check_sql, (user_id, file_id, file_id))
+                is_shared_to_user = result and result['count'] > 0
+
+            if not is_owner and not is_shared_to_user:
+                self.send_error(403, '无权访问此文件')
                 return
 
             # 增加下载计数
@@ -764,7 +785,18 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 return
 
             friends = friendship_manager.get_friends_list(user_id)
-            self.send_json({'success': True, 'friends': friends})
+
+            # 转换字段名以匹配前端期望
+            formatted_friends = []
+            for friend in friends:
+                formatted_friends.append({
+                    'friend_id': friend['id'],
+                    'friend_username': friend['username'],
+                    'friend_avatar': friend.get('avatar_url'),
+                    'accepted_at': friend.get('accepted_at')
+                })
+
+            self.send_json({'success': True, 'friends': formatted_friends})
 
         elif self.path.startswith('/api/social/friends/requests'):
             # 获取好友请求列表
@@ -900,8 +932,29 @@ class AssistantHandler(BaseHTTPRequestHandler):
         # 留言板系统API (GET)
         # ========================================
 
+        # 注意：list-v2 必须在 list 前面，否则会被 list 匹配
+        elif self.path.startswith('/api/social/guestbook/list-v2'):
+            # 获取便签列表（增强版 - 动态墙模式）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            # 解析查询参数
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+
+            # owner_id 参数已废弃，但保留兼容性
+            # 新逻辑：直接使用当前用户ID查询"我的+好友的"内容
+            limit = int(params.get('limit', ['50'])[0])
+            offset = int(params.get('offset', ['0'])[0])
+
+            # viewer_id 就是当前用户，owner_id 参数被忽略
+            messages = guestbook_manager.get_messages_v2(owner_id=user_id, viewer_id=user_id, limit=limit, offset=offset)
+            self.send_json({'success': True, 'messages': messages})
+
         elif self.path.startswith('/api/social/guestbook/list'):
-            # 获取留言列表
+            # 获取留言列表（旧版）
             user_id = self.require_auth()
             if user_id is None:
                 return
@@ -922,16 +975,51 @@ class AssistantHandler(BaseHTTPRequestHandler):
             messages = guestbook_manager.get_messages(int(owner_id), user_id, limit, offset)
             self.send_json({'success': True, 'messages': messages})
 
+        elif self.path == '/api/social/guestbook/config':
+            # 获取便签墙配置
+            from guestbook_manager import MOOD_TAGS, BG_COLORS, REACTION_TYPES
+            self.send_json({
+                'success': True,
+                'mood_tags': MOOD_TAGS,
+                'bg_colors': BG_COLORS,
+                'reaction_types': REACTION_TYPES
+            })
+
         else:
             self.send_error(404)
     
     def do_POST(self):
         """处理POST请求"""
-        content_length = int(self.headers['Content-Length'])
+        content_type = self.headers.get('Content-Type', '')
+
+        # 对于 multipart/form-data 请求，不在这里解析，由具体的处理函数处理
+        if 'multipart/form-data' in content_type:
+            # 直接路由到对应的处理函数
+            if self.path == '/api/user/upload-avatar':
+                self._handle_avatar_upload()
+                return
+            elif self.path == '/api/image/upload':
+                # 需要添加 multipart 图片上传处理
+                self.send_json({'success': False, 'message': '请使用base64格式上传图片'})
+                return
+            else:
+                self.send_error(404)
+                return
 
         # 处理 JSON 数据
+        content_length = self.headers.get('Content-Length')
+        if not content_length:
+            self.send_json({'success': False, 'message': '缺少Content-Length头'})
+            return
+
+        content_length = int(content_length)
         post_data = self.rfile.read(content_length).decode('utf-8')
-        data = json.loads(post_data)
+
+        try:
+            data = json.loads(post_data)
+        except json.JSONDecodeError:
+            self.send_json({'success': False, 'message': 'JSON格式错误'})
+            return
 
         # 认证相关API
         if self.path == '/api/auth/register':
@@ -2144,6 +2232,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
             content = data.get('content', '')
             message_type = data.get('message_type', 'text')
             image_id = data.get('image_id')
+            file_id = data.get('file_id')
 
             if not receiver_id:
                 self.send_json({'success': False, 'message': '请提供接收者ID'})
@@ -2153,7 +2242,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 self.send_json({'success': False, 'message': '消息内容不能为空'})
                 return
 
-            result = private_message_manager.send_message(user_id, receiver_id, content, message_type, image_id)
+            result = private_message_manager.send_message(user_id, receiver_id, content, message_type, image_id, file_id)
             self.send_json(result)
 
         elif self.path == '/api/social/messages/mark-read':
@@ -2346,6 +2435,56 @@ class AssistantHandler(BaseHTTPRequestHandler):
             result = guestbook_manager.unlike_message(user_id, message_id)
             self.send_json(result)
 
+        elif self.path == '/api/social/guestbook/post-v2':
+            # 发表便签（增强版 - 支持可见范围和回复）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            owner_id = data.get('owner_id', user_id)  # 默认发布到自己的墙上
+            content = data.get('content', '').strip()
+            mood_tag = data.get('mood_tag')
+            bg_color = data.get('bg_color', '#FFF9C4')
+            image_id = data.get('image_id')
+            is_public = data.get('is_public', True)
+            parent_id = data.get('parent_id')  # 新增：父留言ID（用于回复）
+            visibility = data.get('visibility', 'all_friends')  # 新增：可见范围
+            visible_to_users = data.get('visible_to_users')  # 新增：可见用户列表
+
+            if not content:
+                self.send_json({'success': False, 'message': '请提供内容'})
+                return
+
+            result = guestbook_manager.post_message_v2(
+                owner_id=owner_id,
+                author_id=user_id,
+                content=content,
+                mood_tag=mood_tag,
+                bg_color=bg_color,
+                image_id=image_id,
+                is_public=is_public,
+                parent_id=parent_id,
+                visibility=visibility,
+                visible_to_users=visible_to_users
+            )
+            self.send_json(result)
+
+        elif self.path == '/api/social/guestbook/reaction':
+            # 添加表情回应
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            message_id = data.get('message_id')
+            reaction_type = data.get('reaction_type')
+
+            if not message_id or not reaction_type:
+                self.send_json({'success': False, 'message': '请提供留言ID和表情类型'})
+                return
+
+            result = guestbook_manager.add_reaction(message_id, user_id, reaction_type)
+            self.send_json(result)
+
         else:
             self.send_error(404)
 
@@ -2486,11 +2625,18 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
     def send_json(self, data, status=200):
         """发送JSON响应"""
+        # 自定义 JSON 编码器，支持 Decimal 类型
+        class DecimalEncoder(json.JSONEncoder):
+            def default(self, obj):
+                if isinstance(obj, Decimal):
+                    return float(obj)
+                return super().default(obj)
+
         self.send_response(status)
         self.send_header('Content-type', 'application/json; charset=utf-8')
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
-        self.wfile.write(json.dumps(data, ensure_ascii=False).encode('utf-8'))
+        self.wfile.write(json.dumps(data, ensure_ascii=False, cls=DecimalEncoder).encode('utf-8'))
     
     def serve_image(self, filepath):
         """发送图片文件"""
@@ -2556,20 +2702,45 @@ class AssistantHandler(BaseHTTPRequestHandler):
             user_id = self.require_auth()
             if user_id is None:
                 return
-            
+
             # 提取图片ID
             try:
                 image_id = int(self.path.split('/')[-1])
             except ValueError:
                 self.send_json({'success': False, 'message': '无效的图片ID'}, status=400)
                 return
-            
+
             # 删除图片
             success = image_manager.delete_image(image_id, user_id=user_id)
             if success:
                 self.send_json({'success': True, 'message': '图片已删除'})
             else:
                 self.send_json({'success': False, 'message': '删除失败或权限不足'}, status=403)
+
+        elif self.path == '/api/social/guestbook/reaction':
+            # 移除表情回应
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            # 从请求体获取参数
+            content_length = int(self.headers.get('Content-Length', 0))
+            if content_length > 0:
+                body = self.rfile.read(content_length)
+                data = json.loads(body.decode('utf-8'))
+
+                message_id = data.get('message_id')
+                reaction_type = data.get('reaction_type')
+
+                if not message_id or not reaction_type:
+                    self.send_json({'success': False, 'message': '请提供留言ID和表情类型'})
+                    return
+
+                result = guestbook_manager.remove_reaction(message_id, user_id, reaction_type)
+                self.send_json(result)
+            else:
+                self.send_json({'success': False, 'message': '请求体为空'}, status=400)
+
         else:
             self.send_error(404, 'Not found')
     
@@ -3334,9 +3505,12 @@ class AssistantHandler(BaseHTTPRequestHandler):
             <h3>准备上传的文件</h3>
             <div id="previewList"></div>
             <div id="uploadProgress" style="display:none; margin:15px 0;">
-                <div style="margin-bottom:8px; color:#666; font-size:14px;">
+                <div style="margin-bottom:8px; color:#666; font-size:14px; display:flex; justify-content:space-between; align-items:center;">
                     <span id="uploadStatus">正在上传...</span>
-                    <span id="uploadPercent" style="float:right; font-weight:600;">0%</span>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <span id="uploadPercent" style="font-weight:600;">0%</span>
+                        <button id="cancelUploadBtn" onclick="cancelUpload()" style="padding:4px 12px; background:#dc3545; color:white; border:none; border-radius:4px; cursor:pointer; font-size:12px;">取消</button>
+                    </div>
                 </div>
                 <div style="width:100%; height:24px; background:#e9ecef; border-radius:12px; overflow:hidden;">
                     <div id="progressBar" style="width:0%; height:100%; background:linear-gradient(90deg, #4CAF50, #81C784); transition:width 0.3s ease;"></div>
@@ -3423,6 +3597,27 @@ class AssistantHandler(BaseHTTPRequestHandler):
             }
         }
 
+        // 上传取消控制
+        let uploadCancelled = false;
+        let currentXhr = null;
+
+        function cancelUpload() {
+            if (confirm('确定要取消上传吗？')) {
+                uploadCancelled = true;
+                if (currentXhr) {
+                    currentXhr.abort();
+                }
+                document.getElementById('uploadStatus').textContent = '❌ 上传已取消';
+                document.getElementById('cancelUploadBtn').disabled = true;
+                setTimeout(() => {
+                    document.getElementById('uploadProgress').style.display = 'none';
+                    document.getElementById('progressBar').style.width = '0%';
+                    uploadCancelled = false;
+                    document.getElementById('cancelUploadBtn').disabled = false;
+                }, 2000);
+            }
+        }
+
         async function uploadFiles() {
             const description = document.getElementById('bulkDesc').value;
             const tagsInput = document.getElementById('bulkTags').value;
@@ -3433,6 +3628,9 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 alert('请先登录');
                 return;
             }
+
+            // 重置取消标志
+            uploadCancelled = false;
 
             // 显示进度条
             const progressDiv = document.getElementById('uploadProgress');
@@ -3452,6 +3650,11 @@ class AssistantHandler(BaseHTTPRequestHandler):
             let successCount = 0;
 
             for (let i = 0; i < selectedFiles.length; i++) {
+                // 检查是否已取消
+                if (uploadCancelled) {
+                    break;
+                }
+
                 const file = selectedFiles[i];
                 uploadStatus.textContent = `正在上传: ${file.name} (${i + 1}/${selectedFiles.length})`;
 
@@ -3470,23 +3673,28 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     successCount++;
                     console.log(`上传成功: ${file.name}`);
                 } catch (error) {
+                    if (uploadCancelled) {
+                        break;
+                    }
                     console.error(`上传失败: ${file.name}`, error);
                     alert(`上传失败: ${file.name}`);
                 }
             }
 
-            // 上传完成
-            uploadStatus.textContent = `✅ 上传完成！成功 ${successCount}/${selectedFiles.length} 个文件`;
-            setTimeout(() => {
-                loadAllFiles();
-                loadStats();
-                document.getElementById('uploadPreview').classList.remove('active');
-                progressDiv.style.display = 'none';
-                progressBar.style.width = '0%';
-                selectedFiles = [];
-                document.getElementById('bulkDesc').value = '';
-                document.getElementById('bulkTags').value = '';
-            }, 2000);
+            // 上传完成或取消
+            if (!uploadCancelled) {
+                uploadStatus.textContent = `✅ 上传完成！成功 ${successCount}/${selectedFiles.length} 个文件`;
+                setTimeout(() => {
+                    loadAllFiles();
+                    loadStats();
+                    document.getElementById('uploadPreview').classList.remove('active');
+                    progressDiv.style.display = 'none';
+                    progressBar.style.width = '0%';
+                    selectedFiles = [];
+                    document.getElementById('bulkDesc').value = '';
+                    document.getElementById('bulkTags').value = '';
+                }, 2000);
+            }
         }
 
         function uploadSingleFile(file, description, tags, token, onProgress) {
@@ -3497,6 +3705,9 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     const base64 = e.target.result.split(',')[1];
                     const xhr = new XMLHttpRequest();
 
+                    // 保存当前xhr以便取消
+                    currentXhr = xhr;
+
                     xhr.upload.addEventListener('progress', (event) => {
                         if (event.lengthComputable) {
                             // 传递实际加载量和文件大小，让外部限制进度
@@ -3505,6 +3716,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     });
 
                     xhr.addEventListener('load', () => {
+                        currentXhr = null;
                         if (xhr.status === 200) {
                             try {
                                 const result = JSON.parse(xhr.responseText);
@@ -3521,8 +3733,15 @@ class AssistantHandler(BaseHTTPRequestHandler):
                         }
                     });
 
-                    xhr.addEventListener('error', () => reject(new Error('网络错误')));
-                    xhr.addEventListener('abort', () => reject(new Error('上传取消')));
+                    xhr.addEventListener('error', () => {
+                        currentXhr = null;
+                        reject(new Error('网络错误'));
+                    });
+
+                    xhr.addEventListener('abort', () => {
+                        currentXhr = null;
+                        reject(new Error('上传取消'));
+                    });
 
                     xhr.open('POST', '/ai/api/file/upload');
                     xhr.setRequestHeader('Content-Type', 'application/json');
@@ -3807,7 +4026,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
         async function loadFriendList() {
             try {
                 const token = localStorage.getItem('token');
-                const response = await fetch('/ai/api/social/friends', {
+                const response = await fetch('/ai/api/social/friends/list', {
                     headers: {
                         'Authorization': 'Bearer ' + token
                     }
@@ -3880,7 +4099,8 @@ class AssistantHandler(BaseHTTPRequestHandler):
                         receiver_id: selectedFriendId,
                         content: messageContent,
                         message_type: messageType,
-                        image_id: currentShareFile.id
+                        image_id: messageType === 'image' ? currentShareFile.id : null,
+                        file_id: messageType === 'file' ? currentShareFile.id : null
                     })
                 });
 
@@ -5704,14 +5924,11 @@ class AssistantHandler(BaseHTTPRequestHandler):
             <div class="drawer-item" onclick="showPlans(); closeMobileMenu();">
                 <span style="margin-right: 12px; font-size: 18px;">📋</span>工作计划
             </div>
-            <div class="drawer-item" onclick="showImages(); closeMobileMenu();">
-                <span style="margin-right: 12px; font-size: 18px;">🖼️</span>图片管理
-            </div>
             <div class="drawer-item" onclick="window.open('/ai/file-manager', '_blank'); closeMobileMenu();">
                 <span style="margin-right: 12px; font-size: 18px;">📁</span>文件管理
             </div>
             <div class="drawer-item" onclick="window.location.href='/ai/social'; closeMobileMenu();">
-                <span style="margin-right: 12px; font-size: 18px;">👥</span>社交中心
+                <span style="margin-right: 12px; font-size: 18px;">👥</span>朋友
             </div>
 
             <div class="drawer-divider"></div>
@@ -6348,18 +6565,18 @@ class AssistantHandler(BaseHTTPRequestHandler):
         function saveInputHistory(text) {
             if (!text || !text.trim()) return;
             text = text.trim();
-            
+
             // 避免保存重复的连续消息
             if (inputHistory.length > 0 && inputHistory[inputHistory.length - 1] === text) {
                 return;
             }
-            
+
             inputHistory.push(text);
-            // 只保留最近5条
-            if (inputHistory.length > 5) {
-                inputHistory = inputHistory.slice(inputHistory.length - 5);
+            // 只保留最近10条
+            if (inputHistory.length > 10) {
+                inputHistory = inputHistory.slice(inputHistory.length - 10);
             }
-            
+
             localStorage.setItem('chatInputHistory', JSON.stringify(inputHistory));
             historyIndex = -1; // 重置索引
         }
@@ -6777,7 +6994,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
         // 处理退出登录
         async function handleLogout() {
             if (!confirm('确定要退出登录吗？')) return;
-            
+
             try {
                 const token = localStorage.getItem('token');
                 const response = await fetch('/api/auth/logout', {
@@ -6785,17 +7002,18 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     headers: {
                         'Authorization': 'Bearer ' + token,
                         'Content-Type': 'application/json'
-                    }
+                    },
+                    body: JSON.stringify({})
                 });
-                
+
                 const data = await response.json();
-                
+
                 if (data.success || response.status === 401) {
                     // 清除本地存储
                     localStorage.removeItem('token');
                     localStorage.removeItem('username');
                     localStorage.removeItem('user_id');
-                    
+
                     // 跳转到登录页
                     window.location.href = '/ai/login';
                 } else {
@@ -7452,8 +7670,13 @@ class AssistantHandler(BaseHTTPRequestHandler):
             const input = document.getElementById('aiInput');
             const message = input.value.trim();
             const originalText = message; // 保存原始文本用于乐观更新
-            
+
             if (!message && !currentFileId) return; // 如果没有消息也没有文件，则不发送
+
+            // 保存输入历史记录
+            if (message) {
+                saveInputHistory(message);
+            }
 
             // 清空输入
             input.value = '';
@@ -9841,11 +10064,170 @@ class AssistantHandler(BaseHTTPRequestHandler):
             background: #ff4444;
             color: white;
         }
-        
+
         .btn-delete:hover {
             background: #cc0000;
         }
-        
+
+        .btn-share {
+            background: #17a2b8;
+            color: white;
+        }
+
+        .btn-share:hover {
+            background: #138496;
+        }
+
+        /* 好友选择弹窗样式 */
+        .share-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 10000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .share-modal.active {
+            display: flex;
+        }
+
+        .share-modal-content {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+
+        .share-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .share-modal-header h2 {
+            font-size: 20px;
+            color: #333;
+        }
+
+        .share-modal-close {
+            background: none;
+            border: none;
+            font-size: 28px;
+            cursor: pointer;
+            color: #999;
+            line-height: 1;
+        }
+
+        .share-modal-close:hover {
+            color: #333;
+        }
+
+        .friend-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .friend-item {
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .friend-item:hover {
+            border-color: #667eea;
+            background: #f8f9fa;
+        }
+
+        .friend-item.selected {
+            border-color: #667eea;
+            background: #e3f2fd;
+        }
+
+        .friend-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            margin-right: 12px;
+        }
+
+        .friend-info {
+            flex: 1;
+        }
+
+        .friend-name {
+            font-size: 15px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .friend-status {
+            font-size: 12px;
+            color: #999;
+        }
+
+        .share-modal-footer {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
+        .share-modal-footer button {
+            padding: 10px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .share-modal-footer .btn-cancel {
+            background: #e0e0e0;
+            color: #666;
+        }
+
+        .share-modal-footer .btn-cancel:hover {
+            background: #d0d0d0;
+        }
+
+        .share-modal-footer .btn-confirm {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .share-modal-footer .btn-confirm:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .share-modal-footer .btn-confirm:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
         .empty-state {
             text-align: center;
             padding: 60px 20px;
@@ -9984,7 +10366,27 @@ class AssistantHandler(BaseHTTPRequestHandler):
             </div>
         </div>
     </div>
-    
+
+    <!-- 好友选择弹窗 -->
+    <div id="shareModal" class="share-modal">
+        <div class="share-modal-content">
+            <div class="share-modal-header">
+                <h2>📤 分享图片给好友</h2>
+                <button class="share-modal-close" onclick="closeShareModal()">×</button>
+            </div>
+            <div id="shareFileName" style="margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 8px; font-size: 14px; color: #666;">
+                正在分享：<span id="shareFileNameText" style="color: #333; font-weight: 600;"></span>
+            </div>
+            <div id="friendList" class="friend-list">
+                <div style="text-align: center; padding: 20px; color: #999;">正在加载好友列表...</div>
+            </div>
+            <div class="share-modal-footer">
+                <button class="btn-cancel" onclick="closeShareModal()">取消</button>
+                <button class="btn-confirm" id="confirmShareBtn" onclick="confirmShare()" disabled>确认分享</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         let selectedFiles = [];
         let allImages = [];
@@ -10174,6 +10576,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                             </div>
                             <div class="actions">
                                 <button class="btn-view" onclick="viewImage(${img.id})">👁️ 查看</button>
+                                <button class="btn-share" onclick="shareImage(${img.id}, '${img.original_name || img.filename}')">📤 分享</button>
                                 <button class="btn-delete" onclick="deleteImage(${img.id})">🗑️ 删除</button>
                             </div>
                         </div>
@@ -10256,7 +10659,99 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 alert('删除失败，请重试');
             }
         }
-        
+
+        // 分享功能相关变量
+        let currentShareImage = null;
+        let selectedFriendId = null;
+
+        // 打开分享弹窗
+        async function shareImage(imageId, imageName) {
+            currentShareImage = { id: imageId, name: imageName };
+            selectedFriendId = null;
+            document.getElementById('shareFileNameText').textContent = imageName;
+            document.getElementById('shareModal').classList.add('active');
+            await loadFriendList();
+        }
+
+        // 加载好友列表
+        async function loadFriendList() {
+            try {
+                const token = localStorage.getItem('token');
+                const response = await fetch('/ai/api/social/friends/list', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                const data = await response.json();
+                const friendList = document.getElementById('friendList');
+                if (!data.friends || data.friends.length === 0) {
+                    friendList.innerHTML = '<div style="text-align: center; padding: 20px; color: #999;">暂无好友，请先添加好友</div>';
+                    return;
+                }
+                friendList.innerHTML = data.friends.map(friend => {
+                    const avatarText = friend.friend_username ? friend.friend_username.charAt(0).toUpperCase() : '?';
+                    return `<div class="friend-item" onclick="selectFriend(${friend.friend_id}, '${friend.friend_username}')">
+                        <div class="friend-avatar">${avatarText}</div>
+                        <div class="friend-info">
+                            <div class="friend-name">${friend.friend_username}</div>
+                            <div class="friend-status">点击选择</div>
+                        </div></div>`;
+                }).join('');
+            } catch (error) {
+                console.error('加载好友列表失败:', error);
+                document.getElementById('friendList').innerHTML = '<div style="text-align: center; padding: 20px; color: #f44336;">加载失败，请重试</div>';
+            }
+        }
+
+        // 选择好友
+        function selectFriend(friendId, friendName) {
+            selectedFriendId = friendId;
+            document.querySelectorAll('.friend-item').forEach(item => item.classList.remove('selected'));
+            event.target.closest('.friend-item').classList.add('selected');
+            document.getElementById('confirmShareBtn').disabled = false;
+        }
+
+        // 确认分享
+        async function confirmShare() {
+            if (!selectedFriendId || !currentShareImage) {
+                alert('请选择要分享的好友');
+                return;
+            }
+            try {
+                const token = localStorage.getItem('token');
+                const response = await fetch('/ai/api/social/messages/send', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({
+                        receiver_id: selectedFriendId,
+                        content: `分享了图片：${currentShareImage.name}`,
+                        message_type: 'image',
+                        image_id: currentShareImage.id,
+                        file_id: null
+                    })
+                });
+                const result = await response.json();
+                if (result.success) {
+                    alert('分享成功！');
+                    closeShareModal();
+                } else {
+                    alert('分享失败: ' + (result.message || '未知错误'));
+                }
+            } catch (error) {
+                console.error('分享失败:', error);
+                alert('分享失败，请重试');
+            }
+        }
+
+        // 关闭分享弹窗
+        function closeShareModal() {
+            document.getElementById('shareModal').classList.remove('active');
+            currentShareImage = null;
+            selectedFriendId = null;
+            document.getElementById('confirmShareBtn').disabled = true;
+        }
+
         // 按Esc关闭模态框
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {

@@ -755,9 +755,15 @@ class AIAssistant:
             # 递归调用chat处理转换后的命令
             return self.chat(context_result, user_id, file_id, token, session_id, ai_assistant_name)
 
-        # ✨ 新增：检查"X相关"模式，模糊匹配子类别或全面搜索
-        if '相关' in user_message:
-            fuzzy_result = self._fuzzy_match_subcategory(user_message, user_id)
+        # ✨ 新增：检查"X相关"、"X所有"和纯"X"模式
+        if '相关' in user_message or '所有' in user_message:
+            # 检查是否是"X所有"模式（包含聊天记录的所有搜索）
+            if '所有' in user_message:
+                fuzzy_result = self._fuzzy_match_subcategory(user_message, user_id, include_chat=True)
+            else:
+                # "X相关"模式（不包含聊天记录的搜索）
+                fuzzy_result = self._fuzzy_match_subcategory(user_message, user_id, include_chat=False)
+
             if fuzzy_result:
                 # 检查是否是全面搜索结果（字典格式）
                 if isinstance(fuzzy_result, dict) and fuzzy_result.get('is_comprehensive_search'):
@@ -767,6 +773,39 @@ class AIAssistant:
                     # 是子类别命令，递归调用
                     print(f"🔍 检测到模糊匹配，转换为: {fuzzy_result}")
                     return self.chat(fuzzy_result, user_id, file_id, token, session_id, ai_assistant_name)
+        else:
+            # ✨ 纯"X"模式：只搜索分类记录（daily_records），不包含聊天记录
+            # 检查是否是简单的关键词查询（不包含特殊符号和命令词）
+            stripped_message = user_message.strip()
+            # 排除已知的命令词和特殊模式
+            command_words = ['工作', '计划', '财务', '账号', '提醒', '记录', '类别', '帮助', '日记', '随想', '信息', '学习笔记', '完成', '删除', '标记']
+            is_command = any(stripped_message.startswith(word) for word in command_words)
+
+            # 如果不是命令，且是简单的关键词（2-10个字符），尝试作为分类查询
+            if not is_command and 2 <= len(stripped_message) <= 10 and not any(c in stripped_message for c in ['？', '?', '吗', '呢', '：', ':']):
+                print(f"🔍 检测到纯分类查询模式: '{stripped_message}'")
+                # 尝试在子类别中查找
+                from category_system import CategoryManager
+                category_mgr = CategoryManager()
+                all_categories = category_mgr.get_all_categories()
+                matched_subcategories = []
+
+                for category in all_categories:
+                    query = """
+                        SELECT * FROM subcategories
+                        WHERE category_id = %s
+                        ORDER BY sort_order, id
+                    """
+                    subcategories = category_mgr.query(query, (category['id'],))
+                    for sub in subcategories:
+                        if stripped_message in sub['name']:
+                            matched_subcategories.append(sub['name'])
+
+                if matched_subcategories:
+                    # 找到匹配的子类别，返回该子类别的记录
+                    subcategory_name = matched_subcategories[0]
+                    print(f"🔍 找到匹配的子类别: {subcategory_name}")
+                    return self.chat(subcategory_name, user_id, file_id, token, session_id, ai_assistant_name)
 
         # ✨ 新增：检查是否是新命令系统的命令
         try:
@@ -1499,24 +1538,30 @@ class AIAssistant:
         print(f"🔍 DEBUG: 未匹配到上下文引用模式")
         return None
 
-    def _fuzzy_match_subcategory(self, user_message, user_id):
+    def _fuzzy_match_subcategory(self, user_message, user_id, include_chat=False):
         """模糊匹配子类别名称
 
         支持格式：
-        - "ai相关" → 查找包含"ai"的子类别，如果没有则全面搜索
-        - "助理相关" → 查找包含"助理"的子类别，如果没有则全面搜索
-        - "ai相关 内容" → 查找包含"ai"的子类别并添加内容
+        - "ai" → 查找包含"ai"的子类别，返回该子类别的记录
+        - "ai相关" → 查找包含"ai"的所有记录（不包含聊天记录）
+        - "ai所有" → 查找包含"ai"的所有记录（包含聊天记录）
+
+        参数：
+        - include_chat: 是否包含聊天记录（"所有"模式为True，"相关"模式为False）
 
         ✨ 新增逻辑：
         - 如果找到子类别，返回子类别命令
         - 如果没找到子类别，进行全面搜索并返回搜索结果
         """
-        # 提取"X相关"中的关键词X
-        match = re.search(r'(.+?)相关', user_message)
+        # 提取关键词（处理"X相关"和"X所有"格式）
+        match = re.search(r'(.+?)(?:相关|所有)?$', user_message)
         if not match:
             return None
 
         keyword = match.group(1).strip()
+        # 移除"相关"或"所有"后缀
+        keyword = re.sub(r'(?:相关|所有)$', '', keyword).strip()
+
         if not keyword:
             return None
 
@@ -1544,7 +1589,7 @@ class AIAssistant:
         if len(matched_subcategories) == 0:
             # ✨ 没有找到匹配的子类别，进行全面搜索
             print(f"🔍 未找到子类别匹配'{keyword}'，进行全面搜索...")
-            search_results = self._comprehensive_search_related(keyword, user_id)
+            search_results = self._comprehensive_search_related(keyword, user_id, include_chat=include_chat)
             formatted_results = self._format_comprehensive_search_results(keyword, search_results)
 
             # 返回搜索结果而不是None
@@ -1558,8 +1603,8 @@ class AIAssistant:
         elif len(matched_subcategories) == 1:
             # 找到唯一匹配，转换为该子类别命令
             subcategory_name = matched_subcategories[0]
-            # 提取"相关"后面的内容（如果有）
-            remaining = user_message.split('相关', 1)[1].strip() if '相关' in user_message else ''
+            # 提取"相关"或"所有"后面的内容（如果有）
+            remaining = user_message.split(keyword, 1)[1].strip() if keyword in user_message else ''
             if remaining:
                 return f"{subcategory_name} {remaining}"
             else:
@@ -1567,34 +1612,41 @@ class AIAssistant:
         else:
             # 找到多个匹配，暂时返回第一个（未来可以改进为让用户选择）
             subcategory_name = matched_subcategories[0]
-            remaining = user_message.split('相关', 1)[1].strip() if '相关' in user_message else ''
+            remaining = user_message.split(keyword, 1)[1].strip() if keyword in user_message else ''
             if remaining:
                 return f"{subcategory_name} {remaining}"
             else:
                 return subcategory_name
 
-    def _comprehensive_search_related(self, keyword, user_id):
+    def _comprehensive_search_related(self, keyword, user_id, include_chat=False):
         """
-        ✨ 全面搜索"X相关"的所有数据
-        搜索所有数据表中包含关键词的信息
+        ✨ 全面搜索相关数据
+
+        参数：
+        - include_chat: 是否包含聊天记录
+          - False: 搜索daily_records + guestbook + work_plans（"X相关"模式）
+          - True: 搜索messages + daily_records + guestbook + work_plans（"X所有"模式）
         """
-        print(f"🔍 开始全面搜索: keyword='{keyword}', user_id={user_id}")
+        print(f"🔍 开始全面搜索: keyword='{keyword}', user_id={user_id}, include_chat={include_chat}")
         all_results = []
 
-        # 1. 搜索聊天记录 (messages)
-        try:
-            chat_results = self.memory.search_by_keyword(keyword, user_id=user_id)
-            if chat_results:
-                print(f"🔍 在messages中找到{len(chat_results)}条结果")
-                for chat in chat_results:
-                    all_results.append({
-                        'type': '聊天记录',
-                        'content': chat.get('content', ''),
-                        'timestamp': chat.get('timestamp', ''),
-                        'source': 'messages'
-                    })
-        except Exception as e:
-            print(f"❌ 搜索messages出错: {e}")
+        # 1. 搜索聊天记录 (messages) - 仅当 include_chat=True 时
+        if include_chat:
+            try:
+                chat_results = self.memory.search_by_keyword(keyword, user_id=user_id)
+                if chat_results:
+                    print(f"🔍 在messages中找到{len(chat_results)}条结果")
+                    for chat in chat_results:
+                        all_results.append({
+                            'type': '聊天记录',
+                            'content': chat.get('content', ''),
+                            'timestamp': chat.get('timestamp', ''),
+                            'source': 'messages'
+                        })
+            except Exception as e:
+                print(f"❌ 搜索messages出错: {e}")
+        else:
+            print(f"🔍 跳过聊天记录搜索（include_chat=False）")
 
         # 2. 搜索日常记录 (daily_records)
         try:

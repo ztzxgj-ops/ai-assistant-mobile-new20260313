@@ -1,5 +1,928 @@
 [
   {
+    "id": 90,
+    "timestamp": "2026-01-19 17:33:49",
+    "backup_dir": "backup-20260119-173222",
+    "status": "success",
+    "notes": "完成：上传进度条增加“取消”按键。",
+    "error": "",
+    "git_commit": "1713a2ed8f247666d429449c4bb2fb5f510b80b0",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260119-173222.tar.gz",
+        "size": 12007783
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260119-173222.sql",
+        "size": 882984
+      }
+    }
+  },
+  {
+    "id": 89,
+    "timestamp": "2026-01-19 11:44:51",
+    "backup_dir": "backup-20260119-114418",
+    "status": "success",
+    "notes": "⚠️ 有 10 个文件修改，请点击'编辑备注'添加功能说明",
+    "error": "",
+    "git_commit": "1713a2ed8f247666d429449c4bb2fb5f510b80b0",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260119-114418.tar.gz",
+        "size": 12002990
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260119-114418.sql",
+        "size": 879960
+      }
+    }
+  },
+  {
+    "id": 88,
+    "timestamp": "2026-01-19 11:43:43",
+    "backup_dir": "backup-20260119-114318",
+    "status": "success",
+    "notes": "完成：文化墙功能和显示已全面完工！",
+    "error": "",
+    "git_commit": "1713a2ed8f247666d429449c4bb2fb5f510b80b0",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260119-114318.tar.gz",
+        "size": 12003002
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260119-114318.sql",
+        "size": 879960
+      }
+    }
+  },
+  {
+    "id": 87,
+    "timestamp": "2026-01-18 14:11:55",
+    "backup_dir": "backup-20260118-141142",
+    "status": "success",
+    "notes": "⚠️ 有 10 个文件修改，请点击'编辑备注'添加功能说明",
+    "error": "",
+    "git_commit": "1713a2ed8f247666d429449c4bb2fb5f510b80b0",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260118-141142.tar.gz",
+        "size": 12000586
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260118-141142.sql",
+        "size": 856169
+      }
+    }
+  },
+  {
+    "id": 86,
+    "timestamp": "2026-01-18 13:15:33",
+    "backup_dir": "backup-20260118-131519",
+    "status": "success",
+    "notes": "⚠️ 有 10 个文件修改，请点击'编辑备注'添加功能说明",
+    "error": "",
+    "git_commit": "1713a2ed8f247666d429449c4bb2fb5f510b80b0",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260118-131519.tar.gz",
+        "size": 11993368
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260118-131519.sql",
+        "size": 853602
+      }
+    }
+  },
+  {
+    "id": 85,
+    "timestamp": "2026-01-18 13:15:27",
+    "backup_dir": "backup-20260118-131515",
+    "status": "success",
+    "notes": "⚠️ 有 10 个文件修改，请点击'编辑备注'添加功能说明",
+    "error": "",
+    "git_commit": "1713a2ed8f247666d429449c4bb2fb5f510b80b0",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260118-131515.tar.gz",
+        "size": 11993374
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260118-131515.sql",
+        "size": 853602
+      }
+    }
+  },
+  {
+    "id": 84,
+    "timestamp": "2026-01-18 13:15:09",
+    "backup_dir": "backup-20260118-131508",
+    "status": "failed",
+    "notes": "变更: 添加文件分享功能 + 有未提交的代码修改",
+    "error": "\n正在备份服务器代码...\nssh: connect to host 47.109.148.176 port 22: Network is unreachable\n\u001b[1;33m⚠️  服务器代码打包失败\u001b[0m\n\u001b[1;33m⚠️  服务器代码下载失败\u001b[0m",
+    "git_commit": "1713a2ed8f247666d429449c4bb2fb5f510b80b0",
+    "files": {
+      "code": {
+        "name": null,
+        "size": 0
+      },
+      "database": {
+        "name": null,
+        "size": 0
+      }
+    }
+  },
+  {
+    "id": 83,
+    "timestamp": "2026-01-18 09:21:06",
+    "backup_dir": "backup-20260118-092052",
+    "status": "success",
+    "notes": "完成：去除每次对话显示时间等多余图标、内容；查询中发现的各种问题。",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260118-092052.tar.gz",
+        "size": 11980942
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260118-092052.sql",
+        "size": 850277
+      }
+    }
+  },
+  {
+    "id": 82,
+    "timestamp": "2026-01-17 23:00:07",
+    "backup_dir": "backup-20260117-225954",
+    "status": "success",
+    "notes": "完成：朋友模块主题、头像统一，ai回答非类别问题报错。",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260117-225954.tar.gz",
+        "size": 11977646
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260117-225954.sql",
+        "size": 815902
+      }
+    }
+  },
+  {
+    "id": 81,
+    "timestamp": "2026-01-17 17:23:14",
+    "backup_dir": "backup-20260117-172256",
+    "status": "success",
+    "notes": "web版和手机版“朋友”功能基础完成",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260117-172256.tar.gz",
+        "size": 11972740
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260117-172256.sql",
+        "size": 813307
+      }
+    }
+  },
+  {
+    "id": 80,
+    "timestamp": "2026-01-17 10:28:49",
+    "backup_dir": "backup-20260117-102834",
+    "status": "success",
+    "notes": "增加：社交功能初步完成",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260117-102834.tar.gz",
+        "size": 11958670
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260117-102834.sql",
+        "size": 807686
+      }
+    }
+  },
+  {
+    "id": 79,
+    "timestamp": "2026-01-17 00:31:48",
+    "backup_dir": "backup-20260117-003134",
+    "status": "success",
+    "notes": "优化手机对话界面快捷文字隐藏、显示功能",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260117-003134.tar.gz",
+        "size": 11932106
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260117-003134.sql",
+        "size": 794962
+      }
+    }
+  },
+  {
+    "id": 78,
+    "timestamp": "2026-01-17 00:07:52",
+    "backup_dir": "backup-20260117-000735",
+    "status": "success",
+    "notes": "完成：手机app对话界面增加快捷文字透明标签按键",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260117-000735.tar.gz",
+        "size": 11931909
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260117-000735.sql",
+        "size": 794633
+      }
+    }
+  },
+  {
+    "id": 77,
+    "timestamp": "2026-01-16 22:48:40",
+    "backup_dir": "backup-20260116-224826",
+    "status": "success",
+    "notes": "✅ 完成多项任务: 弄清楚缩短贷款年限后的利率问题！; 制作《贷款业务一本通》电子版; 贷款资金支付授权审核工作开展情况汇报材料 等",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260116-224826.tar.gz",
+        "size": 11930738
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260116-224826.sql",
+        "size": 792391
+      }
+    }
+  },
+  {
+    "id": 76,
+    "timestamp": "2026-01-16 22:43:36",
+    "backup_dir": "backup-20260116-224321",
+    "status": "success",
+    "notes": "⚠️ 有 10 个文件修改，请点击'编辑备注'添加功能说明",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260116-224321.tar.gz",
+        "size": 11930718
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260116-224321.sql",
+        "size": 792391
+      }
+    }
+  },
+  {
+    "id": 75,
+    "timestamp": "2026-01-16 22:40:05",
+    "backup_dir": "backup-20260116-223951",
+    "status": "success",
+    "notes": "⚠️ 有 10 个文件修改，请点击'编辑备注'添加功能说明",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260116-223951.tar.gz",
+        "size": 11930581
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260116-223951.sql",
+        "size": 792391
+      }
+    }
+  },
+  {
+    "id": 74,
+    "timestamp": "2026-01-16 22:12:53",
+    "backup_dir": "backup-20260116-221239",
+    "status": "success",
+    "notes": "1.备份原系统数据表work_plans为work_plans_backup_20260116\n2.优化新数据表work_tasks，原work_plans移植过来。",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260116-221239.tar.gz",
+        "size": 11930575
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260116-221239.sql",
+        "size": 787273
+      }
+    }
+  },
+  {
+    "id": 73,
+    "timestamp": "2026-01-16 17:15:32",
+    "backup_dir": "backup-20260116-171505",
+    "status": "success",
+    "notes": "⚠️ 有 10 个文件修改，请点击'编辑备注'添加功能说明",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260116-171505.tar.gz",
+        "size": 11930870
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260116-171505.sql",
+        "size": 772114
+      }
+    }
+  },
+  {
+    "id": 72,
+    "timestamp": "2026-01-16 17:13:22",
+    "backup_dir": "test-backup-1",
+    "status": "success",
+    "notes": "✅ 希望在移动端应用中添加暗色模式支持，让用户可以在设置中切换亮色和暗色主题: 已完成暗色模式实现。在Flutter应用中添加了ThemeMode切换功能，支持系统自动、亮色、暗色三种模式。已在iOS和Android上测试通过",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": null,
+        "size": 0
+      },
+      "database": {
+        "name": null,
+        "size": 0
+      }
+    }
+  },
+  {
+    "id": 71,
+    "timestamp": "2026-01-16 17:02:44",
+    "backup_dir": "backup-20260116-test",
+    "status": "success",
+    "notes": "✅ 修复日志系统集成问题: 已完成检查，发现系统集成正常，后端和API都工作正常。问题可能在前端显示或用户没有添加日志记录",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": null,
+        "size": 0
+      },
+      "database": {
+        "name": null,
+        "size": 0
+      }
+    }
+  },
+  {
+    "id": 70,
+    "timestamp": "2026-01-16 16:54:47",
+    "backup_dir": "backup-20260116-165419",
+    "status": "success",
+    "notes": "⚠️ 有 10 个文件修改，请点击'编辑备注'添加功能说明",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260116-165419.tar.gz",
+        "size": 11929217
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260116-165419.sql",
+        "size": 767922
+      }
+    }
+  },
+  {
+    "id": 69,
+    "timestamp": "2026-01-16 15:24:41",
+    "backup_dir": "backup-20260116-152414",
+    "status": "success",
+    "notes": "⚠️ 有 10 个文件修改，请点击'编辑备注'添加功能说明",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260116-152414.tar.gz",
+        "size": 11929174
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260116-152414.sql",
+        "size": 767815
+      }
+    }
+  },
+  {
+    "id": 68,
+    "timestamp": "2026-01-16 13:21:16",
+    "backup_dir": "backup-20260116-132048",
+    "status": "success",
+    "notes": "修复了“完成 1”不生效问题。",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260116-132048.tar.gz",
+        "size": 11925805
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260116-132048.sql",
+        "size": 765567
+      }
+    }
+  },
+  {
+    "id": 67,
+    "timestamp": "2026-01-16 13:02:36",
+    "backup_dir": "backup-20260116-130210",
+    "status": "success",
+    "notes": "⚠️ 有 10 个文件修改，请点击'编辑备注'添加功能说明",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260116-130210.tar.gz",
+        "size": 11925781
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260116-130210.sql",
+        "size": 765567
+      }
+    }
+  },
+  {
+    "id": 66,
+    "timestamp": "2026-01-16 11:57:02",
+    "backup_dir": "backup-20260116-115636",
+    "status": "success",
+    "notes": "📝 代码修改: ai_chat_assistant, assistant_web, backup_history_manager 等5个 + 5个其他文件",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260116-115636.tar.gz",
+        "size": 11926012
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260116-115636.sql",
+        "size": 765567
+      }
+    }
+  },
+  {
+    "id": 65,
+    "timestamp": "2026-01-16 11:29:59",
+    "backup_dir": "backup-20260116-112932",
+    "status": "success",
+    "notes": "最近更新: 修复备份系统备注自动生成功能; 添加图片视频缩略图预览功能和静态文件服务\n📝 当前修改: 10个文件",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260116-112932.tar.gz",
+        "size": 11925982
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260116-112932.sql",
+        "size": 765567
+      }
+    }
+  },
+  {
+    "id": 64,
+    "timestamp": "2026-01-15 20:42:47",
+    "backup_dir": "backup-20260115-204232",
+    "status": "success",
+    "notes": "最近更新: 修复备份系统备注自动生成功能; 添加图片视频缩略图预览功能和静态文件服务\n📝 当前修改: 10个文件",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260115-204232.tar.gz",
+        "size": 11918754
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260115-204232.sql",
+        "size": 759876
+      }
+    }
+  },
+  {
+    "id": 63,
+    "timestamp": "2026-01-15 11:11:15",
+    "backup_dir": "backup-20260115-111035",
+    "status": "success",
+    "notes": "变更: 修复备份系统备注自动生成功能 + 有未提交的代码修改",
+    "error": "",
+    "git_commit": "394e3acaf1c53585198d5ef6e8e7b320e603b321",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260115-111035.tar.gz",
+        "size": 11908415
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260115-111035.sql",
+        "size": 747472
+      }
+    }
+  },
+  {
+    "id": 62,
+    "timestamp": "2026-01-15 10:58:14",
+    "backup_dir": "backup-20260115-105748",
+    "status": "success",
+    "notes": "最近更新: 添加图片视频缩略图预览功能和静态文件服务; 紧急修复：user_manager.py SQL 查询缺少 theme 列\n📝 当前修改: 10个文件",
+    "error": "",
+    "git_commit": "42b46594d847afc629909254ca732120a89b83f0",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260115-105748.tar.gz",
+        "size": 11908434
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260115-105748.sql",
+        "size": 747472
+      }
+    }
+  },
+  {
+    "id": 61,
+    "timestamp": "2026-01-15 10:53:09",
+    "backup_dir": "backup-20260115-105242",
+    "status": "success",
+    "notes": "代码已更新，请在备注中说明解决的具体问题",
+    "error": "",
+    "git_commit": "42b46594d847afc629909254ca732120a89b83f0",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260115-105242.tar.gz",
+        "size": 11908497
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260115-105242.sql",
+        "size": 747472
+      }
+    }
+  },
+  {
+    "id": 60,
+    "timestamp": "2026-01-15 09:41:28",
+    "backup_dir": "backup-20260115-094101",
+    "status": "success",
+    "notes": "代码已更新，请在备注中说明解决的具体问题",
+    "error": "",
+    "git_commit": "42b46594d847afc629909254ca732120a89b83f0",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260115-094101.tar.gz",
+        "size": 11908490
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260115-094101.sql",
+        "size": 747472
+      }
+    }
+  },
+  {
+    "id": 59,
+    "timestamp": "2026-01-15 09:30:05",
+    "backup_dir": "backup-20260115-092937",
+    "status": "success",
+    "notes": "代码已更新，请在备注中说明解决的具体问题",
+    "error": "",
+    "git_commit": "42b46594d847afc629909254ca732120a89b83f0",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260115-092937.tar.gz",
+        "size": 11908568
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260115-092937.sql",
+        "size": 747472
+      }
+    }
+  },
+  {
+    "id": 58,
+    "timestamp": "2026-01-15 09:09:43",
+    "backup_dir": "backup-20260115-090915",
+    "status": "success",
+    "notes": "有 10 个文件的代码修改，请在备注中说明完成的功能",
+    "error": "",
+    "git_commit": "42b46594d847afc629909254ca732120a89b83f0",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260115-090915.tar.gz",
+        "size": 11907512
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260115-090915.sql",
+        "size": 747472
+      }
+    }
+  },
+  {
+    "id": 57,
+    "timestamp": "2026-01-15 08:58:30",
+    "backup_dir": "backup-20260115-085804",
+    "status": "success",
+    "notes": "未提交修改: ai_chat_assistant.py, assistant_web.py, backup_history_manager.py 等10个文件",
+    "error": "",
+    "git_commit": "42b46594d847afc629909254ca732120a89b83f0",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260115-085804.tar.gz",
+        "size": 11907429
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260115-085804.sql",
+        "size": 747470
+      }
+    }
+  },
+  {
+    "id": 56,
+    "timestamp": "2026-01-15 01:24:35",
+    "backup_dir": "backup-20260115-012334",
+    "status": "success",
+    "notes": "无新提交",
+    "error": "",
+    "git_commit": "42b46594d847afc629909254ca732120a89b83f0",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260115-012334.tar.gz",
+        "size": 11906682
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260115-012334.sql",
+        "size": 744341
+      }
+    }
+  },
+  {
+    "id": 55,
+    "timestamp": "2026-01-15 01:19:45",
+    "backup_dir": "backup-20260115-011847",
+    "status": "success",
+    "notes": "完成：查询xx相关结果。",
+    "error": "",
+    "git_commit": "42b46594d847afc629909254ca732120a89b83f0",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260115-011847.tar.gz",
+        "size": 11906148
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260115-011847.sql",
+        "size": 744341
+      }
+    }
+  },
+  {
+    "id": 54,
+    "timestamp": "2026-01-15 00:57:03",
+    "backup_dir": "backup-20260115-005610",
+    "status": "success",
+    "notes": "完成：ai回答框架、一二级类别、快捷命令。",
+    "error": "",
+    "git_commit": "42b46594d847afc629909254ca732120a89b83f0",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260115-005610.tar.gz",
+        "size": 11904844
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260115-005610.sql",
+        "size": 743248
+      }
+    }
+  },
+  {
+    "id": 53,
+    "timestamp": "2026-01-15 00:45:10",
+    "backup_dir": "backup-20260115-004336",
+    "status": "success",
+    "notes": "无新提交",
+    "error": "",
+    "git_commit": "42b46594d847afc629909254ca732120a89b83f0",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260115-004336.tar.gz",
+        "size": 11905082
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260115-004336.sql",
+        "size": 740115
+      }
+    }
+  },
+  {
+    "id": 52,
+    "timestamp": "2026-01-15 00:44:14",
+    "backup_dir": "backup-20260115-004324",
+    "status": "success",
+    "notes": "无新提交",
+    "error": "",
+    "git_commit": "42b46594d847afc629909254ca732120a89b83f0",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260115-004324.tar.gz",
+        "size": 11905100
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260115-004324.sql",
+        "size": 740115
+      }
+    }
+  },
+  {
+    "id": 51,
+    "timestamp": "2026-01-14 20:49:19",
+    "backup_dir": "backup-20260114-204912",
+    "status": "failed",
+    "notes": "无新提交",
+    "error": "\n\u001b[0;32m✓\u001b[0m RECOVERY_GUIDE.md\n\u001b[0;32m✓\u001b[0m BACKUP_INFO.txt\n\n正在打包代码和项目文件 (可能需要几分钟)...",
+    "git_commit": "42b46594d847afc629909254ca732120a89b83f0",
+    "files": {
+      "code": {
+        "name": null,
+        "size": 0
+      },
+      "database": {
+        "name": null,
+        "size": 0
+      }
+    }
+  },
+  {
+    "id": 50,
+    "timestamp": "2026-01-14 20:37:57",
+    "backup_dir": "backup-20260114-203742",
+    "status": "success",
+    "notes": "最近变更: 添加图片视频缩略图预览功能和静态文件服务; 紧急修复：user_manager.py SQL 查询缺少 theme 列; 主题保存问题完整修复 - 后端API和前端状态同步",
+    "error": "",
+    "git_commit": "42b46594d847afc629909254ca732120a89b83f0",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260114-203742.tar.gz",
+        "size": 11873912
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260114-203742.sql",
+        "size": 726127
+      }
+    }
+  },
+  {
+    "id": 49,
+    "timestamp": "2026-01-14 20:27:55",
+    "backup_dir": "backup-20260114-202741",
+    "status": "success",
+    "notes": "测试备份程序",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260114-202741.tar.gz",
+        "size": 11873900
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260114-202741.sql",
+        "size": 726127
+      }
+    }
+  },
+  {
+    "id": 48,
+    "timestamp": "2026-01-14 20:13:49",
+    "backup_dir": "backup-20260114-201334",
+    "status": "success",
+    "notes": "完成：主题设置的文字图标颜色一致，欢迎词修改。",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260114-201334.tar.gz",
+        "size": 11869311
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260114-201334.sql",
+        "size": 726127
+      }
+    }
+  },
+  {
+    "id": 47,
+    "timestamp": "2026-01-14 00:51:35",
+    "backup_dir": "backup-20260114-005121",
+    "status": "success",
+    "notes": "完成：ai助理头像模块。",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260114-005121.tar.gz",
+        "size": 11867367
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260114-005121.sql",
+        "size": 724664
+      }
+    }
+  },
+  {
+    "id": 46,
+    "timestamp": "2026-01-13 15:12:36",
+    "backup_dir": "backup-20260113-151212",
+    "status": "success",
+    "notes": "完成：抽屉菜单优化。",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260113-151212.tar.gz",
+        "size": 11857705
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260113-151212.sql",
+        "size": 721645
+      }
+    }
+  },
+  {
+    "id": 45,
+    "timestamp": "2026-01-13 14:57:51",
+    "backup_dir": "backup-20260113-145723",
+    "status": "success",
+    "notes": "完成：手机app设定事项提醒！！！\n（app打开时、最小化时、关闭时、锁屏时殾能显示）",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260113-145723.tar.gz",
+        "size": 11857751
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260113-145723.sql",
+        "size": 720155
+      }
+    }
+  },
+  {
+    "id": 44,
+    "timestamp": "2026-01-13 11:59:02",
+    "backup_dir": "backup-20260113-115836",
+    "status": "success",
+    "notes": "完成：手机端正常接收定时提示信息",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260113-115836.tar.gz",
+        "size": 11856492
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260113-115836.sql",
+        "size": 709014
+      }
+    }
+  },
+  {
+    "id": 43,
+    "timestamp": "2026-01-12 23:09:31",
+    "backup_dir": "backup-20260112-230918",
+    "status": "success",
+    "notes": "完成：图片预览图扩大显示；手机深色模式时文件管理文字看不见问题。",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260112-230918.tar.gz",
+        "size": 11842442
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260112-230918.sql",
+        "size": 700642
+      }
+    }
+  },
+  {
+    "id": 42,
+    "timestamp": "2026-01-12 20:21:52",
+    "backup_dir": "backup-20260112-202138",
+    "status": "success",
+    "notes": "完成开发：文件管理中图片和视频能显略图。",
+    "error": "",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260112-202138.tar.gz",
+        "size": 11818202
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260112-202138.sql",
+        "size": 699917
+      }
+    }
+  },
+  {
     "id": 41,
     "timestamp": "2026-01-12 15:30:25",
     "backup_dir": "backup-20260112-152955",

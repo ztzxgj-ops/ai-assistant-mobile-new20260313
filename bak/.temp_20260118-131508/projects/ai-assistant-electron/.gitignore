@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+backend/venv/
+backend/__pycache__/
+
+# Build outputs
+dist/
+backend/dist/
+backend/build/
+*.spec
+
+# Development
+.DS_Store
+*.log
+.vscode/
+.idea/
+
+# User data (should not be committed)
+backend/config/ai_config.json
+backend/config/mysql_config.json
+uploads/
+
+# Python
+*.pyc
+*.pyo
+*.pyd
+__pycache__/

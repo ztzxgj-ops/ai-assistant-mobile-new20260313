@@ -1,0 +1,12 @@
+[
+  {
+    "id": 1,
+    "requirement": "希望在移动端应用中添加暗色模式支持，让用户可以在设置中切换亮色和暗色主题",
+    "details": "",
+    "start_time": "2026-01-16 17:12:23",
+    "completion": "已完成暗色模式实现。在Flutter应用中添加了ThemeMode切换功能，支持系统自动、亮色、暗色三种模式。已在iOS和Android上测试通过",
+    "completion_time": "2026-01-16 17:12:50",
+    "backup_time": "2026-01-16 17:13:22",
+    "status": "completed"
+  }
+]

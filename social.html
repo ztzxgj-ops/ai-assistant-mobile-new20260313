@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI助理 - 社交中心</title>
+    <title>AI助理 - 朋友</title>
     <style>
         * {
             margin: 0;
@@ -625,12 +625,13 @@
             color: #e74c3c;
         }
 
-        /* 留言板 */
+        /* 便签墙 - 留言墙 */
         .guestbook-composer {
             background: white;
             border-radius: 12px;
             padding: 25px;
             margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
         }
 
         .guestbook-composer textarea {
@@ -644,61 +645,385 @@
             font-family: inherit;
         }
 
-        .guestbook-list {
+        .composer-options {
             display: flex;
-            flex-direction: column;
             gap: 15px;
+            margin-top: 15px;
+            flex-wrap: wrap;
         }
 
-        .guestbook-item {
+        .mood-selector, .color-selector {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .mood-tag {
+            padding: 6px 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 18px;
+            transition: all 0.3s;
             background: white;
-            border-radius: 12px;
-            padding: 20px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
         }
 
-        .guestbook-header {
+        .mood-tag:hover {
+            transform: scale(1.1);
+            border-color: #667eea;
+        }
+
+        .mood-tag.selected {
+            border-color: #667eea;
+            background: #f0f4ff;
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+        }
+
+        .color-option {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 3px solid transparent;
+            transition: all 0.3s;
+        }
+
+        .color-option:hover {
+            transform: scale(1.15);
+        }
+
+        .color-option.selected {
+            border-color: #2c3e50;
+            box-shadow: 0 0 0 2px white, 0 0 0 4px #2c3e50;
+        }
+
+        .image-upload-btn {
+            padding: 8px 16px;
+            background: #f0f0f0;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+
+        .image-upload-btn:hover {
+            background: #e0e0e0;
+        }
+
+        /* 便签墙容器 */
+        .sticky-wall {
+            position: relative;
+            min-height: 600px;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-radius: 12px;
+            padding: 30px;
+            overflow: hidden;
+        }
+
+        /* 便签卡片 */
+        .sticky-note {
+            position: absolute;
+            width: 220px;
+            min-height: 200px;
+            padding: 20px;
+            border-radius: 2px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1), 0 1px 3px rgba(0,0,0,0.08);
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            font-family: 'Comic Sans MS', cursive, sans-serif;
+        }
+
+        .sticky-note::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 60px;
+            height: 20px;
+            background: rgba(255,255,255,0.3);
+            border-radius: 0 0 10px 10px;
+            box-shadow: 0 2px 3px rgba(0,0,0,0.1);
+        }
+
+        .sticky-note:hover {
+            transform: scale(1.05) rotate(0deg) !important;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.2), 0 6px 6px rgba(0,0,0,0.1);
+            z-index: 100 !important;
+        }
+
+        .sticky-note-header {
             display: flex;
-            gap: 15px;
+            justify-content: space-between;
+            align-items: flex-start;
             margin-bottom: 12px;
         }
 
-        .guestbook-avatar {
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
+        .sticky-note-author {
+            font-size: 12px;
             font-weight: bold;
+            color: rgba(0,0,0,0.7);
         }
 
-        .guestbook-author h4 {
+        .sticky-note-mood {
+            font-size: 20px;
+        }
+
+        .sticky-note-content {
             font-size: 14px;
-            color: #2c3e50;
-            margin-bottom: 3px;
-        }
-
-        .guestbook-content {
-            padding-left: 55px;
             line-height: 1.6;
-            color: #2c3e50;
-            margin-bottom: 10px;
+            color: rgba(0,0,0,0.8);
+            margin-bottom: 12px;
+            word-wrap: break-word;
         }
 
-        .guestbook-footer {
-            padding-left: 55px;
+        .sticky-note-image {
+            width: 100%;
+            border-radius: 4px;
+            margin-bottom: 12px;
+            max-height: 150px;
+            object-fit: cover;
+        }
+
+        .sticky-note-footer {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(0,0,0,0.1);
         }
 
-        .guestbook-reply {
+        .sticky-note-time {
+            font-size: 11px;
+            color: rgba(0,0,0,0.5);
+        }
+
+        .sticky-note-reactions {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .reaction-item {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            padding: 3px 8px;
+            background: rgba(255,255,255,0.5);
+            border-radius: 12px;
             font-size: 12px;
-            color: #667eea;
             cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .reaction-item:hover {
+            background: rgba(255,255,255,0.8);
+            transform: scale(1.1);
+        }
+
+        .reaction-item.user-reacted {
+            background: rgba(102, 126, 234, 0.3);
+            font-weight: bold;
+        }
+
+        /* 表情选择器 */
+        .reaction-picker {
+            display: none;
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: white;
+            border-radius: 12px;
+            padding: 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+            z-index: 1000;
+        }
+
+        .reaction-picker.active {
+            display: block;
+            animation: slideUp 0.3s ease-out;
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translateY(20px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .reaction-picker-title {
+            font-size: 14px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #2c3e50;
+        }
+
+        .reaction-options {
+            display: flex;
+            gap: 10px;
+        }
+
+        .reaction-option {
+            font-size: 28px;
+            cursor: pointer;
+            transition: transform 0.2s;
+            padding: 5px;
+        }
+
+        .reaction-option:hover {
+            transform: scale(1.3);
+        }
+
+        /* 回复样式 */
+        .sticky-note-replies {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(0,0,0,0.1);
+        }
+
+        .sticky-note-reply {
+            background: rgba(255,255,255,0.5);
+            padding: 8px 12px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+
+        .reply-author {
+            font-size: 11px;
+            font-weight: bold;
+            color: rgba(0,0,0,0.7);
+            margin-bottom: 4px;
+        }
+
+        .reply-content {
+            font-size: 13px;
+            line-height: 1.4;
+            color: rgba(0,0,0,0.8);
+            margin-bottom: 4px;
+        }
+
+        .reply-time {
+            font-size: 10px;
+            color: rgba(0,0,0,0.5);
+        }
+
+        .sticky-note-reply-input {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(0,0,0,0.1);
+        }
+
+        .sticky-note-reply-input input {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid rgba(0,0,0,0.2);
+            border-radius: 16px;
+            font-size: 13px;
+            background: rgba(255,255,255,0.8);
+            outline: none;
+        }
+
+        .sticky-note-reply-input input:focus {
+            border-color: rgba(102, 126, 234, 0.5);
+            background: white;
+        }
+
+        .sticky-note-reply-input button {
+            padding: 8px 12px;
+            background: rgba(102, 126, 234, 0.2);
+            border: none;
+            border-radius: 16px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.2s;
+        }
+
+        .sticky-note-reply-input button:hover {
+            background: rgba(102, 126, 234, 0.3);
+            transform: scale(1.05);
+        }
+
+        .sticky-note-reply-input .emoji-btn {
+            background: rgba(255, 193, 7, 0.2);
+        }
+
+        .sticky-note-reply-input .emoji-btn:hover {
+            background: rgba(255, 193, 7, 0.3);
+        }
+
+        /* 回复表情选择器 */
+        .reply-emoji-picker {
+            display: none;
+            position: absolute;
+            bottom: 50px;
+            right: 10px;
+            background: white;
+            border-radius: 12px;
+            padding: 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+            z-index: 1000;
+            max-width: 300px;
+        }
+
+        .reply-emoji-picker.active {
+            display: block;
+            animation: slideUp 0.3s ease-out;
+        }
+
+        .reply-emoji-picker-title {
+            font-size: 14px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #2c3e50;
+        }
+
+        .reply-emoji-options {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 8px;
+        }
+
+        .reply-emoji-option {
+            font-size: 24px;
+            cursor: pointer;
+            transition: transform 0.2s;
+            padding: 8px;
+            text-align: center;
+            border-radius: 8px;
+        }
+
+        .reply-emoji-option:hover {
+            transform: scale(1.3);
+            background: #f0f0f0;
+        }
+
+        /* 响应式 - 移动端瀑布流 */
+        @media (max-width: 768px) {
+            .sticky-wall {
+                padding: 15px;
+                min-height: auto;
+            }
+
+            .sticky-note {
+                position: relative !important;
+                width: 100% !important;
+                margin-bottom: 15px !important;
+                transform: none !important;
+                left: 0 !important;
+                top: 0 !important;
+            }
+
+            .sticky-note:hover {
+                transform: scale(1.02) !important;
+            }
         }
 
         /* 好友申请模态框 */
@@ -876,7 +1201,7 @@
     <!-- 侧边栏 -->
     <div class="sidebar" id="sidebar">
         <div class="sidebar-header">
-            <h2>🌟 社交中心</h2>
+            <h2>🌟 朋友</h2>
             <p>连接朋友，分享生活</p>
         </div>
 
@@ -901,13 +1226,9 @@
                     <span>私信聊天</span>
                     <span class="nav-item-badge" id="messagesCountBadge">0</span>
                 </div>
-                <div class="nav-item" data-section="moments">
-                    <span class="nav-item-icon">📱</span>
-                    <span>动态分享</span>
-                </div>
                 <div class="nav-item" data-section="guestbook">
                     <span class="nav-item-icon">📝</span>
-                    <span>留言板</span>
+                    <span>留言墙</span>
                 </div>
             </div>
 
@@ -991,46 +1312,85 @@
                 </div>
             </div>
 
-            <!-- 动态分享 -->
-            <div id="momentsSection" class="content-section">
-                <div class="post-composer">
-                    <textarea id="postContent" placeholder="分享新动态..."></textarea>
-                    <div class="post-composer-actions">
-                        <div class="post-options">
-                            <button class="post-option">📷 图片</button>
-                            <button class="post-option">📹 视频</button>
-                            <button class="post-option">📍 位置</button>
-                        </div>
-                        <button class="btn btn-primary" onclick="publishPost()">发布</button>
-                    </div>
-                </div>
-
-                <div class="post-feed" id="postFeed">
-                    <!-- 动态将通过 API 动态加载 -->
-                    <div class="empty-state">
-                        <div class="empty-state-icon">📱</div>
-                        <p>加载中...</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 留言板 -->
+            <!-- 便签墙 - 留言墙 -->
             <div id="guestbookSection" class="content-section">
                 <div class="guestbook-composer">
-                    <textarea id="guestbookContent" placeholder="写下你的留言..."></textarea>
+                    <textarea id="guestbookContent" placeholder="写下你的心情..."></textarea>
+
+                    <div class="composer-options">
+                        <!-- 心情选择器 -->
+                        <div class="mood-selector">
+                            <span style="font-size: 12px; color: #666;">心情：</span>
+                            <div id="moodTags"></div>
+                        </div>
+
+                        <!-- 颜色选择器 -->
+                        <div class="color-selector">
+                            <span style="font-size: 12px; color: #666;">颜色：</span>
+                            <div id="colorOptions"></div>
+                        </div>
+
+                        <!-- 图片上传 -->
+                        <input type="file" id="imageUpload" accept="image/*" style="display: none;" onchange="handleImageUpload(event)">
+                        <button class="image-upload-btn" onclick="document.getElementById('imageUpload').click()">
+                            📷 上传图片
+                        </button>
+                        <span id="uploadedImageName" style="font-size: 12px; color: #666;"></span>
+                    </div>
+
+                    <!-- 可见范围选择器 -->
+                    <div class="composer-options" style="margin-top: 10px; border-top: 1px solid #e0e0e0; padding-top: 10px;">
+                        <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+                            <span style="font-size: 12px; color: #666;">可见范围：</span>
+                            <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                                <input type="radio" name="visibility" value="all_friends" checked onchange="toggleFriendSelector()">
+                                <span style="font-size: 13px;">所有好友可见</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                                <input type="radio" name="visibility" value="specific_friends" onchange="toggleFriendSelector()">
+                                <span style="font-size: 13px;">指定好友可见</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                                <input type="radio" name="visibility" value="private" onchange="toggleFriendSelector()">
+                                <span style="font-size: 13px;">仅自己可见</span>
+                            </label>
+                        </div>
+
+                        <!-- 好友选择器（仅当选择"指定好友"时显示） -->
+                        <div id="friendSelector" style="display: none; margin-top: 10px;">
+                            <div style="font-size: 12px; color: #666; margin-bottom: 8px;">选择可见好友：</div>
+                            <div id="friendCheckboxList" style="display: flex; flex-wrap: wrap; gap: 10px; max-height: 150px; overflow-y: auto; padding: 10px; background: #f8f9fa; border-radius: 6px;">
+                                <!-- 好友复选框将动态加载 -->
+                                <div style="width: 100%; text-align: center; color: #999;">加载中...</div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="post-composer-actions">
                         <div></div>
-                        <button class="btn btn-primary" onclick="postGuestbook()">发布留言</button>
+                        <button class="btn btn-primary" onclick="postStickyNote()">发布便签</button>
                     </div>
                 </div>
 
-                <div class="guestbook-list" id="guestbookList">
-                    <!-- 留言将通过 API 动态加载 -->
+                <div class="sticky-wall" id="stickyWall">
+                    <!-- 便签将通过 API 动态加载 -->
                     <div class="empty-state">
                         <div class="empty-state-icon">📝</div>
                         <p>加载中...</p>
                     </div>
                 </div>
+            </div>
+
+            <!-- 表情回应选择器 -->
+            <div id="reactionPicker" class="reaction-picker">
+                <div class="reaction-picker-title">选择表情回应</div>
+                <div class="reaction-options" id="reactionOptions"></div>
+            </div>
+
+            <!-- 回复表情选择器 -->
+            <div id="replyEmojiPicker" class="reply-emoji-picker">
+                <div class="reply-emoji-picker-title">选择表情</div>
+                <div class="reply-emoji-options" id="replyEmojiOptions"></div>
             </div>
         </div>
     </div>
@@ -1151,12 +1511,11 @@
                     const titles = {
                         'friends': '好友列表',
                         'messages': '私信聊天',
-                        'moments': '动态分享',
-                        'guestbook': '留言板',
+                        'guestbook': '留言墙',
                         'notifications': '通知设置',
                         'privacy': '隐私设置'
                     };
-                    document.getElementById('pageTitle').textContent = titles[sectionId] || '社交中心';
+                    document.getElementById('pageTitle').textContent = titles[sectionId] || '朋友';
 
                     // 加载对应数据
                     loadSectionData(sectionId);
@@ -1233,12 +1592,12 @@
             }
 
             container.innerHTML = friends.map(friend => `
-                <div class="friend-card" onclick="openChat(${friend.id}, '${friend.username}')">
+                <div class="friend-card" onclick="openChat(${friend.friend_id}, '${friend.friend_username}')">
                     <div class="friend-avatar">
-                        ${friend.username ? friend.username[0].toUpperCase() : 'U'}
+                        ${friend.friend_username ? friend.friend_username[0].toUpperCase() : 'U'}
                     </div>
                     <div class="friend-info">
-                        <h3>${friend.username || '未知用户'}</h3>
+                        <h3>${friend.friend_username || '未知用户'}</h3>
                         <p>好友</p>
                     </div>
                 </div>
@@ -1286,10 +1645,21 @@
             }
         }
 
-        // 加载留言板
-        async function loadGuestbook() {
+        // 便签墙配置
+        let stickyWallConfig = {
+            moodTags: {},
+            bgColors: [],
+            reactionTypes: {}
+        };
+        let selectedMood = null;
+        let selectedColor = '#FFF9C4';
+        let uploadedImageId = null;
+        let currentReactionMessageId = null;
+
+        // 加载便签墙配置
+        async function loadStickyWallConfig() {
             try {
-                const response = await fetch(`${API_BASE_URL}/api/social/guestbook/list`, {
+                const response = await fetch(`${API_BASE_URL}/api/social/guestbook/config`, {
                     headers: {
                         'Authorization': `Bearer ${authToken}`
                     }
@@ -1297,11 +1667,149 @@
 
                 if (response.ok) {
                     const data = await response.json();
-                    const messages = data.messages || data.guestbook || [];
-                    displayGuestbook(messages);
+                    if (data.success) {
+                        stickyWallConfig = {
+                            moodTags: data.mood_tags || {},
+                            bgColors: data.bg_colors || [],
+                            reactionTypes: data.reaction_types || {}
+                        };
+                        renderMoodTags();
+                        renderColorOptions();
+                        renderReactionOptions();
+                    }
                 }
             } catch (error) {
-                console.error('加载留言板出错:', error);
+                console.error('加载配置出错:', error);
+            }
+        }
+
+        // 渲染心情标签
+        function renderMoodTags() {
+            const container = document.getElementById('moodTags');
+            if (!container) return;
+
+            container.innerHTML = Object.keys(stickyWallConfig.moodTags).map(key => {
+                const mood = stickyWallConfig.moodTags[key];
+                return `<span class="mood-tag" data-mood="${key}" onclick="selectMood('${key}')" title="${mood.label}">${mood.emoji}</span>`;
+            }).join('');
+        }
+
+        // 渲染颜色选项
+        function renderColorOptions() {
+            const container = document.getElementById('colorOptions');
+            if (!container) return;
+
+            container.innerHTML = stickyWallConfig.bgColors.map(color => {
+                const isSelected = color === selectedColor ? 'selected' : '';
+                return `<div class="color-option ${isSelected}" style="background-color: ${color};" onclick="selectColor('${color}')"></div>`;
+            }).join('');
+        }
+
+        // 渲染表情回应选项
+        function renderReactionOptions() {
+            const container = document.getElementById('reactionOptions');
+            if (!container) return;
+
+            container.innerHTML = Object.keys(stickyWallConfig.reactionTypes).map(key => {
+                const emoji = stickyWallConfig.reactionTypes[key];
+                return `<span class="reaction-option" onclick="addReaction('${key}')">${emoji}</span>`;
+            }).join('');
+        }
+
+        // 选择心情
+        function selectMood(mood) {
+            selectedMood = selectedMood === mood ? null : mood;
+            document.querySelectorAll('.mood-tag').forEach(tag => {
+                if (tag.dataset.mood === mood) {
+                    tag.classList.toggle('selected');
+                } else {
+                    tag.classList.remove('selected');
+                }
+            });
+        }
+
+        // 选择颜色
+        function selectColor(color) {
+            selectedColor = color;
+            document.querySelectorAll('.color-option').forEach(option => {
+                option.classList.remove('selected');
+            });
+            event.target.classList.add('selected');
+        }
+
+        // 处理图片上传
+        async function handleImageUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            try {
+                // 读取文件并转换为 base64
+                const reader = new FileReader();
+                reader.onload = async function(e) {
+                    try {
+                        // 获取 base64 数据（移除 data:image/xxx;base64, 前缀）
+                        const base64Data = e.target.result.split(',')[1];
+
+                        // 使用 JSON 格式发送，与移动端保持一致
+                        const response = await fetch(`${API_BASE_URL}/api/image/upload`, {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${authToken}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                image: base64Data,
+                                original_name: file.name,
+                                description: '',
+                                tags: []
+                            })
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json();
+                            // 后端返回格式: {success: true, image: {id: xxx, file_path: xxx}}
+                            uploadedImageId = data.image?.id || data.image_id;
+                            document.getElementById('uploadedImageName').textContent = `✓ ${file.name}`;
+                        } else {
+                            const error = await response.json();
+                            console.error('上传失败:', error);
+                            alert('图片上传失败: ' + (error.error || '未知错误'));
+                        }
+                    } catch (error) {
+                        console.error('上传图片出错:', error);
+                        alert('图片上传失败: ' + error.message);
+                    }
+                };
+
+                // 读取文件为 DataURL (base64)
+                reader.readAsDataURL(file);
+            } catch (error) {
+                console.error('读取图片出错:', error);
+                alert('读取图片失败: ' + error.message);
+            }
+        }
+
+        // 加载便签墙
+        async function loadGuestbook() {
+            try {
+                // 加载配置（如果还没加载）
+                if (Object.keys(stickyWallConfig.moodTags).length === 0) {
+                    await loadStickyWallConfig();
+                }
+
+                const response = await fetch(`${API_BASE_URL}/api/social/guestbook/list-v2?owner_id=${currentUser.id}`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    const messages = data.messages || [];
+                    displayStickyWall(messages);
+                }
+            } catch (error) {
+                console.error('加载便签墙出错:', error);
             }
         }
 
@@ -1348,37 +1856,134 @@
             `).join('');
         }
 
-        // 显示留言板
-        function displayGuestbook(messages) {
-            const container = document.getElementById('guestbookList');
+        // 显示便签墙
+        function displayStickyWall(messages) {
+            const container = document.getElementById('stickyWall');
             if (!messages || messages.length === 0) {
                 container.innerHTML = `
                     <div class="empty-state">
                         <div class="empty-state-icon">📝</div>
-                        <p>还没有留言，快来第一个留言吧！</p>
+                        <p>还没有便签，快来发布第一张吧！</p>
                     </div>
                 `;
                 return;
             }
 
-            container.innerHTML = messages.map(msg => `
-                <div class="guestbook-item">
-                    <div class="guestbook-header">
-                        <div class="guestbook-avatar">${msg.author_name ? msg.author_name[0].toUpperCase() : 'U'}</div>
-                        <div class="guestbook-author">
-                            <h4>${msg.author_name || '未知用户'}</h4>
-                            <div class="post-time">${formatTime(msg.created_at)}</div>
+            container.innerHTML = messages.map(msg => {
+                const moodEmoji = msg.mood_tag && stickyWallConfig.moodTags[msg.mood_tag]
+                    ? stickyWallConfig.moodTags[msg.mood_tag].emoji
+                    : '';
+
+                // 处理图片路径：确保路径格式正确
+                let imagePath = '';
+                if (msg.image_path) {
+                    if (msg.image_path.startsWith('http')) {
+                        // 完整URL，直接使用
+                        imagePath = msg.image_path;
+                    } else if (msg.image_path.startsWith('/uploads/')) {
+                        // 已经是 /uploads/ 开头，添加 /ai 前缀
+                        imagePath = `/ai${msg.image_path}`;
+                    } else if (msg.image_path.startsWith('uploads/')) {
+                        // uploads/ 开头（没有前导斜杠），添加 /ai/ 前缀
+                        imagePath = `/ai/${msg.image_path}`;
+                    } else {
+                        // 其他情况，假设是相对路径
+                        imagePath = `/ai/uploads/images/${msg.image_path}`;
+                    }
+                }
+
+                const reactions = msg.reactions || {};
+                const reactionsHtml = Object.keys(reactions).map(type => {
+                    const reaction = reactions[type];
+                    const emoji = stickyWallConfig.reactionTypes[type] || type;
+                    return `<span class="reaction-item" onclick="toggleReaction(${msg.id}, '${type}')">${emoji} ${reaction.count}</span>`;
+                }).join('');
+
+                // 生成回复列表HTML
+                const replies = msg.replies || [];
+                const repliesHtml = replies.map(reply => `
+                    <div class="sticky-note-reply">
+                        <div class="reply-author">${reply.author_username || '未知用户'}</div>
+                        <div class="reply-content">${reply.content || ''}</div>
+                        <div class="reply-time">${formatTime(reply.created_at)}</div>
+                    </div>
+                `).join('');
+
+                return `
+                    <div class="sticky-note"
+                         style="background-color: ${msg.bg_color || '#FFF9C4'};
+                                left: ${msg.position_x || 0}%;
+                                top: ${msg.position_y || 0}%;
+                                transform: rotate(${msg.rotation || 0}deg);
+                                z-index: ${Math.floor(Math.random() * 10)};">
+                        <div class="sticky-note-header">
+                            <div class="sticky-note-author">${msg.author_username || '未知用户'}</div>
+                            ${moodEmoji ? `<div class="sticky-note-mood">${moodEmoji}</div>` : ''}
+                        </div>
+                        <div class="sticky-note-content">${msg.content || ''}</div>
+                        ${imagePath ? `<img src="${imagePath}" class="sticky-note-image" alt="图片">` : ''}
+                        <div class="sticky-note-footer">
+                            <div class="sticky-note-time">${formatTime(msg.created_at)}</div>
+                            <div class="sticky-note-reactions">
+                                ${reactionsHtml}
+                                <span class="reaction-item" onclick="showReactionPicker(${msg.id})">➕</span>
+                            </div>
+                        </div>
+
+                        <!-- 回复列表 -->
+                        ${replies.length > 0 ? `
+                            <div class="sticky-note-replies">
+                                ${repliesHtml}
+                            </div>
+                        ` : ''}
+
+                        <!-- 回复输入框 -->
+                        <div class="sticky-note-reply-input">
+                            <input type="text"
+                                   id="replyInput_${msg.id}"
+                                   placeholder="说点什么吧..."
+                                   onkeypress="handleReplyKeyPress(event, ${msg.id}, ${msg.author_id})">
+                            <button class="emoji-btn" onclick="showReplyEmojiPicker(${msg.id})" title="添加表情">😊</button>
+                            <button onclick="submitReply(${msg.id}, ${msg.author_id})">💬</button>
                         </div>
                     </div>
-                    <div class="guestbook-content">
-                        ${msg.content || ''}
-                    </div>
-                    <div class="guestbook-footer">
-                        <span class="guestbook-reply" onclick="replyGuestbook(${msg.id})">回复</span>
-                        <span class="post-time">${msg.reply_count || 0} 条回复</span>
-                    </div>
-                </div>
-            `).join('');
+                `;
+            }).join('');
+
+            // 布局便签（避免重叠）
+            layoutStickyNotes();
+        }
+
+        // 布局便签（简单的碰撞检测）
+        function layoutStickyNotes() {
+            const notes = document.querySelectorAll('.sticky-note');
+            const positions = [];
+
+            notes.forEach((note, index) => {
+                // 如果已经有位置信息（从数据库读取），跳过
+                if (note.style.left && note.style.top && note.style.left !== '0%') {
+                    return;
+                }
+
+                // 生成随机位置，避免重叠
+                let x, y, attempts = 0;
+                let overlapping = true;
+
+                while (overlapping && attempts < 50) {
+                    x = Math.random() * 70; // 0-70%
+                    y = Math.random() * 70; // 0-70%
+
+                    overlapping = positions.some(pos => {
+                        return Math.abs(pos.x - x) < 15 && Math.abs(pos.y - y) < 15;
+                    });
+
+                    attempts++;
+                }
+
+                positions.push({ x, y });
+                note.style.left = x + '%';
+                note.style.top = y + '%';
+            });
         }
 
         // 显示聊天列表
@@ -1485,36 +2090,178 @@
             }
         }
 
-        // 发布留言
-        async function postGuestbook() {
+        // 发布便签
+        // 切换好友选择器显示/隐藏
+        function toggleFriendSelector() {
+            const visibility = document.querySelector('input[name="visibility"]:checked').value;
+            const friendSelector = document.getElementById('friendSelector');
+
+            if (visibility === 'specific_friends') {
+                friendSelector.style.display = 'block';
+                // 加载好友列表（如果还没加载）
+                if (!friendSelector.dataset.loaded) {
+                    loadFriendCheckboxList();
+                    friendSelector.dataset.loaded = 'true';
+                }
+            } else {
+                friendSelector.style.display = 'none';
+            }
+        }
+
+        // 加载好友复选框列表
+        async function loadFriendCheckboxList() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/social/friends/list`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    const friends = data.friends || [];
+                    const container = document.getElementById('friendCheckboxList');
+
+                    if (friends.length === 0) {
+                        container.innerHTML = '<div style="width: 100%; text-align: center; color: #999;">暂无好友</div>';
+                        return;
+                    }
+
+                    container.innerHTML = friends.map(friend => `
+                        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; padding: 5px 10px; background: white; border-radius: 4px; border: 1px solid #e0e0e0;">
+                            <input type="checkbox" name="visibleFriends" value="${friend.friend_id}" style="cursor: pointer;">
+                            <span style="font-size: 13px;">${friend.friend_username}</span>
+                        </label>
+                    `).join('');
+                }
+            } catch (error) {
+                console.error('加载好友列表失败:', error);
+            }
+        }
+
+        async function postStickyNote() {
             const content = document.getElementById('guestbookContent').value.trim();
 
             if (!content) {
-                alert('请输入留言内容');
+                alert('请输入便签内容');
                 return;
             }
 
+            // 获取可见范围
+            const visibility = document.querySelector('input[name="visibility"]:checked').value;
+            let visibleToUsers = null;
+
+            // 如果选择了指定好友，获取选中的好友ID列表
+            if (visibility === 'specific_friends') {
+                const checkedBoxes = document.querySelectorAll('input[name="visibleFriends"]:checked');
+                visibleToUsers = Array.from(checkedBoxes).map(cb => parseInt(cb.value));
+
+                if (visibleToUsers.length === 0) {
+                    alert('请至少选择一个可见好友');
+                    return;
+                }
+            }
+
             try {
-                const response = await fetch(`${API_BASE_URL}/api/social/guestbook/post`, {
+                const response = await fetch(`${API_BASE_URL}/api/social/guestbook/post-v2`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${authToken}`,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ content })
+                    body: JSON.stringify({
+                        owner_id: currentUser.id,
+                        content: content,
+                        mood_tag: selectedMood,
+                        bg_color: selectedColor,
+                        image_id: uploadedImageId,
+                        visibility: visibility,
+                        visible_to_users: visibleToUsers
+                    })
                 });
 
                 if (response.ok) {
-                    alert('留言成功！');
+                    alert('便签发布成功！');
+                    // 清空输入
                     document.getElementById('guestbookContent').value = '';
+                    document.getElementById('uploadedImageName').textContent = '';
+                    selectedMood = null;
+                    selectedColor = '#FFF9C4';
+                    uploadedImageId = null;
+                    // 重置选择状态
+                    document.querySelectorAll('.mood-tag').forEach(tag => tag.classList.remove('selected'));
+                    renderColorOptions();
+                    // 重置可见范围为默认值
+                    document.querySelector('input[name="visibility"][value="all_friends"]').checked = true;
+                    toggleFriendSelector();
+                    // 取消所有好友选择
+                    document.querySelectorAll('input[name="visibleFriends"]').forEach(cb => cb.checked = false);
+                    // 重新加载便签墙
                     loadGuestbook();
                 } else {
-                    alert('留言失败，请重试');
+                    alert('发布失败，请重试');
                 }
             } catch (error) {
-                console.error('发布留言出错:', error);
-                alert('留言失败，请重试');
+                console.error('发布便签出错:', error);
+                alert('发布失败，请重试');
             }
+        }
+
+        // 显示表情选择器
+        function showReactionPicker(messageId) {
+            currentReactionMessageId = messageId;
+            const picker = document.getElementById('reactionPicker');
+            picker.classList.add('active');
+
+            // 点击外部关闭
+            setTimeout(() => {
+                document.addEventListener('click', closeReactionPicker);
+            }, 100);
+        }
+
+        // 关闭表情选择器
+        function closeReactionPicker(event) {
+            const picker = document.getElementById('reactionPicker');
+            if (!picker.contains(event.target)) {
+                picker.classList.remove('active');
+                document.removeEventListener('click', closeReactionPicker);
+            }
+        }
+
+        // 添加表情回应
+        async function addReaction(reactionType) {
+            if (!currentReactionMessageId) return;
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/social/guestbook/reaction`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        message_id: currentReactionMessageId,
+                        reaction_type: reactionType
+                    })
+                });
+
+                if (response.ok) {
+                    // 关闭选择器
+                    document.getElementById('reactionPicker').classList.remove('active');
+                    // 重新加载便签墙
+                    loadGuestbook();
+                }
+            } catch (error) {
+                console.error('添加表情回应出错:', error);
+            }
+        }
+
+        // 切换表情回应（点击已有的表情）
+        async function toggleReaction(messageId, reactionType) {
+            // TODO: 检查用户是否已经回应过这个表情，如果是则删除，否则添加
+            // 这里简化处理，直接添加
+            currentReactionMessageId = messageId;
+            await addReaction(reactionType);
         }
 
         // 添加好友相关函数
@@ -1699,7 +2446,8 @@
                 } else if (msg.message_type === 'file' && msg.image_info) {
                     // 文件消息（使用 image_info 字段存储文件信息）
                     const fileIcon = getFileIconByName(msg.image_info.filename);
-                    const downloadUrl = `/ai/api/file/${msg.image_id}/download?token=${authToken}`;
+                    const fileId = msg.file_id || msg.image_id;  // 优先使用file_id
+                    const downloadUrl = `/ai/api/file/${fileId}/download?token=${authToken}`;
                     messageContent = `
                         <div style="margin-bottom: 8px;">${msg.content}</div>
                         <div style="display: flex; align-items: center; gap: 10px; padding: 10px; background: rgba(0,0,0,0.05); border-radius: 8px;">
@@ -1994,6 +2742,107 @@
                 }
             });
         });
+
+        // 提交回复
+        async function submitReply(messageId, parentAuthorId) {
+            const input = document.getElementById(`replyInput_${messageId}`);
+            const content = input.value.trim();
+
+            if (!content) {
+                alert('请输入回复内容');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/social/guestbook/post-v2`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        owner_id: parentAuthorId,  // 使用父留言作者的ID作为owner_id
+                        content: content,
+                        parent_id: messageId  // 设置父留言ID
+                    })
+                });
+
+                if (response.ok) {
+                    // 清空输入框
+                    input.value = '';
+                    // 重新加载留言墙
+                    loadGuestbook();
+                } else {
+                    alert('回复失败，请重试');
+                }
+            } catch (error) {
+                console.error('回复出错:', error);
+                alert('回复失败，请重试');
+            }
+        }
+
+        // 处理回复输入框回车事件
+        function handleReplyKeyPress(event, messageId, parentAuthorId) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                submitReply(messageId, parentAuthorId);
+            }
+        }
+
+        // 常用表情列表
+        const commonEmojis = [
+            '😊', '😂', '❤️', '👍', '🎉', '😍',
+            '😢', '😮', '🤔', '👏', '🙏', '💪',
+            '🔥', '✨', '🌟', '💯', '🎈', '🌈',
+            '☀️', '🌙', '⭐', '💖', '💕', '🌸',
+            '🌺', '🌻', '🌷', '🌹', '🍀', '🎊'
+        ];
+
+        let currentReplyMessageId = null;
+
+        // 显示回复表情选择器
+        function showReplyEmojiPicker(messageId) {
+            currentReplyMessageId = messageId;
+            const picker = document.getElementById('replyEmojiPicker');
+            const optionsContainer = document.getElementById('replyEmojiOptions');
+
+            // 渲染表情选项
+            optionsContainer.innerHTML = commonEmojis.map(emoji =>
+                `<span class="reply-emoji-option" onclick="insertReplyEmoji('${emoji}')">${emoji}</span>`
+            ).join('');
+
+            picker.classList.add('active');
+
+            // 点击外部关闭
+            setTimeout(() => {
+                document.addEventListener('click', closeReplyEmojiPicker);
+            }, 100);
+        }
+
+        // 关闭回复表情选择器
+        function closeReplyEmojiPicker(event) {
+            const picker = document.getElementById('replyEmojiPicker');
+            if (!picker.contains(event.target) && !event.target.classList.contains('emoji-btn')) {
+                picker.classList.remove('active');
+                document.removeEventListener('click', closeReplyEmojiPicker);
+            }
+        }
+
+        // 插入表情到回复输入框
+        function insertReplyEmoji(emoji) {
+            if (!currentReplyMessageId) return;
+
+            const input = document.getElementById(`replyInput_${currentReplyMessageId}`);
+            if (input) {
+                input.value += emoji;
+                input.focus();
+            }
+
+            // 关闭选择器
+            const picker = document.getElementById('replyEmojiPicker');
+            picker.classList.remove('active');
+            document.removeEventListener('click', closeReplyEmojiPicker);
+        }
     </script>
 
     <!-- 移动端菜单按钮 -->
