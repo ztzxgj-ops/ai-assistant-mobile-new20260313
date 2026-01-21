@@ -1,5 +1,62 @@
 [
   {
+    "id": 94,
+    "timestamp": "2026-01-21 15:39:54",
+    "backup_dir": "backup-20260121-153929",
+    "status": "success",
+    "notes": "完成：实现所有类的对话修改、置顶。",
+    "error": "",
+    "git_commit": "47a84ec70426651135616d703e0c54811ade58a7",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260121-153929.tar.gz",
+        "size": 12082539
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260121-153929.sql",
+        "size": 919111
+      }
+    }
+  },
+  {
+    "id": 93,
+    "timestamp": "2026-01-21 14:40:14",
+    "backup_dir": "backup-20260121-143946",
+    "status": "success",
+    "notes": "完成：工作类实现对话修改、置顶。",
+    "error": "",
+    "git_commit": "47a84ec70426651135616d703e0c54811ade58a7",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260121-143946.tar.gz",
+        "size": 12082344
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260121-143946.sql",
+        "size": 918415
+      }
+    }
+  },
+  {
+    "id": 92,
+    "timestamp": "2026-01-21 00:23:32",
+    "backup_dir": "backup-20260121-002316",
+    "status": "success",
+    "notes": "变更: 实现保存/记录快捷命令功能 + 变更“记录类”为“其他类”。",
+    "error": "",
+    "git_commit": "47a84ec70426651135616d703e0c54811ade58a7",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260121-002316.tar.gz",
+        "size": 12074443
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260121-002316.sql",
+        "size": 912757
+      }
+    }
+  },
+  {
     "id": 91,
     "timestamp": "2026-01-20 18:12:42",
     "backup_dir": "backup-20260120-181211",

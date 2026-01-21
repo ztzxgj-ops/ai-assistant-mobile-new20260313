@@ -775,6 +775,78 @@ class RecordCommand(Command):
         return {'response': '✅ 已保存记录', 'is_command': True}
 
 
+class OtherCommand(Command):
+    """其他命令 - 查询"其他类"下的所有数据"""
+
+    def __init__(self):
+        super().__init__(
+            name='其他',
+            aliases=['other', '📋'],
+            description='查询"其他类"下的所有数据'
+        )
+
+    def execute(self, args, user_id, managers):
+        """执行其他命令"""
+        record_mgr = managers['record']
+        category_mgr = managers['category']
+
+        # 查询"其他类"类别（code='record'）
+        query = "SELECT id, name FROM categories WHERE code = %s"
+        result = category_mgr.query(query, ('record',))
+
+        if not result:
+            return {'response': '❌ 未找到"其他类"类别', 'is_command': True}
+
+        category_id = result[0]['id']
+        category_name = result[0]['name']
+
+        # 查询该类别下的所有子类别
+        sub_query = "SELECT id, name FROM subcategories WHERE category_id = %s ORDER BY id"
+        subcategories = category_mgr.query(sub_query, (category_id,))
+
+        if not subcategories:
+            return {'response': f'📭 "{category_name}"类别下没有子类别', 'is_command': True}
+
+        # 查询所有子类别下的记录
+        grouped_records = {}
+
+        for subcategory in subcategories:
+            sub_id = subcategory['id']
+            sub_name = subcategory['name']
+
+            # 查询该子类别下的所有记录
+            records_query = """
+                SELECT id, title, content, created_at FROM daily_records
+                WHERE subcategory_id = %s AND user_id = %s
+                ORDER BY created_at DESC
+            """
+            records = category_mgr.query(records_query, (sub_id, user_id))
+
+            if records:
+                grouped_records[sub_name] = records
+
+        if not grouped_records:
+            return {'response': f'📭 "{category_name}"类别下没有记录', 'is_command': True}
+
+        # 格式化输出（按子类别分组）
+        response = f"📋 最近的{category_name}：\n\n"
+
+        idx = 0
+        for sub_name, records in grouped_records.items():
+            response += f"【{sub_name}】\n"
+            for record in records:
+                idx += 1
+                title = record.get('title', '') or record.get('content', '')[:50]
+                # 限制标题长度
+                if len(title) > 50:
+                    title = title[:50] + '...'
+
+                response += f"{idx}. {title}\n"
+            response += "\n"
+
+        return {'response': response, 'is_command': True}
+
+
 class DynamicSubcategoryCommand(Command):
     """动态子类别命令 - 支持所有子类别作为快捷命令"""
 
@@ -809,8 +881,11 @@ class DynamicSubcategoryCommand(Command):
 
                 response = f"📝 最近的{self.name}：\n\n"
                 for idx, record in enumerate(records, 1):
-                    content = record['content'][:50]
-                    response += f"{idx}. {content}\n"
+                    # ✨ 优先显示 title，如果 title 为空则显示 content
+                    display_text = record.get('title') or record.get('content', '')
+                    if len(display_text) > 50:
+                        display_text = display_text[:50]
+                    response += f"{idx}. {display_text}\n"
                     # ✨ 添加记录日期显示
                     if record.get('record_date'):
                         # 确保日期格式为 YYYY-MM-DD（DATE类型已经是此格式）
@@ -1484,6 +1559,10 @@ class CommandRouter:
                     print(f"✅ 注册子类别命令: {sub['name']}{user_mark} ({category['name']})")
         except Exception as e:
             print(f"⚠️ 动态加载子类别命令失败: {e}")
+
+        # ✨ 在动态命令之后注册OtherCommand，这样可以覆盖"文件类"下的"其他"子类别命令
+        commands.append(OtherCommand())
+        print(f"✅ 注册特殊命令: 其他 (查询其他类所有数据)")
 
         for cmd in commands:
             # 注册主命令名

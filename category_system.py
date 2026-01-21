@@ -108,21 +108,21 @@ class WorkTaskManager(MySQLManager):
                 query = """
                     SELECT * FROM work_tasks
                     WHERE user_id = %s AND status = %s AND subcategory_id = %s
-                    ORDER BY sort_order, priority DESC, created_at DESC
+                    ORDER BY sort_order DESC, priority DESC, created_at DESC
                 """
                 result = self.query(query, (user_id, status, subcategory_id))
             else:
                 query = """
                     SELECT * FROM work_tasks
                     WHERE user_id = %s AND status = %s
-                    ORDER BY sort_order, priority DESC, created_at DESC
+                    ORDER BY sort_order DESC, priority DESC, created_at DESC
                 """
                 result = self.query(query, (user_id, status))
         else:
             query = """
                 SELECT * FROM work_tasks
                 WHERE user_id = %s
-                ORDER BY sort_order, priority DESC, created_at DESC
+                ORDER BY sort_order DESC, priority DESC, created_at DESC
             """
             result = self.query(query, (user_id,))
 
@@ -356,7 +356,7 @@ class DailyRecordManager(MySQLManager):
         query = f"""
             SELECT * FROM daily_records
             WHERE {' AND '.join(conditions)}
-            ORDER BY record_date DESC, created_at DESC
+            ORDER BY sort_order DESC, record_date DESC, created_at DESC
         """
         print(f"🔍 DEBUG list_records: query={query}, params={tuple(params)}")
         result = self.query(query, tuple(params))

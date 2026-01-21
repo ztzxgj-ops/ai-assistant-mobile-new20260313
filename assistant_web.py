@@ -1500,12 +1500,76 @@ class AssistantHandler(BaseHTTPRequestHandler):
             user_id = self.require_auth()
             if user_id is None:
                 return
-            success = planner.update_plan(data.get('id'), user_id=user_id, status=data.get('status'))
+
+            # 支持更新多个字段：status, title, description, deadline, priority
+            update_fields = {}
+            if 'status' in data:
+                update_fields['status'] = data['status']
+            if 'title' in data:
+                update_fields['title'] = data['title']
+            if 'description' in data:
+                update_fields['description'] = data['description']
+            if 'deadline' in data:
+                update_fields['deadline'] = data['deadline']
+            if 'priority' in data:
+                update_fields['priority'] = data['priority']
+
+            success = planner.update_plan(data.get('id'), user_id=user_id, **update_fields)
             if success:
                 self.send_json({'success': True, 'message': '计划已更新'})
             else:
                 self.send_json({'success': False, 'message': '更新失败或权限不足'}, status=403)
-        
+
+        elif self.path == '/api/plan/pin':
+            # 置顶计划
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            plan_id = data.get('id')
+            if not plan_id:
+                self.send_json({'success': False, 'message': '缺少计划ID'}, status=400)
+                return
+
+            try:
+                # 获取当前最大的 sort_order
+                max_order_sql = "SELECT MAX(sort_order) as max_order FROM work_tasks WHERE user_id = %s"
+                result = planner.db.query_one(max_order_sql, (user_id,))
+                max_order = result['max_order'] if result and result['max_order'] else 0
+
+                # 将该计划的 sort_order 设置为最大值+1
+                update_sql = "UPDATE work_tasks SET sort_order = %s WHERE id = %s AND user_id = %s"
+                planner.db.execute(update_sql, (max_order + 1, plan_id, user_id))
+
+                self.send_json({'success': True, 'message': '已置顶'})
+            except Exception as e:
+                print(f"❌ 置顶失败: {e}")
+                self.send_json({'success': False, 'message': f'置顶失败: {str(e)}'}, status=500)
+
+        elif self.path == '/api/plan/reorder':
+            # 批量调整顺序
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            plan_orders = data.get('orders')  # 格式: [{id: 1, sort_order: 10}, {id: 2, sort_order: 9}, ...]
+            if not plan_orders or not isinstance(plan_orders, list):
+                self.send_json({'success': False, 'message': '缺少排序数据'}, status=400)
+                return
+
+            try:
+                for item in plan_orders:
+                    plan_id = item.get('id')
+                    sort_order = item.get('sort_order')
+                    if plan_id is not None and sort_order is not None:
+                        update_sql = "UPDATE work_tasks SET sort_order = %s WHERE id = %s AND user_id = %s"
+                        planner.db.execute(update_sql, (sort_order, plan_id, user_id))
+
+                self.send_json({'success': True, 'message': '顺序已更新'})
+            except Exception as e:
+                print(f"❌ 调整顺序失败: {e}")
+                self.send_json({'success': False, 'message': f'调整顺序失败: {str(e)}'}, status=500)
+
         elif self.path == '/api/plan/delete':
             user_id = self.require_auth()
             if user_id is None:
@@ -5392,10 +5456,35 @@ class AssistantHandler(BaseHTTPRequestHandler):
             background: rgba(220, 53, 69, 0.2);
             color: #dc3545;
         }
-        
+
         .plan-btn-delete:hover {
             background: #dc3545;
             color: white;
+        }
+
+        .plan-btn-pin {
+            background: rgba(255, 193, 7, 0.2);
+            color: #ffc107;
+        }
+
+        .plan-btn-pin:hover {
+            background: #ffc107;
+            color: #000;
+        }
+
+        .plan-btn-edit {
+            background: rgba(23, 162, 184, 0.2);
+            color: #17a2b8;
+        }
+
+        .plan-btn-edit:hover {
+            background: #17a2b8;
+            color: white;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.02); }
         }
 
         /* 隐藏右上角装饰元素 */
@@ -8930,25 +9019,25 @@ class AssistantHandler(BaseHTTPRequestHandler):
         
         function displayWorkPlans(plans) {
             const container = document.getElementById('workPlansList');
-            
+
             // 根据当前过滤器过滤
             let filteredPlans = plans;
             if (currentFilter !== 'all') {
                 filteredPlans = plans.filter(p => p.status === currentFilter);
             }
-            
+
             if (filteredPlans.length === 0) {
                 container.innerHTML = '<p style="text-align:center; color:#666; padding:40px;">暂无工作计划</p>';
                 return;
             }
-            
+
             container.innerHTML = filteredPlans.map(plan => {
                 const priorityIcon = priorityIconMap[plan.priority] || '🟡';
                 const statusText = statusMap[plan.status] || plan.status;
                 const description = plan.description || plan.content || '';
-                
+
                 return `
-                    <div class="plan-card">
+                    <div class="plan-card" data-plan-id="${plan.id}">
                         <div class="plan-header">
                             <h4 class="plan-title">${priorityIcon} ${plan.title}</h4>
                             <span class="plan-status status-${statusText.replace(/\\s+/g, '')}">${statusText}</span>
@@ -8959,6 +9048,12 @@ class AssistantHandler(BaseHTTPRequestHandler):
                             <span>📅 创建: ${plan.created_at ? plan.created_at.substring(0, 10) : ''}</span>
                         </div>
                         <div class="plan-actions">
+                            <button class="plan-btn plan-btn-pin" onclick="pinWorkPlan(${plan.id})" title="置顶">
+                                📌 置顶
+                            </button>
+                            <button class="plan-btn plan-btn-edit" onclick="editWorkPlan(${plan.id}, '${plan.title.replace(/'/g, "\\'")}', '${description.replace(/'/g, "\\'")}', '${plan.deadline || plan.due_date || ''}', '${plan.priority}')">
+                                ✏️ 编辑
+                            </button>
                             ${plan.status !== 'completed' ? `
                                 <button class="plan-btn plan-btn-status" onclick="updatePlanStatus(${plan.id}, 'completed')">
                                     ✅ 标记完成
@@ -9089,6 +9184,148 @@ class AssistantHandler(BaseHTTPRequestHandler):
             } catch (e) {
                 console.error('删除工作计划失败:', e);
                 alert('❌ 删除失败: ' + e.message);
+            }
+        }
+
+        // 置顶工作计划
+        async function pinWorkPlan(planId) {
+            try {
+                const token = localStorage.getItem('token');
+                const response = await fetch('/api/plan/pin', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(token ? {'Authorization': 'Bearer ' + token} : {})
+                    },
+                    body: JSON.stringify({id: planId})
+                });
+
+                if (response.ok) {
+                    loadWorkPlans();
+                    // 可选：显示提示
+                    const result = await response.json();
+                    if (result.success) {
+                        // 简单的视觉反馈
+                        const card = document.querySelector(`[data-plan-id="${planId}"]`);
+                        if (card) {
+                            card.style.animation = 'pulse 0.3s ease-in-out';
+                            setTimeout(() => {
+                                card.style.animation = '';
+                            }, 300);
+                        }
+                    }
+                } else {
+                    const error = await response.text();
+                    console.error('置顶失败:', error);
+                    alert('❌ 置顶失败');
+                }
+            } catch (e) {
+                console.error('置顶工作计划失败:', e);
+                alert('❌ 置顶失败: ' + e.message);
+            }
+        }
+
+        // 编辑工作计划
+        function editWorkPlan(planId, title, description, deadline, priority) {
+            // 创建编辑对话框
+            const modal = document.createElement('div');
+            modal.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0,0,0,0.5);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 10000;
+            `;
+
+            modal.innerHTML = `
+                <div style="background: #1e1e1e; padding: 24px; border-radius: 12px; width: 90%; max-width: 500px; max-height: 80vh; overflow-y: auto;">
+                    <h3 style="margin: 0 0 20px 0; color: #fff;">编辑工作计划</h3>
+                    <div style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 8px; color: #aaa;">标题</label>
+                        <input type="text" id="editPlanTitle" value="${title}" style="width: 100%; padding: 10px; border: 1px solid #444; border-radius: 6px; background: #2a2a2a; color: #fff; font-size: 14px;">
+                    </div>
+                    <div style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 8px; color: #aaa;">描述</label>
+                        <textarea id="editPlanDesc" rows="4" style="width: 100%; padding: 10px; border: 1px solid #444; border-radius: 6px; background: #2a2a2a; color: #fff; font-size: 14px; resize: vertical;">${description}</textarea>
+                    </div>
+                    <div style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 8px; color: #aaa;">截止日期</label>
+                        <input type="date" id="editPlanDeadline" value="${deadline ? deadline.substring(0, 10) : ''}" style="width: 100%; padding: 10px; border: 1px solid #444; border-radius: 6px; background: #2a2a2a; color: #fff; font-size: 14px;">
+                    </div>
+                    <div style="margin-bottom: 24px;">
+                        <label style="display: block; margin-bottom: 8px; color: #aaa;">优先级</label>
+                        <select id="editPlanPriority" style="width: 100%; padding: 10px; border: 1px solid #444; border-radius: 6px; background: #2a2a2a; color: #fff; font-size: 14px;">
+                            <option value="low" ${priority === 'low' ? 'selected' : ''}>低</option>
+                            <option value="medium" ${priority === 'medium' ? 'selected' : ''}>中</option>
+                            <option value="high" ${priority === 'high' ? 'selected' : ''}>高</option>
+                            <option value="urgent" ${priority === 'urgent' ? 'selected' : ''}>紧急</option>
+                        </select>
+                    </div>
+                    <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                        <button onclick="this.closest('[style*=fixed]').remove()" style="padding: 10px 20px; border: 1px solid #444; border-radius: 6px; background: #2a2a2a; color: #fff; cursor: pointer;">取消</button>
+                        <button onclick="saveEditedPlan(${planId})" style="padding: 10px 20px; border: none; border-radius: 6px; background: #10a37f; color: #fff; cursor: pointer;">保存</button>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(modal);
+
+            // 点击背景关闭
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.remove();
+                }
+            });
+        }
+
+        // 保存编辑后的工作计划
+        async function saveEditedPlan(planId) {
+            const title = document.getElementById('editPlanTitle').value.trim();
+            const description = document.getElementById('editPlanDesc').value.trim();
+            const deadline = document.getElementById('editPlanDeadline').value;
+            const priority = document.getElementById('editPlanPriority').value;
+
+            if (!title) {
+                alert('请输入标题');
+                return;
+            }
+
+            try {
+                const token = localStorage.getItem('token');
+                const response = await fetch('/api/plan/update', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(token ? {'Authorization': 'Bearer ' + token} : {})
+                    },
+                    body: JSON.stringify({
+                        id: planId,
+                        title,
+                        description,
+                        deadline: deadline || null,
+                        priority
+                    })
+                });
+
+                if (response.ok) {
+                    // 关闭对话框
+                    document.querySelector('[style*="position: fixed"]').remove();
+                    // 重新加载列表
+                    loadWorkPlans();
+                    alert('✅ 保存成功');
+                } else {
+                    const error = await response.text();
+                    console.error('保存失败:', error);
+                    alert('❌ 保存失败');
+                }
+            } catch (e) {
+                console.error('保存工作计划失败:', e);
+                alert('❌ 保存失败: ' + e.message);
             }
         }
 

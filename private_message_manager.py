@@ -51,6 +51,34 @@ class PrivateMessageManager:
             # 获取插入的消息ID
             message_id = self.db.query_one("SELECT LAST_INSERT_ID() as id")['id']
 
+            # 3. 发送WebSocket通知给接收者
+            try:
+                from websocket_server import get_websocket_server
+                ws_server = get_websocket_server()
+
+                # 获取发送者信息
+                sender_info = self.db.query_one(
+                    "SELECT id, username FROM users WHERE id = %s",
+                    (sender_id,)
+                )
+                sender_name = sender_info['username'] if sender_info else '好友'
+
+                # 准备消息数据
+                message_data = {
+                    'sender_id': sender_id,
+                    'sender_name': sender_name,
+                    'content': content[:100],  # 只发送前100个字符
+                    'message_type': message_type,
+                    'message_id': message_id
+                }
+
+                # 发送通知
+                ws_server.send_message(receiver_id, message_data)
+                print(f"✅ 已发送WebSocket通知给用户 {receiver_id}")
+            except Exception as ws_e:
+                print(f"⚠️ WebSocket通知发送失败: {ws_e}")
+                # 不影响消息发送，继续返回成功
+
             return {'success': True, 'message_id': message_id}
 
         except Exception as e:

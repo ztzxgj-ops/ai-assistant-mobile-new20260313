@@ -873,10 +873,10 @@ class WorkPlanManagerMySQL:
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
         sql = f"""
-            SELECT id, title, content as description, due_date as deadline, priority, status, created_at, updated_at
+            SELECT id, title, content as description, due_date as deadline, priority, status, sort_order, created_at, updated_at
             FROM work_tasks
             WHERE {where_clause}
-            ORDER BY created_at DESC
+            ORDER BY sort_order DESC, created_at DESC
         """
         plans = self.db.query(sql, params if params else None)
 

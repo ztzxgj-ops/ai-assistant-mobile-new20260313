@@ -157,8 +157,8 @@ class AIAssistant:
             all_items = [item for item in all_items
                         if item['status'] in ['completed', '已完成']]
 
-        # 按创建时间倒序排序（最新的在前）
-        all_items.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+        # ✨ 按 sort_order 降序排序（数值越大越靠前），然后按创建时间倒序排序
+        all_items.sort(key=lambda x: (x.get('sort_order', 0), x.get('created_at', '')), reverse=True)
 
         return all_items
 
@@ -169,11 +169,11 @@ class AIAssistant:
         try:
             # 使用query方法而不是直接使用cursor
             sql = """
-                SELECT dr.id, dr.title, dr.content, dr.created_at, dr.subcategory_id, s.name as subcategory_name
+                SELECT dr.id, dr.title, dr.content, dr.created_at, dr.subcategory_id, dr.sort_order, s.name as subcategory_name
                 FROM daily_records dr
                 LEFT JOIN subcategories s ON dr.subcategory_id = s.id
                 WHERE dr.user_id = %s AND (dr.title LIKE %s OR dr.content LIKE %s)
-                ORDER BY dr.created_at DESC
+                ORDER BY dr.sort_order DESC, dr.created_at DESC
                 LIMIT 20
             """
             results = self.db.query(sql, (user_id, f"%{keyword}%", f"%{keyword}%"))
@@ -862,6 +862,11 @@ class AIAssistant:
         if shortcut_result:
             return shortcut_result
 
+        # ✨ 新增：检查是否是工作任务操作指令（修改、置顶）
+        task_operation_result = self.process_task_operation(user_message, user_id)
+        if task_operation_result:
+            return task_operation_result
+
         # ✨ 新增：过滤过短的无意义输入（防止关键词搜索返回不相关结果）
         stripped_message = user_message.strip()
         # 如果输入只有1-2个英文字符（非中文），且不是数字，返回提示
@@ -1116,6 +1121,21 @@ class AIAssistant:
         security_result = self.check_output_security(response, user_id, session_id)
         if security_result:
             return security_result
+
+        # ✨ 保存工作列表上下文（用于后续的修改、置顶指令）
+        if user_message.strip() in ['工作', '当前工作', '未完成工作', '未完成', '待办', '计划']:
+            try:
+                # 获取未完成的工作任务
+                pending_items = self.get_all_work_items(user_id, status_filter='pending')
+                if pending_items:
+                    self.last_response_context[user_id] = {
+                        'type': 'work_list',
+                        'data': pending_items,
+                        'timestamp': datetime.now()
+                    }
+                    print(f"🔍 保存工作列表上下文，共{len(pending_items)}个任务")
+            except Exception as e:
+                print(f"⚠️ 保存工作列表上下文失败: {e}")
 
         return {
             'response': response,
@@ -1745,10 +1765,10 @@ class AIAssistant:
 
         return response
 
-    def _handle_save_record(self, content, user_id, cmd='保存'):
-        """处理保存/记录命令
+    def _handle_query_other_category(self, user_id):
+        """处理"其他"查询命令
 
-        将内容保存到"记录"类别下的daily_records表
+        显示"其他类"（原"记录类"）下面的所有数据
         """
         if not user_id:
             return {
@@ -1760,34 +1780,139 @@ class AIAssistant:
         try:
             from category_system import DailyRecordManager, CategoryManager
 
-            # 获取"记录"类别的ID
             category_mgr = CategoryManager()
 
-            # 查询"记录"类别
-            query = "SELECT id FROM categories WHERE code = %s"
+            # 查询"其他类"类别（code='record'）
+            query = "SELECT id, name FROM categories WHERE code = %s"
             result = category_mgr.query(query, ('record',))
 
             if not result:
-                # 如果"记录"类别不存在，创建它
-                print(f"⚠️ '记录'类别不存在，正在创建...")
+                return {
+                    'response': '❌ 未找到"其他类"类别',
+                    'detected_plans': [],
+                    'is_shortcut': True
+                }
+
+            category_id = result[0]['id']
+            category_name = result[0]['name']
+
+            # 查询该类别下的所有子类别
+            sub_query = "SELECT id, name FROM subcategories WHERE category_id = %s ORDER BY id"
+            subcategories = category_mgr.query(sub_query, (category_id,))
+
+            if not subcategories:
+                return {
+                    'response': f'📭 "{category_name}"类别下没有子类别',
+                    'detected_plans': [],
+                    'is_shortcut': True
+                }
+
+            # 查询所有子类别下的记录
+            record_mgr = DailyRecordManager()
+            all_records = []
+
+            for subcategory in subcategories:
+                sub_id = subcategory['id']
+                sub_name = subcategory['name']
+
+                # 查询该子类别下的所有记录
+                records_query = """
+                    SELECT id, title, content, created_at FROM daily_records
+                    WHERE subcategory_id = %s AND user_id = %s
+                    ORDER BY created_at DESC
+                """
+                records = category_mgr.query(records_query, (sub_id, user_id))
+
+                if records:
+                    all_records.extend(records)
+
+            if not all_records:
+                return {
+                    'response': f'📭 "{category_name}"类别下没有记录',
+                    'detected_plans': [],
+                    'is_shortcut': True
+                }
+
+            # 格式化输出
+            response = f"📋 最近的{category_name}：\n\n"
+
+            # 按创建时间分组显示
+            for idx, record in enumerate(all_records, 1):
+                title = record['title']
+                # 限制标题长度
+                if len(title) > 50:
+                    title = title[:50] + '...'
+
+                response += f"{idx}. {title}\n"
+
+            # 保存到聊天记录
+            self.memory.add_message('user', '其他', user_id=user_id)
+            self.memory.add_message('assistant', response, user_id=user_id)
+
+            return {
+                'response': response,
+                'detected_plans': [],
+                'is_shortcut': True
+            }
+
+        except Exception as e:
+            print(f"❌ 查询失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'response': f"❌ 查询失败: {str(e)}",
+                'detected_plans': [],
+                'is_shortcut': True
+            }
+
+    def _handle_save_record(self, content, user_id, cmd='保存'):
+        """处理保存/记录命令
+
+        将内容保存到对应类别下的daily_records表
+        - "保存"和"记录"命令 → 保存到"记录"类别（兼容旧数据）
+        """
+        if not user_id:
+            return {
+                'response': '❌ 请先登录后再使用此功能',
+                'detected_plans': [],
+                'is_shortcut': True
+            }
+
+        try:
+            from category_system import DailyRecordManager, CategoryManager
+
+            category_mgr = CategoryManager()
+
+            # 查询"记录"类别（code='record'）
+            category_code = 'record'
+            category_name = '记录'
+            display_name = '记录'
+
+            # 查询对应类别
+            query = "SELECT id FROM categories WHERE code = %s"
+            result = category_mgr.query(query, (category_code,))
+
+            if not result:
+                # 如果类别不存在，创建它
+                print(f"⚠️ '{category_name}'类别不存在，正在创建...")
                 category_mgr.add_category(
-                    name='记录',
-                    code='record',
+                    name=category_name,
+                    code=category_code,
                     icon='📝',
                     description='日常记录'
                 )
                 # 重新查询
-                result = category_mgr.query(query, ('record',))
+                result = category_mgr.query(query, (category_code,))
 
             category_id = result[0]['id']
 
-            # 查询"记录"类别下是否有"默认"子类别
+            # 查询类别下是否有"默认"子类别
             query = "SELECT id FROM subcategories WHERE category_id = %s AND code = %s"
             sub_result = category_mgr.query(query, (category_id, 'default'))
 
             if not sub_result:
                 # 如果"默认"子类别不存在，创建它
-                print(f"⚠️ '记录'类别下的'默认'子类别不存在，正在创建...")
+                print(f"⚠️ '{category_name}'类别下的'默认'子类别不存在，正在创建...")
                 category_mgr.add_subcategory(
                     category_id=category_id,
                     name='默认',
@@ -1817,9 +1942,9 @@ class AIAssistant:
 
             # 保存到聊天记录
             self.memory.add_message('user', f"{cmd}: {content}", user_id=user_id)
-            self.memory.add_message('assistant', f"✅ 已保存到'记录'类别", user_id=user_id)
+            self.memory.add_message('assistant', f"✅ 已保存到'{display_name}'类别", user_id=user_id)
 
-            response = f"✅ 已保存到'记录'类别\n\n📝 标题：{title}"
+            response = f"✅ 已保存到'{display_name}'类别\n\n📝 标题：{title}"
             if len(content) > 50:
                 response += f"\n📄 内容：{content[:50]}..."
             else:
@@ -1840,9 +1965,190 @@ class AIAssistant:
                 'is_shortcut': True
             }
 
+    def process_task_operation(self, user_message, user_id=None):
+        """处理记录操作指令：修改、置顶（支持工作任务和所有分类记录）"""
+        message = user_message.strip()
+
+        # 检查是否是"修改 序号 内容"指令
+        modify_pattern = r'^修改\s*(\d+)\s*[:：]?\s*(.+)$'
+        modify_match = re.match(modify_pattern, message)
+
+        if modify_match:
+            index = int(modify_match.group(1))
+            new_content = modify_match.group(2).strip()
+
+            # 检查是否有上下文
+            if user_id not in self.last_response_context:
+                return {
+                    'response': '❌ 请先查询列表（如"工作"、"财务"等），然后再使用修改指令',
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': []
+                }
+
+            context = self.last_response_context[user_id]
+            context_type = context.get('type')
+            data = context.get('data', [])
+
+            if index < 1 or index > len(data):
+                return {
+                    'response': f'❌ 序号 {index} 超出范围，当前有 {len(data)} 条记录',
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': []
+                }
+
+            # 获取要修改的记录
+            item = data[index - 1]
+            item_id = item['id']
+            old_content = item.get('title') or item.get('content', '')[:50]
+
+            try:
+                # 根据类型选择不同的更新方法
+                if context_type == 'work_list':
+                    # 工作任务：更新 work_tasks 表
+                    from mysql_manager import WorkPlanManagerMySQL
+                    planner = WorkPlanManagerMySQL(self.db)
+                    success = planner.update_plan(item_id, user_id=user_id, title=new_content)
+                elif context_type == 'daily_records':
+                    # 分类记录：更新 daily_records 表
+                    update_sql = "UPDATE daily_records SET title = %s WHERE id = %s AND user_id = %s"
+                    self.db.execute(update_sql, (new_content, item_id, user_id))
+                    success = True
+                else:
+                    return {
+                        'response': f'❌ 不支持的记录类型：{context_type}',
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': []
+                    }
+
+                if success:
+                    return {
+                        'response': f'✅ 已修改第 {index} 项：\n\n原内容：{old_content}\n新内容：{new_content}',
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': []
+                    }
+                else:
+                    return {
+                        'response': f'❌ 修改失败，可能没有权限或记录不存在',
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': []
+                    }
+            except Exception as e:
+                print(f"❌ 修改记录失败: {e}")
+                import traceback
+                traceback.print_exc()
+                return {
+                    'response': f'❌ 修改失败: {str(e)}',
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': []
+                }
+
+        # 检查是否是"置顶 序号列表"指令
+        pin_pattern = r'^置顶\s+([\d,，\s]+)$'
+        pin_match = re.match(pin_pattern, message)
+
+        if pin_match:
+            # 提取序号列表
+            numbers_str = pin_match.group(1)
+            numbers_str = numbers_str.replace('，', ',').replace(' ', ',')
+            try:
+                indices = [int(n.strip()) for n in numbers_str.split(',') if n.strip()]
+            except ValueError:
+                return {
+                    'response': '❌ 序号格式错误，请使用数字，例如：置顶 5,8',
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': []
+                }
+
+            # 检查是否有上下文
+            if user_id not in self.last_response_context:
+                return {
+                    'response': '❌ 请先查询列表（如"工作"、"财务"等），然后再使用置顶指令',
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': []
+                }
+
+            context = self.last_response_context[user_id]
+            context_type = context.get('type')
+            data = context.get('data', [])
+
+            # 验证所有序号
+            for idx in indices:
+                if idx < 1 or idx > len(data):
+                    return {
+                        'response': f'❌ 序号 {idx} 超出范围，当前有 {len(data)} 条记录',
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': []
+                    }
+
+            try:
+                # 根据类型选择不同的表和字段
+                if context_type == 'work_list':
+                    table_name = 'work_tasks'
+                elif context_type == 'daily_records':
+                    table_name = 'daily_records'
+                else:
+                    return {
+                        'response': f'❌ 不支持的记录类型：{context_type}',
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': []
+                    }
+
+                # 获取当前最大的 sort_order
+                max_order_sql = f"SELECT MAX(sort_order) as max_order FROM {table_name} WHERE user_id = %s"
+                result = self.db.query_one(max_order_sql, (user_id,))
+                max_order = result['max_order'] if result and result['max_order'] else 0
+
+                # 按用户指定的顺序置顶
+                pinned_titles = []
+                for i, idx in enumerate(indices):
+                    item = data[idx - 1]
+                    item_id = item['id']
+                    new_sort_order = max_order + len(indices) - i
+
+                    update_sql = f"UPDATE {table_name} SET sort_order = %s WHERE id = %s AND user_id = %s"
+                    self.db.execute(update_sql, (new_sort_order, item_id, user_id))
+
+                    item_title = item.get('title') or item.get('content', '')[:50]
+                    pinned_titles.append(f"{idx}. {item_title}")
+
+                type_name = "工作" if context_type == 'work_list' else "记录"
+                return {
+                    'response': f'✅ 已按顺序置顶以下{type_name}：\n\n' + '\n'.join(pinned_titles) + f'\n\n下次查看时将按此顺序显示在最前面',
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': []
+                }
+            except Exception as e:
+                print(f"❌ 置顶记录失败: {e}")
+                import traceback
+                traceback.print_exc()
+                return {
+                    'response': f'❌ 置顶失败: {str(e)}',
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': []
+                }
+
+        # 不是记录操作指令
+        return None
+
     def process_shortcut_command(self, user_message, user_id=None):
         """处理快捷命令 - 工作: 和 计划: 和 保存: 和 记录:（兼容中文冒号和空格）"""
         message = user_message.strip()
+
+        # ✨ 新增：检查是否是"其他"查询命令（单独处理）
+        if message == '其他':
+            return self._handle_query_other_category(user_id)
 
         # ✨ 新增：检查是否是"保存"或"记录"命令（支持多种格式）
         # 支持格式：保存 xxx、保存：xxx、保存:xxx、记录 xxx、记录：xxx、记录:xxx

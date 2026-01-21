@@ -121,6 +121,27 @@ class WebSocketServer:
         )
         return True
 
+    def send_message(self, receiver_id, message_data):
+        """发送新消息通知到指定用户的所有连接"""
+        # 转换为字符串以匹配 self.clients 的键类型
+        receiver_id = str(receiver_id)
+        print(f"📨 发送新消息通知: receiver_id={receiver_id}")
+
+        if not self.loop:
+            print("⚠️ WebSocket 服务器未启动")
+            return False
+
+        if receiver_id not in self.clients or not self.clients[receiver_id]:
+            print(f"⚠️ 用户 {receiver_id} 没有活动的 WebSocket 连接")
+            return False
+
+        # 在 WebSocket 的事件循环中发送消息
+        asyncio.run_coroutine_threadsafe(
+            self._send_message_to_user(receiver_id, message_data),
+            self.loop
+        )
+        return True
+
     async def _send_to_user(self, user_id, reminder_data):
         """异步发送消息到用户的所有连接"""
         if user_id not in self.clients:
@@ -145,6 +166,31 @@ class WebSocketServer:
         # 清理断开的连接
         for websocket in disconnected:
             self.clients[user_id].discard(websocket)
+
+    async def _send_message_to_user(self, receiver_id, message_data):
+        """异步发送新消息通知到用户的所有连接"""
+        if receiver_id not in self.clients:
+            return
+
+        message = json.dumps({
+            'type': 'new_message',
+            'data': message_data,
+            'timestamp': datetime.now().isoformat()
+        })
+
+        # 发送到该用户的所有连接
+        disconnected = set()
+        for websocket in self.clients[receiver_id]:
+            try:
+                await websocket.send(message)
+                print(f"✅ 已推送新消息通知到用户 {receiver_id}")
+            except Exception as e:
+                print(f"❌ 发送失败: {e}")
+                disconnected.add(websocket)
+
+        # 清理断开的连接
+        for websocket in disconnected:
+            self.clients[receiver_id].discard(websocket)
 
     def stop(self):
         """停止 WebSocket 服务器"""
