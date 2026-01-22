@@ -5391,6 +5391,16 @@ class AssistantHandler(BaseHTTPRequestHandler):
             color: #fff;
             margin: 0;
         }
+
+        .plan-title.urgent {
+            color: #ff4444;
+            font-weight: 700;
+        }
+
+        .plan-title.important {
+            color: #ff9900;
+            font-weight: 700;
+        }
         
         .plan-status {
             padding: 4px 12px;
@@ -6829,7 +6839,31 @@ class AssistantHandler(BaseHTTPRequestHandler):
             
             const textDiv = document.createElement('div');
             textDiv.style.whiteSpace = 'pre-wrap';
-            textDiv.textContent = text;
+
+            if (text.includes('未完成的工作任务')) {
+                const lines = text.split('\\n');
+                let result = '';
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    const match = line.match(/^(\\d+\\. )(.+)$/);
+                    if (match) {
+                        const num = match[1];
+                        const content = match[2];
+                        if (content[0] === '急') {
+                            result += num + '<span style="color:red;font-weight:bold;">' + content + '</span>\\n';
+                        } else if (content.startsWith('重要')) {
+                            result += num + '<span style="color:orange;font-weight:bold;">' + content + '</span>\\n';
+                        } else {
+                            result += line + '\\n';
+                        }
+                    } else {
+                        result += line + '\\n';
+                    }
+                }
+                textDiv.innerHTML = result.replace(/\\n/g, '<br>');
+            } else {
+                textDiv.textContent = text;
+            }
             
             const timeDiv = document.createElement('div');
             timeDiv.className = 'message-time';
@@ -9036,10 +9070,18 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 const statusText = statusMap[plan.status] || plan.status;
                 const description = plan.description || plan.content || '';
 
+                // 判断任务标题样式
+                let titleClass = 'plan-title';
+                if (plan.title.startsWith('急')) {
+                    titleClass += ' urgent';
+                } else if (plan.title.startsWith('重要')) {
+                    titleClass += ' important';
+                }
+
                 return `
                     <div class="plan-card" data-plan-id="${plan.id}">
                         <div class="plan-header">
-                            <h4 class="plan-title">${priorityIcon} ${plan.title}</h4>
+                            <h4 class="${titleClass}">${priorityIcon} ${plan.title}</h4>
                             <span class="plan-status status-${statusText.replace(/\\s+/g, '')}">${statusText}</span>
                         </div>
                         ${description ? `<p style="color:#aaa; font-size:14px; margin:8px 0;">${description}</p>` : ''}
