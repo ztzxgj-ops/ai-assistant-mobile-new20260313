@@ -842,7 +842,7 @@ class AIAssistant:
 
                             if result:
                                 subcategory_id = result[0]['id']
-                                records = record_mgr.list_records(user_id, subcategory_id=subcategory_id)
+                                records = record_mgr.list_records(user_id, subcategory_id=subcategory_id, status='pending')
                                 if records:
                                     self.last_response_context[user_id] = {
                                         'type': 'daily_records',
