@@ -906,6 +906,10 @@ class WorkPlanManagerMySQL:
         """
         plans = self.db.query(sql, params if params else None)
 
+        # 确保plans是列表
+        if not isinstance(plans, list):
+            plans = list(plans) if plans else []
+
         # 转换datetime为字符串
         for plan in plans:
             if plan.get('deadline') and hasattr(plan['deadline'], 'strftime'):
