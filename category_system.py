@@ -420,6 +420,17 @@ class DailyRecordManager(MySQLManager):
             cursor.execute(query, (status, status, record_id, user_id))
             return cursor.rowcount > 0  # 返回是否有行被更新
 
+    def update_record_title(self, record_id, title, user_id):
+        """更新记录标题"""
+        query = """
+            UPDATE daily_records
+            SET title = %s, content = %s
+            WHERE id = %s AND user_id = %s
+        """
+        with self.get_cursor() as cursor:
+            cursor.execute(query, (title, title, record_id, user_id))
+            return cursor.rowcount > 0  # 返回是否有行被更新
+
 
 class TimeScheduleManager(MySQLManager):
     """时间规划管理器"""

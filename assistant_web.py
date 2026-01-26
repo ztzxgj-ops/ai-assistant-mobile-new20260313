@@ -1784,20 +1784,27 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 self.send_json({'success': False, 'message': f'添加失败: {str(e)}'}, status=500)
 
         elif self.path == '/api/record/update':
-            # 更新记录状态（daily_records表）
+            # 更新记录状态或标题（daily_records表）
             user_id = self.require_auth()
             if user_id is None:
                 return
 
             record_id = data.get('record_id') or data.get('id')  # 兼容两种参数名
-            status = data.get('status', 'completed')
+            status = data.get('status')
+            title = data.get('title')
 
             if not record_id:
                 self.send_json({'success': False, 'message': '缺少记录ID'}, status=400)
                 return
 
             try:
-                daily_record_manager.update_record_status(record_id, status, user_id)
+                # 如果提供了标题，更新标题
+                if title is not None:
+                    daily_record_manager.update_record_title(record_id, title, user_id)
+                # 如果提供了状态，更新状态
+                if status is not None:
+                    daily_record_manager.update_record_status(record_id, status, user_id)
+
                 self.send_json({'success': True, 'message': '记录已更新'})
             except Exception as e:
                 print(f"❌ 更新记录失败: {e}")
