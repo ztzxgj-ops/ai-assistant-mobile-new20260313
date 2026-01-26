@@ -254,6 +254,15 @@ class BackupHandler(BaseHTTPRequestHandler):
             backup_dir = data.get('backup_dir')
             bak_path = f'/Users/gj/编程/ai助理new/bak/{backup_dir}'
 
+            # 调试日志 - 写入文件
+            with open('/tmp/restore_debug.log', 'a') as f:
+                f.write(f"\n=== 恢复请求 {datetime.now()} ===\n")
+                f.write(f"接收到的数据: {data}\n")
+                f.write(f"backup_dir: {repr(backup_dir)}\n")
+                f.write(f"bak_path: {bak_path}\n")
+                f.write(f"路径存在: {os.path.exists(bak_path)}\n")
+                f.write(f"是目录: {os.path.isdir(bak_path)}\n")
+
             if not backup_dir or not os.path.isdir(bak_path):
                 self.send_response(400)
                 self.send_header('Content-type', 'application/json')

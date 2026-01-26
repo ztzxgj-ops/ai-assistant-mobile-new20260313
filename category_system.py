@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 分类管理系统
-支持7大类别的层级管理：工作、计划、财务、账号密码、提醒、文件、记录
+支持8大类别的层级管理：工作、计划、财务、账号密码、提醒、文件、记录、时间
 """
 
 from mysql_manager import MySQLManager
@@ -130,6 +130,23 @@ class WorkTaskManager(MySQLManager):
         for task in result:
             task['source'] = 'work_tasks'
 
+        # 按标题中的"紧急"和"重要"关键词排序，同时考虑sort_order
+        def sort_key(task):
+            title = task.get('title', '')
+            sort_order = task.get('sort_order', 0)  # 默认为0
+
+            if '紧急' in title:
+                priority = 0  # 紧急排在最前
+            elif '重要' in title:
+                priority = 1  # 重要排在第二
+            else:
+                priority = 2  # 普通排在最后
+
+            # 返回元组：先按优先级排序，再按sort_order降序排序
+            return (priority, -sort_order)
+
+        result.sort(key=sort_key)
+
         return result
 
     def update_task_status(self, task_id, status, user_id):
@@ -139,7 +156,10 @@ class WorkTaskManager(MySQLManager):
             SET status = %s, completed_at = IF(%s = 'completed', NOW(), NULL)
             WHERE id = %s AND user_id = %s
         """
-        return self.execute(query, (status, status, task_id, user_id))
+        print(f"🔍 [SQL] 执行更新: task_id={task_id}, status={status}, user_id={user_id}")
+        result = self.execute(query, (status, status, task_id, user_id))
+        print(f"🔍 [SQL] 更新影响行数: {result}")
+        return result
 
     def update_task_order(self, task_id, sort_order, user_id):
         """更新任务排序"""
@@ -399,3 +419,66 @@ class DailyRecordManager(MySQLManager):
         with self.get_cursor() as cursor:
             cursor.execute(query, (status, status, record_id, user_id))
             return cursor.rowcount > 0  # 返回是否有行被更新
+
+
+class TimeScheduleManager(MySQLManager):
+    """时间规划管理器"""
+
+    def __init__(self, config_file='mysql_config.json'):
+        super().__init__(config_file)
+
+    def add_schedule(self, user_id, title, schedule_date, start_time, end_time,
+                    description='', subcategory_id=None, tags=''):
+        """添加时间规划"""
+        query = """
+            INSERT INTO time_schedules
+            (user_id, title, description, schedule_date, start_time, end_time,
+             subcategory_id, tags, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'pending')
+        """
+        return self.execute(query, (user_id, title, description, schedule_date,
+                                   start_time, end_time, subcategory_id, tags))
+
+    def list_schedules(self, user_id, schedule_date=None, subcategory_id=None, status='pending'):
+        """列出时间规划"""
+        conditions = ["user_id = %s"]
+        params = [user_id]
+
+        if schedule_date:
+            conditions.append("schedule_date = %s")
+            params.append(schedule_date)
+        if subcategory_id:
+            conditions.append("subcategory_id = %s")
+            params.append(subcategory_id)
+        if status:
+            conditions.append("status = %s")
+            params.append(status)
+
+        query = f"""
+            SELECT * FROM time_schedules
+            WHERE {' AND '.join(conditions)}
+            ORDER BY schedule_date DESC, start_time ASC
+        """
+        result = self.query(query, tuple(params))
+
+        # 添加 source 字段
+        for schedule in result:
+            schedule['source'] = 'time_schedules'
+
+        return result
+
+    def update_schedule_status(self, schedule_id, status, user_id):
+        """更新时间规划状态"""
+        query = """
+            UPDATE time_schedules
+            SET status = %s, completed_at = IF(%s = 'completed', NOW(), NULL)
+            WHERE id = %s AND user_id = %s
+        """
+        with self.get_cursor() as cursor:
+            cursor.execute(query, (status, status, schedule_id, user_id))
+            return cursor.rowcount > 0
+
+    def delete_schedule(self, schedule_id, user_id):
+        """删除时间规划"""
+        query = "DELETE FROM time_schedules WHERE id = %s AND user_id = %s"
+        return self.execute(query, (schedule_id, user_id))

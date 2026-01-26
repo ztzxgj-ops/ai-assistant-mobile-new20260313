@@ -341,6 +341,23 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 import traceback
                 traceback.print_exc()
                 self.send_json({'success': False, 'error': str(e)})
+        elif self.path.startswith('/api/work-tasks'):
+            # 获取工作任务列表（支持status过滤）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+            try:
+                # 从查询参数获取status
+                from urllib.parse import urlparse, parse_qs
+                parsed = urlparse(self.path)
+                query_params = parse_qs(parsed.query) if parsed.query else {}
+                status = query_params.get('status', [None])[0]
+
+                tasks = work_task_manager.list_tasks(user_id=user_id, status=status)
+                self.send_json(tasks)
+            except Exception as e:
+                print(f"❌ 获取任务列表失败: {e}")
+                self.send_json({'success': False, 'error': str(e)})
         elif self.path == '/api/finance-records/grouped':
             # 获取按子类别分组的财务记录
             user_id = self.require_auth()
@@ -1333,9 +1350,11 @@ class AssistantHandler(BaseHTTPRequestHandler):
                         ai_assistant.last_response_context[user_id] = {
                             'type': command_result['context']['type'],
                             'data': command_result['context']['data'],
+                            'subcategory_name': command_result['context'].get('subcategory_name'),  # ✨ 保存子类别名称
                             'timestamp': datetime.now()
                         }
-                        print(f"✅ 已保存命令上下文: type={command_result['context']['type']}, data_count={len(command_result['context']['data'])}")
+                        subcategory_info = f", subcategory={command_result['context'].get('subcategory_name')}" if command_result['context'].get('subcategory_name') else ""
+                        print(f"✅ 已保存命令上下文: type={command_result['context']['type']}, data_count={len(command_result['context']['data'])}{subcategory_info}")
 
                     # 是命令，直接返回命令结果
                     self.send_json({
@@ -1501,7 +1520,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
             if user_id is None:
                 return
 
-            # 支持更新多个字段：status, title, description, deadline, priority
+            # 支持更新多个字段：status, title, description, deadline, priority, sort_order
             update_fields = {}
             if 'status' in data:
                 update_fields['status'] = data['status']
@@ -1514,6 +1533,8 @@ class AssistantHandler(BaseHTTPRequestHandler):
             if 'priority' in data:
                 update_fields['priority'] = data['priority']
 
+            if 'sort_order' in data:
+                update_fields['sort_order'] = data['sort_order']
             success = planner.update_plan(data.get('id'), user_id=user_id, **update_fields)
             if success:
                 self.send_json({'success': True, 'message': '计划已更新'})
@@ -1570,6 +1591,45 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 print(f"❌ 调整顺序失败: {e}")
                 self.send_json({'success': False, 'message': f'调整顺序失败: {str(e)}'}, status=500)
 
+        elif self.path == '/api/plan/batch-update':
+            # 批量更新计划（标题和排序）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            updates = data.get('updates')  # 格式: [{id: 1, title: '急 任务', sort_order: 10}, ...]
+            if not updates or not isinstance(updates, list):
+                self.send_json({'success': False, 'message': '缺少更新数据'}, status=400)
+                return
+
+            try:
+                for item in updates:
+                    plan_id = item.get('id')
+                    if plan_id is None:
+                        continue
+
+                    # 构建更新字段
+                    update_fields = []
+                    update_values = []
+
+                    if 'title' in item:
+                        update_fields.append('title = %s')
+                        update_values.append(item['title'])
+
+                    if 'sort_order' in item:
+                        update_fields.append('sort_order = %s')
+                        update_values.append(item['sort_order'])
+
+                    if update_fields:
+                        update_values.extend([plan_id, user_id])
+                        update_sql = f"UPDATE work_tasks SET {', '.join(update_fields)} WHERE id = %s AND user_id = %s"
+                        planner.db.execute(update_sql, tuple(update_values))
+
+                self.send_json({'success': True, 'message': '批量更新成功'})
+            except Exception as e:
+                print(f"❌ 批量更新失败: {e}")
+                self.send_json({'success': False, 'message': f'批量更新失败: {str(e)}'}, status=500)
+
         elif self.path == '/api/plan/delete':
             user_id = self.require_auth()
             if user_id is None:
@@ -1579,7 +1639,185 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 self.send_json({'success': True, 'message': '计划已删除'})
             else:
                 self.send_json({'success': False, 'message': '删除失败或权限不足'}, status=403)
-        
+
+        elif self.path == '/api/work-task/update':
+            # 更新工作任务（work_tasks表）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            task_id = data.get('id')
+            if not task_id:
+                self.send_json({'success': False, 'message': '缺少任务ID'}, status=400)
+                return
+
+            try:
+                # 目前只支持更新状态
+                if 'status' in data:
+                    status = data['status']
+                    print(f"🔍 [DEBUG] 更新任务: task_id={task_id}, status={status}, user_id={user_id}")
+
+                    # 先检查任务是否存在且属于当前用户
+                    check_query = "SELECT status FROM work_tasks WHERE id = %s AND user_id = %s"
+                    with work_task_manager.get_cursor() as cursor:
+                        cursor.execute(check_query, (task_id, user_id))
+                        result = cursor.fetchone()
+
+                        if not result:
+                            print(f"❌ [DEBUG] 任务不存在或权限不足")
+                            self.send_json({'success': False, 'message': '任务不存在或权限不足'}, status=403)
+                            return
+
+                        current_status = result['status']
+                        print(f"🔍 [DEBUG] 当前状态: {current_status}, 目标状态: {status}")
+
+                        if current_status == status:
+                            # 状态已经是目标状态，直接返回成功
+                            print(f"✅ [DEBUG] 任务状态已经是 {status}，无需更新")
+                            self.send_json({'success': True, 'message': '任务状态已是目标状态'})
+                            return
+
+                    # 执行更新
+                    success = work_task_manager.update_task_status(task_id, status, user_id)
+                    print(f"🔍 [DEBUG] 更新结果: success={success}")
+                    if success:
+                        self.send_json({'success': True, 'message': '任务已更新'})
+                    else:
+                        self.send_json({'success': False, 'message': '更新失败'}, status=500)
+                else:
+                    self.send_json({'success': False, 'message': '缺少更新字段'}, status=400)
+            except Exception as e:
+                print(f"❌ 更新任务失败: {e}")
+                import traceback
+                traceback.print_exc()
+                self.send_json({'success': False, 'message': f'更新失败: {str(e)}'}, status=500)
+
+        elif self.path == '/api/work-task/add':
+            # 添加工作任务（work_tasks表）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            title = data.get('title', '')
+            if not title:
+                self.send_json({'success': False, 'message': '缺少任务标题'}, status=400)
+                return
+
+            try:
+                # 添加任务到work_tasks表
+                work_task_manager.add_task(user_id, title)
+                self.send_json({'success': True, 'message': '任务已添加'})
+            except Exception as e:
+                print(f"❌ 添加任务失败: {e}")
+                self.send_json({'success': False, 'message': f'添加失败: {str(e)}'}, status=500)
+
+        elif self.path == '/api/record/add':
+            # 添加记录（daily_records表）- 用于子类别
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            title = data.get('title', '')
+            subcategory_name = data.get('subcategory_name', '')
+
+            if not title:
+                self.send_json({'success': False, 'message': '缺少记录标题'}, status=400)
+                return
+
+            try:
+                # 如果提供了子类别名称，查找子类别ID（子类别是全局的，不限用户）
+                subcategory_id = None
+                if subcategory_name:
+                    query = "SELECT id FROM subcategories WHERE name = %s LIMIT 1"
+                    result = db_manager.query(query, (subcategory_name,))
+                    if result:
+                        subcategory_id = result[0]['id']
+
+                # 添加记录到daily_records表
+                daily_record_manager.add_record(
+                    user_id=user_id,
+                    content=title,
+                    title=title,
+                    subcategory_id=subcategory_id
+                )
+                self.send_json({'success': True, 'message': '记录已添加'})
+            except Exception as e:
+                print(f"❌ 添加记录失败: {e}")
+                self.send_json({'success': False, 'message': f'添加失败: {str(e)}'}, status=500)
+
+        elif self.path == '/api/record/update':
+            # 更新记录状态（daily_records表）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            record_id = data.get('record_id') or data.get('id')  # 兼容两种参数名
+            status = data.get('status', 'completed')
+
+            if not record_id:
+                self.send_json({'success': False, 'message': '缺少记录ID'}, status=400)
+                return
+
+            try:
+                daily_record_manager.update_record_status(record_id, status, user_id)
+                self.send_json({'success': True, 'message': '记录已更新'})
+            except Exception as e:
+                print(f"❌ 更新记录失败: {e}")
+                self.send_json({'success': False, 'message': f'更新失败: {str(e)}'}, status=500)
+
+        elif self.path == '/api/record/delete':
+            # 删除记录（daily_records表）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            record_id = data.get('id')
+
+            if not record_id:
+                self.send_json({'success': False, 'message': '缺少记录ID'}, status=400)
+                return
+
+            try:
+                daily_record_manager.delete_record(record_id, user_id)
+                self.send_json({'success': True, 'message': '记录已删除'})
+            except Exception as e:
+                print(f"❌ 删除记录失败: {e}")
+                self.send_json({'success': False, 'message': f'删除失败: {str(e)}'}, status=500)
+
+        elif self.path == '/api/record/batch-update':
+            # 批量更新记录（daily_records表）- 用于排序和标记
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            updates = data.get('updates', [])
+
+            if not updates:
+                self.send_json({'success': False, 'message': '缺少更新数据'}, status=400)
+                return
+
+            try:
+                for update in updates:
+                    record_id = update.get('id')
+                    title = update.get('title')
+                    sort_order = update.get('sort_order')
+
+                    if record_id and title is not None:
+                        # 更新标题和排序
+                        query = """
+                            UPDATE daily_records
+                            SET title = %s, content = %s, sort_order = %s
+                            WHERE id = %s AND user_id = %s
+                        """
+                        db_manager.execute(query, (title, title, sort_order, record_id, user_id))
+
+                self.send_json({'success': True, 'message': '批量更新成功'})
+            except Exception as e:
+                print(f"❌ 批量更新失败: {e}")
+                import traceback
+                traceback.print_exc()
+                self.send_json({'success': False, 'message': f'批量更新失败: {str(e)}'}, status=500)
+
         elif self.path == '/api/reminder/add':
             user_id = self.require_auth()
             if user_id is None:
@@ -2689,18 +2927,21 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
     def send_json(self, data, status=200):
         """发送JSON响应"""
-        # 自定义 JSON 编码器，支持 Decimal 类型
-        class DecimalEncoder(json.JSONEncoder):
+        from datetime import datetime, date
+        # 自定义 JSON 编码器，支持 Decimal 和 datetime 类型
+        class CustomEncoder(json.JSONEncoder):
             def default(self, obj):
                 if isinstance(obj, Decimal):
                     return float(obj)
+                if isinstance(obj, (datetime, date)):
+                    return obj.strftime('%Y-%m-%d %H:%M:%S') if isinstance(obj, datetime) else obj.strftime('%Y-%m-%d')
                 return super().default(obj)
 
         self.send_response(status)
         self.send_header('Content-type', 'application/json; charset=utf-8')
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
-        self.wfile.write(json.dumps(data, ensure_ascii=False, cls=DecimalEncoder).encode('utf-8'))
+        self.wfile.write(json.dumps(data, ensure_ascii=False, cls=CustomEncoder).encode('utf-8'))
     
     def serve_image(self, filepath):
         """发送图片文件"""
@@ -4658,6 +4899,9 @@ class AssistantHandler(BaseHTTPRequestHandler):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-visual">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>个人助手</title>
     <link rel="stylesheet" href="/mobile_ui_patch.css">
     <style>
@@ -6220,13 +6464,23 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     </button>
                 </div>
                 
-                <!-- 过滤器 -->
-                <div style="display:flex; gap:10px; margin-bottom:20px; flex-wrap: wrap;">
+                <!-- 过滤器和批量编辑 -->
+                <div style="display:flex; gap:10px; margin-bottom:20px; flex-wrap: wrap; align-items: center;">
                     <button onclick="filterWorkPlans('all')" class="filter-btn active" data-filter="all">📋 全部</button>
                     <button onclick="filterWorkPlans('pending')" class="filter-btn" data-filter="pending">⭕ 未开始</button>
                     <button onclick="filterWorkPlans('in_progress')" class="filter-btn" data-filter="in_progress">🔄 进行中</button>
                     <button onclick="filterWorkPlans('completed')" class="filter-btn" data-filter="completed">✅ 已完成</button>
                     <button onclick="filterWorkPlans('cancelled')" class="filter-btn" data-filter="cancelled">❌ 已取消</button>
+                    <div style="flex:1;"></div>
+                    <button id="batchEditBtn" onclick="toggleBatchEditMode()" style="padding:8px 16px; background:#6c757d; color:white; border:none; border-radius:4px; cursor:pointer; font-size:14px; font-weight:600;">
+                        ✏️ 批量编辑
+                    </button>
+                    <button id="saveBatchEditBtn" onclick="saveBatchEdit()" style="display:none; padding:8px 16px; background:#28a745; color:white; border:none; border-radius:4px; cursor:pointer; font-size:14px; font-weight:600;">
+                        💾 保存
+                    </button>
+                    <button id="cancelBatchEditBtn" onclick="cancelBatchEdit()" style="display:none; padding:8px 16px; background:#dc3545; color:white; border:none; border-radius:4px; cursor:pointer; font-size:14px; font-weight:600;">
+                        ❌ 取消
+                    </button>
                 </div>
                 
                 <!-- 工作计划列表 -->
@@ -6840,27 +7094,107 @@ class AssistantHandler(BaseHTTPRequestHandler):
             const textDiv = document.createElement('div');
             textDiv.style.whiteSpace = 'pre-wrap';
 
-            if (text.includes('未完成的工作任务')) {
+            // 通用列表检测：匹配 "未完成XXX（共N个）" 或 "XXX列表（共N个）" 等模式
+            const listPattern = /(未完成|当前)(.+?)（共\s*(\d+)\s*[个项条]）/;
+            const listMatch = text.match(listPattern);
+
+            if (listMatch) {
+                const listType = listMatch[2].trim(); // 提取类别名称，如"工作"、"财务记录"等
+                console.log('🔍 检测到列表：' + listType + '，准备添加编辑按钮');
+                console.log('🔍 完整匹配:', listMatch[0]);
+                console.log('🔍 提取的listType:', listType);
+
+                // 检查是否有对应的列表数据
+                const listData = window.lastListData || [];
+                console.log('📊 列表数据:', listData.length, '个项目');
+
+                // 创建容器
+                const container = document.createElement('div');
+                container.className = 'list-container';
+                container.setAttribute('data-list-type', listType); // 保存类别信息
+                container.style.cssText = 'position: relative;';
+
+                // 添加按钮栏（+号和编辑按钮）
+                const editButtonBar = document.createElement('div');
+                editButtonBar.className = 'list-edit-bar';
+                editButtonBar.style.cssText = 'display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 8px;';
+                editButtonBar.innerHTML = `
+                    <button onclick="addNewListItem(this)" class="list-add-btn" style="padding: 6px 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                        ➕ 添加
+                    </button>
+                    <button onclick="toggleListEditMode(this)" class="list-edit-btn" style="padding: 6px 12px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                        ✏️ 编辑
+                    </button>
+                    <button onclick="saveListEdit(this)" class="list-save-btn" style="display: none; padding: 6px 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                        💾 保存
+                    </button>
+                    <button onclick="cancelListEdit(this)" class="list-cancel-btn" style="display: none; padding: 6px 12px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                        ❌ 取消
+                    </button>
+                `;
+                container.appendChild(editButtonBar);
+                console.log('✅ 编辑按钮已添加');
+
+                // 创建列表内容
+                const listContent = document.createElement('div');
+                listContent.className = 'list-content';
+
                 const lines = text.split('\\n');
                 let result = '';
+                let taskIndex = 0;
+
                 for (let i = 0; i < lines.length; i++) {
                     const line = lines[i];
-                    const match = line.match(/^(\\d+\\. )(.+)$/);
+                    const match = line.match(/^(\\d+)\\. (.+)$/);
                     if (match) {
                         const num = match[1];
                         const content = match[2];
-                        if (content[0] === '急') {
-                            result += num + '<span style="color:red;font-weight:bold;">' + content + '</span>\\n';
+                        const taskData = listData[taskIndex] || {};
+                        const taskId = taskData.id || 0;
+                        const hasUrgent = content.startsWith('急');
+                        const hasImportant = content.startsWith('重要');
+
+                        result += `<div class="list-item" data-task-id="${taskId}" data-index="${taskIndex}" draggable="false" style="display: flex; align-items: flex-start; margin-bottom: 8px;">`;
+
+                        // 添加可点击的圆圈标记
+                        result += `<span class="complete-circle" onclick="completeListItem(${taskId}, this)" style="cursor: pointer; font-size: 16px; margin-right: 8px; user-select: none; line-height: 1.5;">○</span>`;
+
+                        // 编辑模式的复选框（默认隐藏）
+                        result += `<div class="list-checkboxes" style="display: none; margin-bottom: 4px;">`;
+                        result += `<label style="margin-right: 12px; cursor: pointer; user-select: none;">`;
+                        result += `<input type="checkbox" class="urgent-check" ${hasUrgent ? 'checked' : ''} style="margin-right: 4px;">`;
+                        result += `<span style="color: red; font-weight: bold;">急</span>`;
+                        result += `</label>`;
+                        result += `<label style="cursor: pointer; user-select: none;">`;
+                        result += `<input type="checkbox" class="important-check" ${hasImportant ? 'checked' : ''} style="margin-right: 4px;">`;
+                        result += `<span style="color: orange; font-weight: bold;">重要</span>`;
+                        result += `</label>`;
+                        result += `<span style="margin-left: 12px; color: #999; font-size: 11px;">☰ 拖动排序</span>`;
+                        result += `</div>`;
+
+                        // 任务内容（不再显示序号）
+                        result += `<div style="flex: 1;">`;
+                        if (content.startsWith('急')) {
+                            result += `<span style="color:red;font-weight:bold;">${content}</span>`;
                         } else if (content.startsWith('重要')) {
-                            result += num + '<span style="color:orange;font-weight:bold;">' + content + '</span>\\n';
+                            result += `<span style="color:orange;font-weight:bold;">${content}</span>`;
                         } else {
-                            result += line + '\\n';
+                            result += content;
                         }
+                        result += `</div>`;
+
+                        result += `</div>`;
+                        taskIndex++;
                     } else {
-                        result += line + '\\n';
+                        result += line + '<br>';
                     }
                 }
-                textDiv.innerHTML = result.replace(/\\n/g, '<br>');
+
+                listContent.innerHTML = result;
+                container.appendChild(listContent);
+
+                textDiv.appendChild(container);
+                console.log('✅ 工作列表容器已添加到消息中');
             } else {
                 textDiv.textContent = text;
             }
@@ -7847,11 +8181,21 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
                 const data = await resp.json();
                 removeLoading(loadingId);
-                
+
+                // 保存列表数据（如果有）
+                if (data.list_data && data.list_data.length > 0) {
+                    window.lastListData = data.list_data;
+                    console.log('保存列表数据:', data.list_data.length, '个项目');
+                } else if (data.work_list_data && data.work_list_data.length > 0) {
+                    // 兼容旧版本的 work_list_data
+                    window.lastListData = data.work_list_data;
+                    console.log('保存列表数据:', data.work_list_data.length, '个任务');
+                }
+
                 if (data.response) {
                     appendAI('assistant', data.response);
                 }
-                
+
                 // 处理识别到的计划（如果有）
                 if (data.detected_plans && data.detected_plans.length > 0) {
                     // TODO: 实现showPlanConfirmation函数
@@ -9065,21 +9409,54 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 return;
             }
 
-            container.innerHTML = filteredPlans.map(plan => {
+            // 保存当前计划列表供批量编辑使用
+            window.currentPlans = filteredPlans;
+
+            container.innerHTML = filteredPlans.map((plan, index) => {
                 const priorityIcon = priorityIconMap[plan.priority] || '🟡';
                 const statusText = statusMap[plan.status] || plan.status;
                 const description = plan.description || plan.content || '';
 
-                // 判断任务标题样式
+                // 判断任务标题样式和标记状态
                 let titleClass = 'plan-title';
-                if (plan.title.startsWith('急')) {
+                const hasUrgent = plan.title.startsWith('急');
+                const hasImportant = plan.title.startsWith('重要');
+
+                if (hasUrgent) {
                     titleClass += ' urgent';
-                } else if (plan.title.startsWith('重要')) {
+                } else if (hasImportant) {
                     titleClass += ' important';
                 }
 
+                // 编辑模式下的复选框
+                const editModeCheckboxes = window.batchEditMode ? `
+                    <div class="batch-edit-controls" style="display:flex; gap:8px; margin-bottom:10px; padding:8px; background:rgba(102, 126, 234, 0.1); border-radius:4px;">
+                        <label style="display:flex; align-items:center; gap:4px; cursor:pointer; user-select:none;">
+                            <input type="checkbox" class="urgent-checkbox" data-plan-id="${plan.id}" ${hasUrgent ? 'checked' : ''}
+                                   style="width:18px; height:18px; cursor:pointer;">
+                            <span style="color:#dc3545; font-weight:bold;">急</span>
+                        </label>
+                        <label style="display:flex; align-items:center; gap:4px; cursor:pointer; user-select:none;">
+                            <input type="checkbox" class="important-checkbox" data-plan-id="${plan.id}" ${hasImportant ? 'checked' : ''}
+                                   style="width:18px; height:18px; cursor:pointer;">
+                            <span style="color:#ff8c00; font-weight:bold;">重要</span>
+                        </label>
+                        <div style="flex:1;"></div>
+                        <span style="color:#999; font-size:12px;">☰ 拖动排序</span>
+                    </div>
+                ` : '';
+
                 return `
-                    <div class="plan-card" data-plan-id="${plan.id}">
+                    <div class="plan-card ${window.batchEditMode ? 'draggable' : ''}"
+                         data-plan-id="${plan.id}"
+                         data-index="${index}"
+                         draggable="${window.batchEditMode ? 'true' : 'false'}"
+                         ondragstart="${window.batchEditMode ? 'handleDragStart(event)' : ''}"
+                         ondragover="${window.batchEditMode ? 'handleDragOver(event)' : ''}"
+                         ondrop="${window.batchEditMode ? 'handleDrop(event)' : ''}"
+                         ondragend="${window.batchEditMode ? 'handleDragEnd(event)' : ''}"
+                         style="${window.batchEditMode ? 'cursor:move;' : ''}">
+                        ${editModeCheckboxes}
                         <div class="plan-header">
                             <h4 class="${titleClass}">${priorityIcon} ${plan.title}</h4>
                             <span class="plan-status status-${statusText.replace(/\\s+/g, '')}">${statusText}</span>
@@ -9089,7 +9466,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                             ${plan.deadline || plan.due_date ? `<span>⏰ ${plan.deadline || plan.due_date}</span>` : ''}
                             <span>📅 创建: ${plan.created_at ? plan.created_at.substring(0, 10) : ''}</span>
                         </div>
-                        <div class="plan-actions">
+                        <div class="plan-actions" style="${window.batchEditMode ? 'display:none;' : ''}">
                             <button class="plan-btn plan-btn-pin" onclick="pinWorkPlan(${plan.id})" title="置顶">
                                 📌 置顶
                             </button>
@@ -9264,6 +9641,505 @@ class AssistantHandler(BaseHTTPRequestHandler):
             } catch (e) {
                 console.error('置顶工作计划失败:', e);
                 alert('❌ 置顶失败: ' + e.message);
+            }
+        }
+
+        // ========== 批量编辑功能 ==========
+
+        // 切换批量编辑模式
+        function toggleBatchEditMode() {
+            window.batchEditMode = !window.batchEditMode;
+
+            const batchEditBtn = document.getElementById('batchEditBtn');
+            const saveBatchEditBtn = document.getElementById('saveBatchEditBtn');
+            const cancelBatchEditBtn = document.getElementById('cancelBatchEditBtn');
+
+            if (window.batchEditMode) {
+                // 进入编辑模式
+                batchEditBtn.style.display = 'none';
+                saveBatchEditBtn.style.display = 'block';
+                cancelBatchEditBtn.style.display = 'block';
+
+                // 保存原始数据用于取消
+                window.originalPlans = JSON.parse(JSON.stringify(window.currentPlans));
+            } else {
+                // 退出编辑模式
+                batchEditBtn.style.display = 'block';
+                saveBatchEditBtn.style.display = 'none';
+                cancelBatchEditBtn.style.display = 'none';
+            }
+
+            // 重新渲染列表
+            loadWorkPlans();
+        }
+
+        // 取消批量编辑
+        function cancelBatchEdit() {
+            window.batchEditMode = false;
+
+            const batchEditBtn = document.getElementById('batchEditBtn');
+            const saveBatchEditBtn = document.getElementById('saveBatchEditBtn');
+            const cancelBatchEditBtn = document.getElementById('cancelBatchEditBtn');
+
+            batchEditBtn.style.display = 'block';
+            saveBatchEditBtn.style.display = 'none';
+            cancelBatchEditBtn.style.display = 'none';
+
+            // 重新加载原始数据
+            loadWorkPlans();
+        }
+
+        // 保存批量编辑
+        async function saveBatchEdit() {
+            try {
+                const token = localStorage.getItem('token');
+                const updates = [];
+
+                // 获取所有计划卡片
+                const planCards = document.querySelectorAll('.plan-card');
+
+                planCards.forEach((card, index) => {
+                    const planId = parseInt(card.getAttribute('data-plan-id'));
+                    const urgentCheckbox = card.querySelector('.urgent-checkbox');
+                    const importantCheckbox = card.querySelector('.important-checkbox');
+
+                    // 找到原始计划数据
+                    const originalPlan = window.currentPlans.find(p => p.id === planId);
+                    if (!originalPlan) return;
+
+                    // 构建新标题
+                    let newTitle = originalPlan.title;
+
+                    // 移除现有的"急"和"重要"前缀
+                    newTitle = newTitle.replace(/^急\s*/, '').replace(/^重要\s*/, '');
+
+                    // 根据复选框状态添加前缀
+                    if (urgentCheckbox && urgentCheckbox.checked) {
+                        newTitle = '急 ' + newTitle;
+                    } else if (importantCheckbox && importantCheckbox.checked) {
+                        newTitle = '重要 ' + newTitle;
+                    }
+
+                    updates.push({
+                        id: planId,
+                        title: newTitle,
+                        sort_order: planCards.length - index  // 倒序，越靠前sort_order越大
+                    });
+                });
+
+                // 发送批量更新请求
+                const response = await fetch('/api/plan/batch-update', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(token ? {'Authorization': 'Bearer ' + token} : {})
+                    },
+                    body: JSON.stringify({updates})
+                });
+
+                if (response.ok) {
+                    // 退出编辑模式
+                    window.batchEditMode = false;
+
+                    const batchEditBtn = document.getElementById('batchEditBtn');
+                    const saveBatchEditBtn = document.getElementById('saveBatchEditBtn');
+                    const cancelBatchEditBtn = document.getElementById('cancelBatchEditBtn');
+
+                    batchEditBtn.style.display = 'block';
+                    saveBatchEditBtn.style.display = 'none';
+                    cancelBatchEditBtn.style.display = 'none';
+
+                    // 重新加载列表
+                    loadWorkPlans();
+                    alert('✅ 保存成功');
+                } else {
+                    const error = await response.text();
+                    console.error('批量更新失败:', error);
+                    alert('❌ 保存失败');
+                }
+            } catch (e) {
+                console.error('批量更新失败:', e);
+                alert('❌ 保存失败: ' + e.message);
+            }
+        }
+
+        // ========== 拖拽排序功能 ==========
+
+        let draggedElement = null;
+
+        function handleDragStart(e) {
+            draggedElement = e.target.closest('.plan-card');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/html', draggedElement.innerHTML);
+            draggedElement.style.opacity = '0.4';
+        }
+
+        function handleDragOver(e) {
+            if (e.preventDefault) {
+                e.preventDefault();
+            }
+            e.dataTransfer.dropEffect = 'move';
+
+            const targetCard = e.target.closest('.plan-card');
+            if (targetCard && targetCard !== draggedElement) {
+                const container = document.getElementById('workPlansList');
+                const allCards = Array.from(container.querySelectorAll('.plan-card'));
+                const draggedIndex = allCards.indexOf(draggedElement);
+                const targetIndex = allCards.indexOf(targetCard);
+
+                if (draggedIndex < targetIndex) {
+                    targetCard.parentNode.insertBefore(draggedElement, targetCard.nextSibling);
+                } else {
+                    targetCard.parentNode.insertBefore(draggedElement, targetCard);
+                }
+            }
+
+            return false;
+        }
+
+        function handleDrop(e) {
+            if (e.stopPropagation) {
+                e.stopPropagation();
+            }
+            return false;
+        }
+
+        function handleDragEnd(e) {
+            if (draggedElement) {
+                draggedElement.style.opacity = '1';
+            }
+
+            // 更新所有卡片的data-index
+            const container = document.getElementById('workPlansList');
+            const allCards = container.querySelectorAll('.plan-card');
+            allCards.forEach((card, index) => {
+                card.setAttribute('data-index', index);
+            });
+        }
+
+        // ========== 聊天列表编辑功能 ==========
+
+        function toggleListEditMode(button) {
+            const container = button.closest('.list-container');
+            const editBar = container.querySelector('.list-edit-bar');
+            const editBtn = editBar.querySelector('.list-edit-btn');
+            const saveBtn = editBar.querySelector('.list-save-btn');
+            const cancelBtn = editBar.querySelector('.list-cancel-btn');
+            const items = container.querySelectorAll('.list-item');
+            const checkboxes = container.querySelectorAll('.list-checkboxes');
+
+            // 切换按钮显示
+            editBtn.style.display = 'none';
+            saveBtn.style.display = 'block';
+            cancelBtn.style.display = 'block';
+
+            // 显示复选框
+            checkboxes.forEach(cb => cb.style.display = 'block');
+
+            // 启用拖拽
+            items.forEach(item => {
+                item.setAttribute('draggable', 'true');
+                item.style.cursor = 'move';
+                item.style.padding = '8px';
+                item.style.marginBottom = '4px';
+                item.style.background = 'rgba(102, 126, 234, 0.05)';
+                item.style.borderRadius = '4px';
+
+                // 添加拖拽事件
+                item.addEventListener('dragstart', handleListDragStart);
+                item.addEventListener('dragover', handleListDragOver);
+                item.addEventListener('drop', handleListDrop);
+                item.addEventListener('dragend', handleListDragEnd);
+            });
+
+            // 保存原始数据
+            container.dataset.editMode = 'true';
+        }
+
+        function cancelListEdit(button) {
+            const container = button.closest('.list-container');
+            const editBar = container.querySelector('.list-edit-bar');
+            const editBtn = editBar.querySelector('.list-edit-btn');
+            const saveBtn = editBar.querySelector('.list-save-btn');
+            const cancelBtn = editBar.querySelector('.list-cancel-btn');
+            const checkboxes = container.querySelectorAll('.list-checkboxes');
+            const items = container.querySelectorAll('.list-item');
+
+            // 切换按钮显示
+            editBtn.style.display = 'block';
+            saveBtn.style.display = 'none';
+            cancelBtn.style.display = 'none';
+
+            // 隐藏复选框
+            checkboxes.forEach(cb => cb.style.display = 'none');
+
+            // 禁用拖拽
+            items.forEach(item => {
+                item.setAttribute('draggable', 'false');
+                item.style.cursor = 'default';
+                item.style.padding = '0';
+                item.style.marginBottom = '0';
+                item.style.background = 'none';
+                item.style.borderRadius = '0';
+
+                // 移除拖拽事件
+                item.removeEventListener('dragstart', handleListDragStart);
+                item.removeEventListener('dragover', handleListDragOver);
+                item.removeEventListener('drop', handleListDrop);
+                item.removeEventListener('dragend', handleListDragEnd);
+            });
+
+            container.dataset.editMode = 'false';
+
+            // 重新加载列表（恢复原始状态）
+            location.reload();
+        }
+
+        async function saveListEdit(button) {
+            const container = button.closest('.list-container');
+            const listType = container.getAttribute('data-list-type');
+            const items = container.querySelectorAll('.list-item');
+            const updates = [];
+
+            items.forEach((item, index) => {
+                const taskId = parseInt(item.dataset.taskId);
+                if (!taskId) return;
+
+                const urgentCheck = item.querySelector('.urgent-check');
+                const importantCheck = item.querySelector('.important-check');
+
+                // 获取原始任务数据
+                const taskData = window.lastListData.find(t => t.id === taskId);
+                if (!taskData) return;
+
+                // 构建新标题
+                let newTitle = taskData.title;
+
+                // 移除现有的"急"和"重要"前缀
+                newTitle = newTitle.replace(/^急\\s*/, '').replace(/^重要\\s*/, '');
+
+                // 根据复选框状态添加前缀
+                if (urgentCheck && urgentCheck.checked) {
+                    newTitle = '急 ' + newTitle;
+                } else if (importantCheck && importantCheck.checked) {
+                    newTitle = '重要 ' + newTitle;
+                }
+
+                updates.push({
+                    id: taskId,
+                    title: newTitle,
+                    sort_order: items.length - index  // 倒序，越靠前sort_order越大
+                });
+            });
+
+            try {
+                const token = localStorage.getItem('token');
+                let apiUrl;
+
+                // 根据类别类型选择不同的API
+                if (listType === '工作') {
+                    // 工作任务使用 plan API
+                    apiUrl = '/api/plan/batch-update';
+                } else {
+                    // 其他子类别使用 record API
+                    apiUrl = '/api/record/batch-update';
+                }
+
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(token ? {'Authorization': 'Bearer ' + token} : {})
+                    },
+                    body: JSON.stringify({updates})
+                });
+
+                if (response.ok) {
+                    alert('✅ 保存成功');
+                    // 重新加载页面以显示更新后的数据
+                    location.reload();
+                } else {
+                    const error = await response.text();
+                    console.error('批量更新失败:', error);
+                    alert('❌ 保存失败');
+                }
+            } catch (e) {
+                console.error('批量更新失败:', e);
+                alert('❌ 保存失败: ' + e.message);
+            }
+        }
+
+        // 拖拽相关变量和函数
+        let listDraggedElement = null;
+
+        function handleListDragStart(e) {
+            listDraggedElement = e.target.closest('.list-item');
+            e.dataTransfer.effectAllowed = 'move';
+            listDraggedElement.style.opacity = '0.4';
+        }
+
+        function handleListDragOver(e) {
+            if (e.preventDefault) {
+                e.preventDefault();
+            }
+            e.dataTransfer.dropEffect = 'move';
+
+            const targetItem = e.target.closest('.list-item');
+            if (targetItem && targetItem !== listDraggedElement) {
+                const container = targetItem.closest('.list-content');
+                const allItems = Array.from(container.querySelectorAll('.list-item'));
+                const draggedIndex = allItems.indexOf(listDraggedElement);
+                const targetIndex = allItems.indexOf(targetItem);
+
+                if (draggedIndex < targetIndex) {
+                    targetItem.parentNode.insertBefore(listDraggedElement, targetItem.nextSibling);
+                } else {
+                    targetItem.parentNode.insertBefore(listDraggedElement, targetItem);
+                }
+            }
+
+            return false;
+        }
+
+        function handleListDrop(e) {
+            if (e.stopPropagation) {
+                e.stopPropagation();
+            }
+            return false;
+        }
+
+        function handleListDragEnd(e) {
+            if (listDraggedElement) {
+                listDraggedElement.style.opacity = '1';
+            }
+
+            // 更新所有项的data-index
+            const container = listDraggedElement.closest('.list-content');
+            const allItems = container.querySelectorAll('.list-item');
+            allItems.forEach((item, index) => {
+                item.setAttribute('data-index', index);
+            });
+        }
+
+        // 添加新工作任务
+        async function addNewListItem(button) {
+            const listType = button.closest('.list-container').getAttribute('data-list-type');
+            console.log('🔍 addNewListItem - listType:', listType);
+            const taskTitle = prompt('请输入新的' + listType + '：');
+            if (!taskTitle || taskTitle.trim() === '') {
+                return;
+            }
+
+            try {
+                const token = localStorage.getItem('token');
+                let apiUrl, requestBody;
+
+                // 根据类别类型选择不同的API
+                if (listType === '工作') {
+                    // 工作任务使用 plan API
+                    apiUrl = '/api/plan/add';
+                    requestBody = {
+                        title: taskTitle.trim(),
+                        description: '',
+                        priority: 'medium',
+                        status: 'pending'
+                    };
+                    console.log('✅ 使用工作API:', apiUrl);
+                } else {
+                    // 其他子类别使用 record API
+                    apiUrl = '/api/record/add';
+                    requestBody = {
+                        title: taskTitle.trim(),
+                        subcategory_name: listType
+                    };
+                    console.log('✅ 使用记录API:', apiUrl, '子类别:', listType);
+                }
+
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(token ? {'Authorization': 'Bearer ' + token} : {})
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (response.ok) {
+                    alert('✅ 添加成功');
+                    // 重新加载页面以显示新任务
+                    location.reload();
+                } else {
+                    const error = await response.text();
+                    console.error('添加任务失败:', error);
+                    alert('❌ 添加失败');
+                }
+            } catch (e) {
+                console.error('添加任务失败:', e);
+                alert('❌ 添加失败: ' + e.message);
+            }
+        }
+
+        // 完成工作任务
+        async function completeListItem(taskId, circleElement) {
+            if (!taskId) {
+                alert('❌ 无效的任务ID');
+                return;
+            }
+
+            if (!confirm('确认完成这项工作吗？')) {
+                return;
+            }
+
+            try {
+                const token = localStorage.getItem('token');
+                // 获取列表类型
+                const listContainer = circleElement.closest('.list-container');
+                const listType = listContainer ? listContainer.getAttribute('data-list-type') : '工作';
+
+                let apiUrl, requestBody;
+
+                // 根据类别类型选择不同的API
+                if (listType === '工作') {
+                    // 工作任务使用 plan API
+                    apiUrl = '/api/plan/update';
+                    requestBody = {
+                        id: taskId,
+                        status: 'completed'
+                    };
+                } else {
+                    // 其他子类别使用 record API
+                    apiUrl = '/api/record/update';
+                    requestBody = {
+                        record_id: taskId,
+                        status: 'completed'
+                    };
+                }
+
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(token ? {'Authorization': 'Bearer ' + token} : {})
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (response.ok) {
+                    // 隐藏该任务项（添加淡出动画）
+                    const taskItem = circleElement.closest('.list-item');
+                    taskItem.style.transition = 'opacity 0.3s';
+                    taskItem.style.opacity = '0';
+                    setTimeout(() => {
+                        taskItem.style.display = 'none';
+                    }, 300);
+                } else {
+                    const error = await response.text();
+                    console.error('完成任务失败:', error);
+                    alert('❌ 操作失败');
+                }
+            } catch (e) {
+                console.error('完成任务失败:', e);
+                alert('❌ 操作失败: ' + e.message);
             }
         }
 

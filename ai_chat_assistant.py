@@ -827,31 +827,18 @@ class AIAssistant:
                         }
                         print(f"🔍 保存工作列表上下文，共{len(pending_tasks)}个任务")
 
-                # ✨ 新增：检查是否是记录列表（如"📝 最近的ai助理："）
-                elif '📝 最近的' in response_text and '：' in response_text:
-                    # 提取子类别名称
-                    match = re.search(r'📝 最近的(.+?)：', response_text)
-                    if match:
-                        subcategory_name = match.group(1)
-                        # 获取该子类别的记录
-                        try:
-                            record_mgr = DailyRecordManager('mysql_config.json')
-                            # 直接通过SQL查询子类别ID
-                            query = "SELECT id FROM subcategories WHERE name = %s AND user_id = %s LIMIT 1"
-                            result = self.db.query(query, (subcategory_name, user_id))
-
-                            if result:
-                                subcategory_id = result[0]['id']
-                                records = record_mgr.list_records(user_id, subcategory_id=subcategory_id, status='pending')
-                                if records:
-                                    self.last_response_context[user_id] = {
-                                        'type': 'daily_records',
-                                        'data': records,
-                                        'timestamp': datetime.now()
-                                    }
-                                    print(f"🔍 保存记录列表上下文({subcategory_name})，共{len(records)}条记录")
-                        except Exception as e:
-                            print(f"⚠️ 保存记录上下文失败: {e}")
+                # ✨ 新增：检查是否是记录列表（如"未完成ai助理（共5个）："）
+                elif '未完成' in response_text and '（共' in response_text and '个）：' in response_text:
+                    # 直接使用命令返回的 list_data
+                    if 'list_data' in command_result:
+                        records = command_result['list_data']
+                        if records:
+                            self.last_response_context[user_id] = {
+                                'type': 'daily_records',
+                                'data': records,
+                                'timestamp': datetime.now()
+                            }
+                            print(f"🔍 保存记录列表上下文，共{len(records)}条记录")
 
                 return command_result
         except Exception as e:
@@ -1122,8 +1109,11 @@ class AIAssistant:
         if security_result:
             return security_result
 
-        # ✨ 保存工作列表上下文（用于后续的修改、置顶指令）
-        if user_message.strip() in ['工作', '当前工作', '未完成工作', '未完成', '待办', '计划']:
+        # ✨ 保存列表上下文（用于后续的修改、置顶指令）
+        list_data = None  # 用于传递给前端
+        # 检测是否是列表查询（包括工作、财务、学习等所有类别）
+        list_keywords = ['工作', '当前工作', '未完成工作', '未完成', '待办', '计划', '财务', '学习', '健康', '生活']
+        if user_message.strip() in list_keywords or any(kw in user_message for kw in list_keywords):
             try:
                 # 获取未完成的工作任务
                 pending_items = self.get_all_work_items(user_id, status_filter='pending')
@@ -1133,15 +1123,17 @@ class AIAssistant:
                         'data': pending_items,
                         'timestamp': datetime.now()
                     }
-                    print(f"🔍 保存工作列表上下文，共{len(pending_items)}个任务")
+                    list_data = pending_items  # 传递给前端
+                    print(f"🔍 保存列表上下文，共{len(pending_items)}个项目")
             except Exception as e:
-                print(f"⚠️ 保存工作列表上下文失败: {e}")
+                print(f"⚠️ 保存列表上下文失败: {e}")
 
         return {
             'response': response,
             'detected_plans': detected_plans,
             'detected_reminders': detected_reminders,
-            'completed_plans': completed_plans
+            'completed_plans': completed_plans,
+            'list_data': list_data  # 新增：通用列表数据
         }
 
 
@@ -1499,10 +1491,11 @@ class AIAssistant:
             print(f"🔍 DEBUG: 没有找到上下文 (user_id={user_id}, has_context={user_id in self.last_response_context if user_id else False})")
             return None
 
-        # ✨ 防止无限递归：如果消息已经是完整命令格式，不再转换
-        # 完整命令格式：以命令词开头（工作、计划、财务等）
-        command_words = ['工作', '计划', '财务', '账号', '提醒', '记录', '类别', '帮助', '日记', '随想', '信息', '学习笔记']
-        if any(user_message.strip().startswith(word) for word in command_words):
+        # ✨ 防止无限递归：如果消息已经包含操作词和序号，且格式像完整命令，不再转换
+        # 检查消息是否匹配 "XXX 操作词 数字" 的格式
+        import re
+        action_pattern = r'^[\u4e00-\u9fa5a-zA-Z0-9]+\s+(完成|删除|标记|做完|搞定)\s+[\d\.\s]+$'
+        if re.match(action_pattern, user_message.strip()):
             print(f"🔍 DEBUG: 消息已是完整命令格式，跳过转换")
             return None
 
@@ -1550,9 +1543,15 @@ class AIAssistant:
                 print(f"🔍 DEBUG: 转换为完整命令='{result}'")
                 return result
             elif context_type == 'daily_records':
-                # ✨ 对于daily_records，转换为"记录 操作 序号"命令
-                result = f"记录 {detected_action} {numbers_str}"
-                print(f"🔍 DEBUG: 转换为完整命令='{result}'")
+                # ✨ 对于daily_records，优先使用子类别名称
+                subcategory_name = context.get('subcategory_name')
+                if subcategory_name:
+                    result = f"{subcategory_name} {detected_action} {numbers_str}"
+                    print(f"🔍 DEBUG: 转换为完整命令='{result}' (使用子类别名称)")
+                else:
+                    # 兼容旧版本，使用通用的"记录"命令
+                    result = f"记录 {detected_action} {numbers_str}"
+                    print(f"🔍 DEBUG: 转换为完整命令='{result}' (使用通用命令)")
                 return result
 
         print(f"🔍 DEBUG: 未匹配到上下文引用模式")

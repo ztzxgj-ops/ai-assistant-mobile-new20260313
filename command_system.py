@@ -9,7 +9,7 @@ import re
 from abc import ABC, abstractmethod
 from category_system import (
     CategoryManager, WorkTaskManager, FinanceManager,
-    AccountManager, DailyRecordManager
+    AccountManager, DailyRecordManager, TimeScheduleManager
 )
 
 
@@ -247,9 +247,9 @@ class WorkCommand(Command):
             tasks = work_mgr.list_tasks(user_id, status='pending')
 
             if not tasks:
-                return {'response': '✅ 当前没有未完成的工作任务', 'is_command': True}
+                return {'response': '✅ 当前没有未完成工作', 'is_command': True}
 
-            response = f"未完成的工作任务（共{len(tasks)}个）：\n\n"
+            response = f"未完成工作（共{len(tasks)}个）：\n\n"
             for idx, task in enumerate(tasks, 1):
                 response += f"{idx}. {task['title']}\n"
 
@@ -285,7 +285,6 @@ class WorkCommand(Command):
             task_nums_str = args_str.split(' ', 1)[1] if ' ' in args_str else ''
 
             # ✨ 支持批量完成：解析多个序号（如"1.2.3.4"或"1,2,3,4"或"1 2 3 4"）
-            import re
             task_nums = re.findall(r'\d+', task_nums_str)
 
             if not task_nums:
@@ -327,7 +326,6 @@ class WorkCommand(Command):
             task_nums_str = args_str.split(' ', 1)[1] if ' ' in args_str else ''
 
             # ✨ 支持批量删除：解析多个序号（如"1.2.3.4"或"1,2,3,4"或"1 2 3 4"）
-            import re
             task_nums = re.findall(r'\d+', task_nums_str)
 
             if not task_nums:
@@ -378,7 +376,6 @@ class WorkCommand(Command):
 
         if content:
             # 支持用逗号、分号、换行符分隔多个任务
-            import re
             # 分割任务（支持中英文逗号、分号、换行）
             tasks = re.split(r'[,，;；\n]+', content)
             tasks = [t.strip() for t in tasks if t.strip()]
@@ -816,9 +813,9 @@ class OtherCommand(Command):
 
             # 查询该子类别下的所有记录
             records_query = """
-                SELECT id, title, content, created_at FROM daily_records
+                SELECT id, title, content FROM daily_records
                 WHERE subcategory_id = %s AND user_id = %s
-                ORDER BY created_at DESC
+                ORDER BY id DESC
             """
             records = category_mgr.query(records_query, (sub_id, user_id))
 
@@ -879,26 +876,23 @@ class DynamicSubcategoryCommand(Command):
                 if not records:
                     return {'response': f'📝 暂无{self.name}', 'is_command': True}
 
-                response = f"📝 最近的{self.name}：\n\n"
+                response = f"未完成{self.name}（共{len(records)}个）：\n\n"
                 for idx, record in enumerate(records, 1):
                     # ✨ 优先显示 title，如果 title 为空则显示 content
                     display_text = record.get('title') or record.get('content', '')
                     if len(display_text) > 50:
                         display_text = display_text[:50]
                     response += f"{idx}. {display_text}\n"
-                    # ✨ 添加记录日期显示
-                    if record.get('record_date'):
-                        # 确保日期格式为 YYYY-MM-DD（DATE类型已经是此格式）
-                        record_date = str(record['record_date'])[:10]
-                        response += f"   {record_date}\n"
 
                 # ✨ 返回上下文信息，供AI系统使用
                 return {
                     'response': response,
                     'is_command': True,
+                    'list_data': records,  # 添加列表数据，供前端使用
                     'context': {
                         'type': 'daily_records',
-                        'data': records
+                        'data': records,
+                        'subcategory_name': self.name  # 添加子类别名称
                     }
                 }
 
@@ -923,10 +917,17 @@ class DynamicSubcategoryCommand(Command):
                 completed_records = []
                 failed_nums = []
 
+                # ✨ 调试日志：打印所有记录
+                print(f"🔍 DEBUG: records总数={len(records)}")
+                for i, r in enumerate(records):
+                    print(f"🔍 DEBUG: records[{i}] = {r.get('content', r.get('title', ''))[:30]}")
+
                 for num_str in record_nums:
                     idx = int(num_str) - 1
+                    print(f"🔍 DEBUG: 用户输入序号={num_str}, 计算idx={idx}, records长度={len(records)}")
                     if 0 <= idx < len(records):
                         record = records[idx]
+                        print(f"🔍 DEBUG: 找到记录 records[{idx}] = {record.get('content', record.get('title', ''))[:30]}")
                         try:
                             record_mgr.update_record_status(record['id'], 'completed', user_id)
                             content = record['content'][:30]
@@ -999,7 +1000,6 @@ class DynamicSubcategoryCommand(Command):
             subcategory_id = self._get_subcategory_id(category_mgr, user_id)
 
             # 支持用逗号、分号、换行符分隔多条记录
-            import re
             records_list = re.split(r'[,，;；\n]+', content)
             records_list = [r.strip() for r in records_list if r.strip()]
 
@@ -1076,7 +1076,312 @@ class DynamicSubcategoryCommand(Command):
             else:
                 return {'response': f'❌ 格式错误\n\n使用：{self.name} 金额 说明', 'is_command': True}
 
+        elif self.category_code == 'time':
+            # 特殊处理：日记使用记录类的逻辑
+            if self.subcategory_code == 'diary':
+                # 日记使用 DailyRecordManager
+                record_mgr = managers['record']
+                category_mgr = managers['category']
+
+                if not args:
+                    # 查看该子类别的记录
+                    subcategory_id = self._get_subcategory_id(category_mgr, user_id)
+                    if subcategory_id:
+                        records = record_mgr.list_records(user_id, subcategory_id=subcategory_id, status='pending')
+                    else:
+                        records = []
+
+                    if not records:
+                        return {'response': f'📝 暂无{self.name}', 'is_command': True}
+
+                    response = f"未完成{self.name}（共{len(records)}个）：\n\n"
+                    for idx, record in enumerate(records, 1):
+                        display_text = record.get('title') or record.get('content', '')
+                        if len(display_text) > 50:
+                            display_text = display_text[:50]
+                        response += f"{idx}. {display_text}\n"
+                        # 添加日期显示
+                        if record.get('record_date'):
+                            record_date = str(record['record_date'])[:10]
+                            response += f"   {record_date}\n"
+
+                    return {
+                        'response': response,
+                        'is_command': True,
+                        'context': {
+                            'type': 'daily_records',
+                            'data': records,
+                            'subcategory_name': self.name  # 添加子类别名称
+                        }
+                    }
+
+                # 解析参数
+                args_str = ' '.join(args)
+
+                # 完成记录
+                if args_str.startswith('完成 ') or args_str.startswith('done '):
+                    record_nums_str = args_str.split(' ', 1)[1] if ' ' in args_str else ''
+                    record_nums = parse_batch_numbers(record_nums_str)
+
+                    if not record_nums:
+                        return {'response': '❌ 请提供有效的记录序号', 'is_command': True}
+
+                    subcategory_id = self._get_subcategory_id(category_mgr, user_id)
+                    records = record_mgr.list_records(user_id, subcategory_id=subcategory_id, status='pending')
+
+                    completed_records = []
+                    failed_nums = []
+
+                    for num_str in record_nums:
+                        idx = int(num_str) - 1
+                        if 0 <= idx < len(records):
+                            record = records[idx]
+                            try:
+                                record_mgr.update_record_status(record['id'], 'completed', user_id)
+                                content = record['content'][:30]
+                                completed_records.append(f"{num_str}. {content}")
+                            except Exception as e:
+                                failed_nums.append(num_str)
+                                print(f"完成记录失败: {num_str}, 错误: {e}")
+                        else:
+                            failed_nums.append(num_str)
+
+                    if completed_records:
+                        response = f"✅ 已完成 {len(completed_records)} 条记录：\n\n"
+                        for record_info in completed_records:
+                            response += f"{record_info}\n"
+                        if failed_nums:
+                            response += f"\n⚠️ 序号 {', '.join(failed_nums)} 不存在或操作失败"
+                        return {'response': response, 'is_command': True}
+                    else:
+                        return {'response': f'❌ 所有序号都无效：{", ".join(failed_nums)}', 'is_command': True}
+
+                # 删除记录
+                if args_str.startswith('删除 ') or args_str.startswith('delete '):
+                    record_nums_str = args_str.split(' ', 1)[1] if ' ' in args_str else ''
+                    record_nums = parse_batch_numbers(record_nums_str)
+
+                    if not record_nums:
+                        return {'response': '❌ 请提供有效的记录序号', 'is_command': True}
+
+                    subcategory_id = self._get_subcategory_id(category_mgr, user_id)
+                    records = record_mgr.list_records(user_id, subcategory_id=subcategory_id, status='pending')
+
+                    deleted_records = []
+                    failed_nums = []
+
+                    sorted_nums = sorted([int(n) for n in record_nums], reverse=True)
+
+                    for num in sorted_nums:
+                        idx = num - 1
+                        if 0 <= idx < len(records):
+                            record = records[idx]
+                            try:
+                                record_mgr.delete_record(record['id'], user_id)
+                                content = record['content'][:30]
+                                deleted_records.append(f"{num}. {content}")
+                            except Exception as e:
+                                failed_nums.append(str(num))
+                                print(f"删除记录失败: {num}, 错误: {e}")
+                        else:
+                            failed_nums.append(str(num))
+
+                    if deleted_records:
+                        deleted_records.reverse()
+                        response = f"✅ 已删除 {len(deleted_records)} 条记录：\n\n"
+                        for record_info in deleted_records:
+                            response += f"{record_info}\n"
+                        if failed_nums:
+                            response += f"\n⚠️ 序号 {', '.join(failed_nums)} 不存在或操作失败"
+                        return {'response': response, 'is_command': True}
+                    else:
+                        return {'response': f'❌ 所有序号都无效：{", ".join(failed_nums)}', 'is_command': True}
+
+                # 添加记录（支持批量添加）
+                records_list = re.split(r'[,，;；\n]+', args_str)
+                records_list = [r.strip() for r in records_list if r.strip()]
+
+                if not records_list:
+                    return {'response': '❌ 请提供记录内容', 'is_command': True}
+
+                from datetime import datetime
+                record_date = datetime.now().strftime('%Y-%m-%d')
+                subcategory_id = self._get_subcategory_id(category_mgr, user_id)
+
+                for content in records_list:
+                    record_mgr.add_record(
+                        user_id=user_id,
+                        content=content,
+                        record_date=record_date,
+                        subcategory_id=subcategory_id
+                    )
+
+                if len(records_list) == 1:
+                    return {'response': f'✅ 已保存{self.name}', 'is_command': True}
+                else:
+                    return {'response': f'✅ 已保存 {len(records_list)} 条{self.name}', 'is_command': True}
+
+            # 时间类 - 使用 TimeScheduleManager
+            time_mgr = managers['time']
+            category_mgr = managers['category']
+
+            if not args:
+                # 查看该子类别的时间规划
+                subcategory_id = self._get_subcategory_id(category_mgr, user_id)
+                if subcategory_id:
+                    schedules = time_mgr.list_schedules(user_id, subcategory_id=subcategory_id, status='pending')
+                else:
+                    schedules = []
+
+                if not schedules:
+                    return {'response': f'⏱️ 暂无{self.name}', 'is_command': True}
+
+                response = f"⏱️ 最近的{self.name}：\n\n"
+                for idx, schedule in enumerate(schedules, 1):
+                    title = schedule.get('title', '')
+                    start_time = str(schedule.get('start_time', ''))[:5]  # HH:MM
+                    end_time = str(schedule.get('end_time', ''))[:5]
+                    response += f"{idx}. {title} ({start_time}-{end_time})\n"
+
+                return {
+                    'response': response,
+                    'is_command': True,
+                    'context': {
+                        'type': 'time_schedules',
+                        'data': schedules
+                    }
+                }
+
+            # 解析参数
+            args_str = ' '.join(args)
+
+            # 完成时间规划
+            if args_str.startswith('完成 ') or args_str.startswith('done '):
+                schedule_nums_str = args_str.split(' ', 1)[1] if ' ' in args_str else ''
+                schedule_nums = parse_batch_numbers(schedule_nums_str)
+
+                if not schedule_nums:
+                    return {'response': '❌ 请提供有效的序号', 'is_command': True}
+
+                subcategory_id = self._get_subcategory_id(category_mgr, user_id)
+                schedules = time_mgr.list_schedules(user_id, subcategory_id=subcategory_id, status='pending')
+
+                completed_schedules = []
+                failed_nums = []
+
+                for num_str in schedule_nums:
+                    idx = int(num_str) - 1
+                    if 0 <= idx < len(schedules):
+                        schedule = schedules[idx]
+                        try:
+                            time_mgr.update_schedule_status(schedule['id'], 'completed', user_id)
+                            title = schedule['title'][:30]
+                            completed_schedules.append(f"{num_str}. {title}")
+                        except Exception as e:
+                            failed_nums.append(num_str)
+                            print(f"完成时间规划失败: {num_str}, 错误: {e}")
+                    else:
+                        failed_nums.append(num_str)
+
+                if completed_schedules:
+                    response = f"✅ 已完成 {len(completed_schedules)} 个时间规划：\n\n"
+                    for schedule_info in completed_schedules:
+                        response += f"{schedule_info}\n"
+                    if failed_nums:
+                        response += f"\n⚠️ 序号 {', '.join(failed_nums)} 不存在或操作失败"
+                    return {'response': response, 'is_command': True}
+                else:
+                    return {'response': f'❌ 所有序号都无效：{", ".join(failed_nums)}', 'is_command': True}
+
+            # 删除时间规划
+            if args_str.startswith('删除 ') or args_str.startswith('delete '):
+                schedule_nums_str = args_str.split(' ', 1)[1] if ' ' in args_str else ''
+                schedule_nums = parse_batch_numbers(schedule_nums_str)
+
+                if not schedule_nums:
+                    return {'response': '❌ 请提供有效的序号', 'is_command': True}
+
+                subcategory_id = self._get_subcategory_id(category_mgr, user_id)
+                schedules = time_mgr.list_schedules(user_id, subcategory_id=subcategory_id, status='pending')
+
+                deleted_schedules = []
+                failed_nums = []
+
+                sorted_nums = sorted([int(n) for n in schedule_nums], reverse=True)
+
+                for num in sorted_nums:
+                    idx = num - 1
+                    if 0 <= idx < len(schedules):
+                        schedule = schedules[idx]
+                        try:
+                            time_mgr.delete_schedule(schedule['id'], user_id)
+                            title = schedule['title'][:30]
+                            deleted_schedules.append(f"{num}. {title}")
+                        except Exception as e:
+                            failed_nums.append(str(num))
+                            print(f"删除时间规划失败: {num}, 错误: {e}")
+                    else:
+                        failed_nums.append(str(num))
+
+                if deleted_schedules:
+                    deleted_schedules.reverse()
+                    response = f"✅ 已删除 {len(deleted_schedules)} 个时间规划：\n\n"
+                    for schedule_info in deleted_schedules:
+                        response += f"{schedule_info}\n"
+                    if failed_nums:
+                        response += f"\n⚠️ 序号 {', '.join(failed_nums)} 不存在或操作失败"
+                    return {'response': response, 'is_command': True}
+                else:
+                    return {'response': f'❌ 所有序号都无效：{", ".join(failed_nums)}', 'is_command': True}
+
+            # 添加时间规划
+            # 格式：子类别名: 标题 开始时间-结束时间 [日期]
+            # 例如：工作时间: 开会 9:00-10:00 明天
+            from datetime import datetime, timedelta
+
+            # 解析内容
+            content = args_str
+
+            # 提取时间范围（格式：HH:MM-HH:MM）
+            time_pattern = r'(\d{1,2}:\d{2})-(\d{1,2}:\d{2})'
+            time_match = re.search(time_pattern, content)
+
+            if not time_match:
+                return {'response': '❌ 请提供时间范围，格式：标题 开始时间-结束时间\n例如：开会 9:00-10:00', 'is_command': True}
+
+            start_time = time_match.group(1)
+            end_time = time_match.group(2)
+
+            # 移除时间部分，获取标题
+            title = content[:time_match.start()].strip()
+            remaining = content[time_match.end():].strip()
+
+            # 解析日期（默认今天）
+            schedule_date = datetime.now().date()
+            if remaining:
+                if '明天' in remaining:
+                    schedule_date = (datetime.now() + timedelta(days=1)).date()
+                elif '后天' in remaining:
+                    schedule_date = (datetime.now() + timedelta(days=2)).date()
+
+            if not title:
+                return {'response': '❌ 请提供标题', 'is_command': True}
+
+            # 保存时间规划
+            subcategory_id = self._get_subcategory_id(category_mgr, user_id)
+            time_mgr.add_schedule(
+                user_id=user_id,
+                title=title,
+                schedule_date=schedule_date,
+                start_time=start_time,
+                end_time=end_time,
+                subcategory_id=subcategory_id
+            )
+
+            return {'response': f'✅ 已添加时间规划：{title} ({start_time}-{end_time})', 'is_command': True}
         else:
+
+
             # 其他类别暂不支持快捷命令
             return {'response': f'⚠️ {self.name}命令暂不支持快捷操作\n\n请使用完整命令格式', 'is_command': True}
 
@@ -1375,7 +1680,6 @@ class PlanCommand(Command):
 
         if content:
             # 支持用逗号、分号、换行符分隔多个计划
-            import re
             plans_list = re.split(r'[,，;；\n]+', content)
             plans_list = [p.strip() for p in plans_list if p.strip()]
 
@@ -1578,7 +1882,8 @@ class CommandRouter:
             'work': WorkTaskManager(),
             'finance': FinanceManager(),
             'account': AccountManager(),
-            'record': DailyRecordManager()
+            'record': DailyRecordManager(),
+            'time': TimeScheduleManager()
         }
 
     def parse_command(self, message):

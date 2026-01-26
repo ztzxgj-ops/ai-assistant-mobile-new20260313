@@ -91,11 +91,7 @@ class MySQLManager:
         with self.get_cursor() as cursor:
             try:
                 cursor.execute(sql, params or ())
-                # 对于INSERT返回lastrowid，对于UPDATE/DELETE返回rowcount
-                if sql.strip().upper().startswith('INSERT'):
-                    return cursor.lastrowid
-                else:
-                    return cursor.rowcount
+                return cursor.lastrowid
             except Exception as e:
                 print(f"❌ SQL执行失败: {e}")
                 print(f"❌ SQL: {sql}")
@@ -973,8 +969,7 @@ class WorkPlanManagerMySQL:
             'description': 'content',
             'deadline': 'due_date',
             'priority': 'priority',
-            'status': 'status',
-            'sort_order': 'sort_order'
+            'status': 'status'
         }
         updates = []
         values = []

@@ -1,5 +1,119 @@
 [
   {
+    "id": 100,
+    "timestamp": "2026-01-25 01:10:11",
+    "backup_dir": "backup-20260125-010953",
+    "status": "success",
+    "notes": "完成：“工作”新增、修改、排序、次行首字位置，助理形像照片上传失败修复。",
+    "error": "",
+    "git_commit": "5b1c1bd269786855a1b3ca0e25d941a375f994c1",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260125-010953.tar.gz",
+        "size": 12440834
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260125-010953.sql",
+        "size": 977128
+      }
+    }
+  },
+  {
+    "id": 99,
+    "timestamp": "2026-01-24 22:08:11",
+    "backup_dir": "backup-20260124-220726",
+    "status": "success",
+    "notes": "⚠️ 有 10 个文件修改，请点击'编辑备注'添加功能说明",
+    "error": "",
+    "git_commit": "5b1c1bd269786855a1b3ca0e25d941a375f994c1",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260124-220726.tar.gz",
+        "size": 12439888
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260124-220726.sql",
+        "size": 975885
+      }
+    }
+  },
+  {
+    "id": 98,
+    "timestamp": "2026-01-24 22:08:06",
+    "backup_dir": "backup-20260124-220346",
+    "status": "success",
+    "notes": "完成：“工作”类新增、完成界面操作。",
+    "error": "",
+    "git_commit": "5b1c1bd269786855a1b3ca0e25d941a375f994c1",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260124-220346.tar.gz",
+        "size": 12439854
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260124-220346.sql",
+        "size": 975885
+      }
+    }
+  },
+  {
+    "id": 97,
+    "timestamp": "2026-01-23 11:20:17",
+    "backup_dir": "backup-20260123-111944",
+    "status": "success",
+    "notes": "实现：用户在对话界面或私聊界面点击消息列表的任何空白处，输入键盘都会自动收起",
+    "error": "",
+    "git_commit": "5b1c1bd269786855a1b3ca0e25d941a375f994c1",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260123-111944.tar.gz",
+        "size": 12384758
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260123-111944.sql",
+        "size": 970663
+      }
+    }
+  },
+  {
+    "id": 96,
+    "timestamp": "2026-01-22 15:37:16",
+    "backup_dir": "backup-20260122-153640",
+    "status": "success",
+    "notes": "变更: 实现Web版任务列表样式优化：红色粗体显示\"急\"开头任务，橙色粗体显示\"重要\"开头任务 + 有未提交的代码修改",
+    "error": "",
+    "git_commit": "eb9e3c787d902a27b9f569bd26e34bf242b48fca",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260122-153640.tar.gz",
+        "size": 12361869
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260122-153640.sql",
+        "size": 952246
+      }
+    }
+  },
+  {
+    "id": 95,
+    "timestamp": "2026-01-21 22:59:29",
+    "backup_dir": "backup-20260121-225913",
+    "status": "success",
+    "notes": "新消息提示、夜间模式文字颜色、中文复制粘贴提示、留言墙可见范围功能、私聊发送文件、聊天内容可选择复制等",
+    "error": "",
+    "git_commit": "6b3ceaec84c80f8f5086cb6c5e2b46fc7a177b38",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260121-225913.tar.gz",
+        "size": 12323771
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260121-225913.sql",
+        "size": 937698
+      }
+    }
+  },
+  {
     "id": 94,
     "timestamp": "2026-01-21 15:39:54",
     "backup_dir": "backup-20260121-153929",
