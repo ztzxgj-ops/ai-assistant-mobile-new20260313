@@ -358,6 +358,44 @@ class AssistantHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"❌ 获取任务列表失败: {e}")
                 self.send_json({'success': False, 'error': str(e)})
+        elif self.path.startswith('/api/records'):
+            # 获取记录列表（支持subcategory_name和status过滤）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+            try:
+                # 从查询参数获取subcategory_name和status
+                from urllib.parse import urlparse, parse_qs
+                parsed = urlparse(self.path)
+                query_params = parse_qs(parsed.query) if parsed.query else {}
+                subcategory_name = query_params.get('subcategory_name', [None])[0]
+                status = query_params.get('status', [None])[0]
+
+                if not subcategory_name:
+                    self.send_json({'success': False, 'error': '缺少subcategory_name参数'})
+                    return
+
+                # 查找子类别ID
+                query = "SELECT id FROM subcategories WHERE name = %s LIMIT 1"
+                result = db_manager.query(query, (subcategory_name,))
+                if not result:
+                    self.send_json([])  # 子类别不存在，返回空列表
+                    return
+
+                subcategory_id = result[0]['id']
+
+                # 获取记录列表
+                records = daily_record_manager.list_records(
+                    user_id=user_id,
+                    subcategory_id=subcategory_id,
+                    status=status
+                )
+                self.send_json(records)
+            except Exception as e:
+                print(f"❌ 获取记录列表失败: {e}")
+                import traceback
+                traceback.print_exc()
+                self.send_json({'success': False, 'error': str(e)})
         elif self.path == '/api/finance-records/grouped':
             # 获取按子类别分组的财务记录
             user_id = self.require_auth()
