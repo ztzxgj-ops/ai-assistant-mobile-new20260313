@@ -1836,16 +1836,19 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 return
 
             updates = data.get('updates', [])
+            print(f"🔍 DEBUG 批量更新记录: user_id={user_id}, updates数量={len(updates)}")
 
             if not updates:
                 self.send_json({'success': False, 'message': '缺少更新数据'}, status=400)
                 return
 
             try:
+                updated_count = 0
                 for update in updates:
                     record_id = update.get('id')
                     title = update.get('title')
                     sort_order = update.get('sort_order')
+                    print(f"🔍 DEBUG 更新记录: id={record_id}, title={title}, sort_order={sort_order}")
 
                     if record_id and title is not None:
                         # 更新标题和排序
@@ -1854,8 +1857,11 @@ class AssistantHandler(BaseHTTPRequestHandler):
                             SET title = %s, content = %s, sort_order = %s
                             WHERE id = %s AND user_id = %s
                         """
-                        db_manager.execute(query, (title, title, sort_order, record_id, user_id))
+                        rows_affected = db_manager.execute(query, (title, title, sort_order, record_id, user_id))
+                        print(f"🔍 DEBUG 更新结果: rows_affected={rows_affected}")
+                        updated_count += rows_affected
 
+                print(f"✅ 批量更新成功: 共更新{updated_count}条记录")
                 self.send_json({'success': True, 'message': '批量更新成功'})
             except Exception as e:
                 print(f"❌ 批量更新失败: {e}")
@@ -7218,7 +7224,8 @@ class AssistantHandler(BaseHTTPRequestHandler):
                         result += `</div>`;
 
                         // 任务内容（不再显示序号）
-                        result += `<div style="flex: 1;">`;
+                        result += `<div style="flex: 1; display: flex; align-items: center; gap: 8px;">`;
+                        result += `<span style="flex: 1;">`;
                         if (content.startsWith('急')) {
                             result += `<span style="color:red;font-weight:bold;">${content}</span>`;
                         } else if (content.startsWith('重要')) {
@@ -7226,6 +7233,9 @@ class AssistantHandler(BaseHTTPRequestHandler):
                         } else {
                             result += content;
                         }
+                        result += `</span>`;
+                        // 添加编辑按钮
+                        result += `<button onclick="editListItem(${taskId}, '${content.replace(/'/g, "\\'")}', this)" style="padding: 4px 8px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; opacity: 0.7; transition: opacity 0.2s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">✏️</button>`;
                         result += `</div>`;
 
                         result += `</div>`;
@@ -10185,6 +10195,119 @@ class AssistantHandler(BaseHTTPRequestHandler):
             } catch (e) {
                 console.error('完成任务失败:', e);
                 alert('❌ 操作失败: ' + e.message);
+            }
+        }
+
+        // 编辑列表项
+        function editListItem(taskId, currentTitle, buttonElement) {
+            if (!taskId) {
+                alert('❌ 无效的任务ID');
+                return;
+            }
+
+            // 获取列表类型
+            const listContainer = buttonElement.closest('.list-container');
+            const listType = listContainer ? listContainer.getAttribute('data-list-type') : '';
+
+            // 创建编辑对话框
+            const modal = document.createElement('div');
+            modal.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0,0,0,0.5);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 10000;
+            `;
+
+            modal.innerHTML = `
+                <div style="background: #1e1e1e; padding: 24px; border-radius: 12px; width: 90%; max-width: 500px;">
+                    <h3 style="margin: 0 0 20px 0; color: #fff;">编辑内容</h3>
+                    <div style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 8px; color: #aaa;">内容</label>
+                        <textarea id="editListItemContent" rows="4" style="width: 100%; padding: 10px; border: 1px solid #444; border-radius: 6px; background: #2a2a2a; color: #fff; font-size: 14px; resize: vertical;">${currentTitle}</textarea>
+                    </div>
+                    <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                        <button onclick="this.closest('[style*=fixed]').remove()" style="padding: 10px 20px; border: 1px solid #444; border-radius: 6px; background: #2a2a2a; color: #fff; cursor: pointer;">取消</button>
+                        <button onclick="saveEditedListItem(${taskId}, '${listType}')" style="padding: 10px 20px; border: none; border-radius: 6px; background: #10a37f; color: #fff; cursor: pointer;">保存</button>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(modal);
+
+            // 点击背景关闭
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.remove();
+                }
+            });
+
+            // 聚焦到输入框
+            setTimeout(() => {
+                const textarea = document.getElementById('editListItemContent');
+                textarea.focus();
+                textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+            }, 100);
+        }
+
+        // 保存编辑后的列表项
+        async function saveEditedListItem(taskId, listType) {
+            const newContent = document.getElementById('editListItemContent').value.trim();
+
+            if (!newContent) {
+                alert('❌ 内容不能为空');
+                return;
+            }
+
+            try {
+                const token = localStorage.getItem('token');
+                let apiUrl, requestBody;
+
+                // 根据类别类型选择不同的API
+                if (listType === '工作') {
+                    // 工作任务使用 plan API
+                    apiUrl = '/api/plan/update';
+                    requestBody = {
+                        id: taskId,
+                        title: newContent
+                    };
+                } else {
+                    // 其他子类别使用 record API
+                    apiUrl = '/api/record/update';
+                    requestBody = {
+                        record_id: taskId,
+                        title: newContent
+                    };
+                }
+
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(token ? {'Authorization': 'Bearer ' + token} : {})
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (response.ok) {
+                    // 关闭对话框
+                    document.querySelector('[style*="position: fixed"]').remove();
+                    // 重新加载页面以显示更新后的数据
+                    alert('✅ 保存成功');
+                    location.reload();
+                } else {
+                    const error = await response.text();
+                    console.error('保存失败:', error);
+                    alert('❌ 保存失败');
+                }
+            } catch (e) {
+                console.error('保存失败:', e);
+                alert('❌ 保存失败: ' + e.message);
             }
         }
 
