@@ -1816,12 +1816,29 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 else:
                     # 记录在daily_records表中，使用daily_record_manager更新
                     print(f"🔍 DEBUG 记录在daily_records表中，使用daily_record_manager更新")
+                    update_success = False
+
                     if title is not None:
                         print(f"🔍 DEBUG 调用 update_record_title: record_id={record_id}, title={title}, user_id={user_id}")
-                        daily_record_manager.update_record_title(record_id, title, user_id)
+                        result = daily_record_manager.update_record_title(record_id, title, user_id)
+                        if result:
+                            update_success = True
+                        else:
+                            print(f"⚠️ WARNING update_record_title返回False: 没有行被更新")
+
                     if status is not None:
                         print(f"🔍 DEBUG 调用 update_record_status: record_id={record_id}, status={status}, user_id={user_id}")
-                        daily_record_manager.update_record_status(record_id, status, user_id)
+                        result = daily_record_manager.update_record_status(record_id, status, user_id)
+                        if result:
+                            update_success = True
+                        else:
+                            print(f"⚠️ WARNING update_record_status返回False: 没有行被更新")
+
+                    # 检查是否有任何更新成功
+                    if not update_success and (title is not None or status is not None):
+                        print(f"❌ 错误: 记录ID={record_id}不存在或不属于该用户")
+                        self.send_json({'success': False, 'message': '记录不存在或已被删除'}, status=404)
+                        return
 
                 print(f"✅ 记录更新成功: record_id={record_id}")
                 self.send_json({'success': True, 'message': '记录已更新'})
