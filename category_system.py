@@ -355,7 +355,7 @@ class DailyRecordManager(MySQLManager):
         return self.execute(query, (user_id, title, content, record_date,
                                    subcategory_id, mood, weather, tags, is_private))
 
-    def list_records(self, user_id, subcategory_id=None, start_date=None, end_date=None, status='pending'):
+    def list_records(self, user_id, subcategory_id=None, start_date=None, end_date=None, status=None):
         """列出记录"""
         conditions = ["user_id = %s"]
         params = [user_id]
@@ -392,7 +392,7 @@ class DailyRecordManager(MySQLManager):
         """搜索记录"""
         query = """
             SELECT * FROM daily_records
-            WHERE user_id = %s AND (title LIKE %s OR content LIKE %s)
+            WHERE user_id = %s AND (title LIKE %s OR content LIKE %s) AND status != 'completed'
             ORDER BY record_date DESC
         """
         pattern = f"%{keyword}%"

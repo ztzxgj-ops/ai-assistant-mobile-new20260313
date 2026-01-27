@@ -172,7 +172,7 @@ class AIAssistant:
                 SELECT dr.id, dr.title, dr.content, dr.created_at, dr.subcategory_id, dr.sort_order, s.name as subcategory_name
                 FROM daily_records dr
                 LEFT JOIN subcategories s ON dr.subcategory_id = s.id
-                WHERE dr.user_id = %s AND (dr.title LIKE %s OR dr.content LIKE %s)
+                WHERE dr.user_id = %s AND (dr.title LIKE %s OR dr.content LIKE %s) AND dr.status != 'completed'
                 ORDER BY dr.sort_order DESC, dr.created_at DESC
                 LIMIT 20
             """

@@ -385,6 +385,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 subcategory_id = result[0]['id']
 
                 # 获取记录列表
+                # 当status不指定时，返回所有记录（已完成+未完成），前端自行过滤
                 records = daily_record_manager.list_records(
                     user_id=user_id,
                     subcategory_id=subcategory_id,
