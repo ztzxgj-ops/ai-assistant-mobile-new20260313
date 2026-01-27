@@ -1801,20 +1801,11 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                # 首先检查记录是否在work_tasks表中
-                check_sql = "SELECT id FROM work_tasks WHERE id = %s AND user_id = %s LIMIT 1"
-                work_task_result = db_manager.query(check_sql, (record_id, user_id))
+                # 首先检查记录是否在daily_records表中（通过检查是否有subcategory_id）
+                check_daily_sql = "SELECT id, subcategory_id FROM daily_records WHERE id = %s AND user_id = %s LIMIT 1"
+                daily_record_result = db_manager.query(check_daily_sql, (record_id, user_id))
 
-                if work_task_result:
-                    # 记录在work_tasks表中，使用planner更新
-                    print(f"🔍 DEBUG 记录在work_tasks表中，使用planner更新")
-                    if title is not None:
-                        print(f"🔍 DEBUG 调用 planner.update_plan: record_id={record_id}, title={title}")
-                        planner.update_plan(record_id, user_id=user_id, title=title)
-                    if status is not None:
-                        print(f"🔍 DEBUG 调用 planner.update_plan: record_id={record_id}, status={status}")
-                        planner.update_plan(record_id, user_id=user_id, status=status)
-                else:
+                if daily_record_result:
                     # 记录在daily_records表中，使用daily_record_manager更新
                     print(f"🔍 DEBUG 记录在daily_records表中，使用daily_record_manager更新")
                     update_success = False
@@ -1837,6 +1828,25 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
                     # 检查是否有任何更新成功
                     if not update_success and (title is not None or status is not None):
+                        print(f"❌ 错误: 记录ID={record_id}不存在或不属于该用户")
+                        self.send_json({'success': False, 'message': '记录不存在或已被删除'}, status=404)
+                        return
+                else:
+                    # 记录不在daily_records表中，检查是否在work_tasks表中
+                    check_work_sql = "SELECT id FROM work_tasks WHERE id = %s AND user_id = %s LIMIT 1"
+                    work_task_result = db_manager.query(check_work_sql, (record_id, user_id))
+
+                    if work_task_result:
+                        # 记录在work_tasks表中，使用planner更新
+                        print(f"🔍 DEBUG 记录在work_tasks表中，使用planner更新")
+                        if title is not None:
+                            print(f"🔍 DEBUG 调用 planner.update_plan: record_id={record_id}, title={title}")
+                            planner.update_plan(record_id, user_id=user_id, title=title)
+                        if status is not None:
+                            print(f"🔍 DEBUG 调用 planner.update_plan: record_id={record_id}, status={status}")
+                            planner.update_plan(record_id, user_id=user_id, status=status)
+                    else:
+                        # 两个表中都找不到这个记录
                         print(f"❌ 错误: 记录ID={record_id}不存在或不属于该用户")
                         self.send_json({'success': False, 'message': '记录不存在或已被删除'}, status=404)
                         return
