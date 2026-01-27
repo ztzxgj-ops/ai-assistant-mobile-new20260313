@@ -27,6 +27,36 @@ def parse_batch_numbers(nums_str):
     return re.findall(r'\d+', nums_str)
 
 
+def sort_by_priority(records):
+    """按优先级排序记录：紧急 > 重要 > 普通
+
+    根据标题中的关键词进行排序：
+    - 包含"紧急"的排在最前
+    - 包含"重要"的排在中间
+    - 其他的排在最后
+    """
+    if not isinstance(records, list):
+        return []
+
+    if len(records) == 0:
+        return records
+
+    try:
+        def get_priority(record):
+            title = record.get('title', '') or record.get('content', '')
+            if '紧急' in str(title):
+                return 0  # 紧急优先级最高
+            elif '重要' in str(title):
+                return 1  # 重要优先级次高
+            else:
+                return 2  # 普通优先级最低
+
+        return sorted(records, key=get_priority)
+    except Exception as e:
+        print(f"❌ 排序异常: {e}")
+        return records
+
+
 class Command(ABC):
     """命令基类"""
 
@@ -870,6 +900,8 @@ class DynamicSubcategoryCommand(Command):
                 subcategory_id = self._get_subcategory_id(category_mgr, user_id)
                 if subcategory_id:
                     records = record_mgr.list_records(user_id, subcategory_id=subcategory_id, status='pending')
+                    # ✨ 按优先级排序：紧急 > 重要 > 普通
+                    records = sort_by_priority(records)
                 else:
                     records = []
 
@@ -912,22 +944,17 @@ class DynamicSubcategoryCommand(Command):
                 # 获取该子类别的所有未完成记录
                 subcategory_id = self._get_subcategory_id(category_mgr, user_id)
                 records = record_mgr.list_records(user_id, subcategory_id=subcategory_id, status='pending')
+                # ✨ 按优先级排序：紧急 > 重要 > 普通
+                records = sort_by_priority(records)
 
                 # 批量完成
                 completed_records = []
                 failed_nums = []
 
-                # ✨ 调试日志：打印所有记录
-                print(f"🔍 DEBUG: records总数={len(records)}")
-                for i, r in enumerate(records):
-                    print(f"🔍 DEBUG: records[{i}] = {r.get('content', r.get('title', ''))[:30]}")
-
                 for num_str in record_nums:
                     idx = int(num_str) - 1
-                    print(f"🔍 DEBUG: 用户输入序号={num_str}, 计算idx={idx}, records长度={len(records)}")
                     if 0 <= idx < len(records):
                         record = records[idx]
-                        print(f"🔍 DEBUG: 找到记录 records[{idx}] = {record.get('content', record.get('title', ''))[:30]}")
                         try:
                             record_mgr.update_record_status(record['id'], 'completed', user_id)
                             content = record['content'][:30]
@@ -962,6 +989,8 @@ class DynamicSubcategoryCommand(Command):
                 # 获取该子类别的所有未完成记录
                 subcategory_id = self._get_subcategory_id(category_mgr, user_id)
                 records = record_mgr.list_records(user_id, subcategory_id=subcategory_id, status='pending')
+                # ✨ 按优先级排序：紧急 > 重要 > 普通
+                records = sort_by_priority(records)
 
                 # 批量删除（从大到小删除）
                 deleted_records = []
@@ -1088,6 +1117,8 @@ class DynamicSubcategoryCommand(Command):
                     subcategory_id = self._get_subcategory_id(category_mgr, user_id)
                     if subcategory_id:
                         records = record_mgr.list_records(user_id, subcategory_id=subcategory_id, status='pending')
+                        # ✨ 按优先级排序：紧急 > 重要 > 普通
+                        records = sort_by_priority(records)
                     else:
                         records = []
 
@@ -1128,6 +1159,8 @@ class DynamicSubcategoryCommand(Command):
 
                     subcategory_id = self._get_subcategory_id(category_mgr, user_id)
                     records = record_mgr.list_records(user_id, subcategory_id=subcategory_id, status='pending')
+                    # ✨ 按优先级排序：紧急 > 重要 > 普通
+                    records = sort_by_priority(records)
 
                     completed_records = []
                     failed_nums = []
@@ -1166,6 +1199,8 @@ class DynamicSubcategoryCommand(Command):
 
                     subcategory_id = self._get_subcategory_id(category_mgr, user_id)
                     records = record_mgr.list_records(user_id, subcategory_id=subcategory_id, status='pending')
+                    # ✨ 按优先级排序：紧急 > 重要 > 普通
+                    records = sort_by_priority(records)
 
                     deleted_records = []
                     failed_nums = []
