@@ -3220,6 +3220,60 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 print(f"❌ 禁用系统类别失败: {e}")
                 self.send_json({'success': False, 'message': f'禁用失败: {str(e)}'}, status=500)
 
+        elif self.path == '/api/button-usage/record':
+            # 记录快捷按键使用
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            button_name = data.get('button_name')
+            if not button_name:
+                self.send_json({'success': False, 'message': '缺少按键名称'}, status=400)
+                return
+
+            try:
+                with db_manager.get_cursor() as cursor:
+                    # 使用INSERT ... ON DUPLICATE KEY UPDATE来增加计数
+                    cursor.execute("""
+                        INSERT INTO button_usage_stats (user_id, button_name, usage_count, last_used_at)
+                        VALUES (%s, %s, 1, NOW())
+                        ON DUPLICATE KEY UPDATE
+                            usage_count = usage_count + 1,
+                            last_used_at = NOW()
+                    """, (user_id, button_name))
+
+                self.send_json({
+                    'success': True,
+                    'message': '记录成功'
+                })
+            except Exception as e:
+                print(f"❌ 记录按键使用失败: {e}")
+                self.send_json({'success': False, 'message': f'记录失败: {str(e)}'}, status=500)
+
+        elif self.path == '/api/button-usage/stats':
+            # 获取快捷按键使用统计
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            try:
+                with db_manager.get_cursor() as cursor:
+                    cursor.execute("""
+                        SELECT button_name, usage_count, last_used_at
+                        FROM button_usage_stats
+                        WHERE user_id = %s
+                        ORDER BY usage_count DESC, last_used_at DESC
+                    """, (user_id,))
+                    stats = cursor.fetchall()
+
+                self.send_json({
+                    'success': True,
+                    'stats': stats
+                })
+            except Exception as e:
+                print(f"❌ 获取按键统计失败: {e}")
+                self.send_json({'success': False, 'message': f'获取失败: {str(e)}'}, status=500)
+
         else:
             self.send_error(404)
 
