@@ -1,5 +1,100 @@
 [
   {
+    "id": 105,
+    "timestamp": "2026-01-28 15:07:34",
+    "backup_dir": "backup-20260128-150706",
+    "status": "success",
+    "notes": "增加：在列表添加内容加入语音录入功能！",
+    "error": "",
+    "git_commit": "48d5d79a11b3783b5d39e0b5af12bae563c07536",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260128-150706.tar.gz",
+        "size": 12852499
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260128-150706.sql",
+        "size": 1004641
+      }
+    }
+  },
+  {
+    "id": 104,
+    "timestamp": "2026-01-28 11:54:18",
+    "backup_dir": "backup-20260128-115313",
+    "status": "success",
+    "notes": "修复：语音输入手动修改不生效问题。",
+    "error": "",
+    "git_commit": "48d5d79a11b3783b5d39e0b5af12bae563c07536",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260128-115313.tar.gz",
+        "size": 12851897
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260128-115313.sql",
+        "size": 1004515
+      }
+    }
+  },
+  {
+    "id": 103,
+    "timestamp": "2026-01-28 07:49:23",
+    "backup_dir": "backup-20260128-074909",
+    "status": "success",
+    "notes": "增加：新增无数据快捷菜单增加了“添加”功能",
+    "error": "",
+    "git_commit": "48d5d79a11b3783b5d39e0b5af12bae563c07536",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260128-074909.tar.gz",
+        "size": 12852002
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260128-074909.sql",
+        "size": 1002975
+      }
+    }
+  },
+  {
+    "id": 102,
+    "timestamp": "2026-01-28 01:57:12",
+    "backup_dir": "backup-20260128-015659",
+    "status": "success",
+    "notes": "完成：除“工作”外的用户自定义快捷按键功能！",
+    "error": "",
+    "git_commit": "48d5d79a11b3783b5d39e0b5af12bae563c07536",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260128-015659.tar.gz",
+        "size": 12851548
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260128-015659.sql",
+        "size": 1002060
+      }
+    }
+  },
+  {
+    "id": 101,
+    "timestamp": "2026-01-27 23:27:46",
+    "backup_dir": "backup-20260127-232732",
+    "status": "success",
+    "notes": "彻底解决“工作”以外类别，如“ai助理”“日记”等子类别查询、修改均已正常！",
+    "error": "",
+    "git_commit": "48d5d79a11b3783b5d39e0b5af12bae563c07536",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260127-232732.tar.gz",
+        "size": 12830516
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260127-232732.sql",
+        "size": 997338
+      }
+    }
+  },
+  {
     "id": 100,
     "timestamp": "2026-01-25 01:10:11",
     "backup_dir": "backup-20260125-010953",

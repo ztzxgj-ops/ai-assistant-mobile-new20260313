@@ -15,7 +15,7 @@ NC='\033[0m'
 # 配置
 SERVER="47.109.148.176"
 SERVER_USER="root"
-LOCAL_DIR="/Users/jry/gj/ai助理/xyMac"
+LOCAL_DIR="/Users/gj/编程/ai助理new"
 REMOTE_DIR="/var/www/ai-assistant"
 BACKUP_DIR="/root/backups"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)

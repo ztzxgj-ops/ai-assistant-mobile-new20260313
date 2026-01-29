@@ -784,19 +784,15 @@ class AIAssistant:
             # 如果不是命令，且是简单的关键词（2-10个字符），尝试作为分类查询
             if not is_command and 2 <= len(stripped_message) <= 10 and not any(c in stripped_message for c in ['？', '?', '吗', '呢', '：', ':']):
                 print(f"🔍 检测到纯分类查询模式: '{stripped_message}'")
-                # 尝试在子类别中查找
+                # 尝试在子类别中查找（包括用户自定义的）
                 from category_system import CategoryManager
                 category_mgr = CategoryManager()
                 all_categories = category_mgr.get_all_categories()
                 matched_subcategories = []
 
                 for category in all_categories:
-                    query = """
-                        SELECT * FROM subcategories
-                        WHERE category_id = %s
-                        ORDER BY sort_order, id
-                    """
-                    subcategories = category_mgr.query(query, (category['id'],))
+                    # 获取该类别下的所有子类别（包括系统预设和用户自定义）
+                    subcategories = category_mgr.get_subcategories(category['id'], user_id=user_id)
                     for sub in subcategories:
                         if stripped_message in sub['name']:
                             matched_subcategories.append(sub['name'])
@@ -820,25 +816,43 @@ class AIAssistant:
                     work_mgr = WorkTaskManager('mysql_config.json')
                     pending_tasks = work_mgr.list_tasks(user_id, status='pending')
                     if pending_tasks:
-                        self.last_response_context[user_id] = {
+                        # ✨ 改进：使用新的上下文格式
+                        if user_id not in self.last_response_context:
+                            self.last_response_context[user_id] = {}
+
+                        self.last_response_context[user_id]['工作'] = {
                             'type': 'work_list',
                             'data': pending_tasks,
+                            'subcategory_name': '工作',
                             'timestamp': datetime.now()
                         }
+
+                        self.last_response_context[user_id]['_latest'] = '工作'
                         print(f"🔍 保存工作列表上下文，共{len(pending_tasks)}个任务")
 
                 # ✨ 新增：检查是否是记录列表（如"未完成ai助理（共5个）："）
                 elif '未完成' in response_text and '（共' in response_text and '个）：' in response_text:
-                    # 直接使用命令返回的 list_data
-                    if 'list_data' in command_result:
-                        records = command_result['list_data']
-                        if records:
-                            self.last_response_context[user_id] = {
-                                'type': 'daily_records',
-                                'data': records,
-                                'timestamp': datetime.now()
-                            }
-                            print(f"🔍 保存记录列表上下文，共{len(records)}条记录")
+                    # ✨ 使用命令返回的 context 字段（包含 subcategory_name）
+                    if 'context' in command_result:
+                        context = command_result['context']
+                        subcategory_name = context.get('subcategory_name', 'unknown')
+
+                        # ✨ 改进：支持多个子类别上下文同时存在
+                        if user_id not in self.last_response_context:
+                            self.last_response_context[user_id] = {}
+
+                        # 使用子类别名称作为key，避免覆盖
+                        self.last_response_context[user_id][subcategory_name] = {
+                            'type': 'daily_records',
+                            'data': context.get('data', []),
+                            'subcategory_name': subcategory_name,
+                            'timestamp': datetime.now()
+                        }
+
+                        # 同时保存一个"最近"的引用，用于简单的上下文引用
+                        self.last_response_context[user_id]['_latest'] = subcategory_name
+
+                        print(f"🔍 保存记录列表上下文：{subcategory_name}，共{len(context.get('data', []))}条记录")
 
                 return command_result
         except Exception as e:
@@ -922,11 +936,17 @@ class AIAssistant:
                     response += f"{idx}. {item['title']}\n"
 
                 # ✨ 保存上下文：记录显示了工作列表
-                self.last_response_context[user_id] = {
+                if user_id not in self.last_response_context:
+                    self.last_response_context[user_id] = {}
+
+                self.last_response_context[user_id]['工作'] = {
                     'type': 'work_list',
                     'data': pending_items,
+                    'subcategory_name': '工作',
                     'timestamp': datetime.now()
                 }
+
+                self.last_response_context[user_id]['_latest'] = '工作'
             else:
                 response = "✅ 目前没有未完成的工作"
 
@@ -1118,11 +1138,17 @@ class AIAssistant:
                 # 获取未完成的工作任务
                 pending_items = self.get_all_work_items(user_id, status_filter='pending')
                 if pending_items:
-                    self.last_response_context[user_id] = {
+                    if user_id not in self.last_response_context:
+                        self.last_response_context[user_id] = {}
+
+                    self.last_response_context[user_id]['工作'] = {
                         'type': 'work_list',
                         'data': pending_items,
+                        'subcategory_name': '工作',
                         'timestamp': datetime.now()
                     }
+
+                    self.last_response_context[user_id]['_latest'] = '工作'
                     list_data = pending_items  # 传递给前端
                     print(f"🔍 保存列表上下文，共{len(pending_items)}个项目")
             except Exception as e:
@@ -1499,9 +1525,24 @@ class AIAssistant:
             print(f"🔍 DEBUG: 消息已是完整命令格式，跳过转换")
             return None
 
-        context = self.last_response_context[user_id]
-        context_type = context.get('type')
-        print(f"🔍 DEBUG: 找到上下文类型={context_type}")
+        # ✨ 改进：支持多个子类别上下文
+        user_contexts = self.last_response_context[user_id]
+
+        # 如果是旧格式（直接是上下文对象），兼容处理
+        if 'type' in user_contexts:
+            context = user_contexts
+            context_type = context.get('type')
+            print(f"🔍 DEBUG: 找到上下文类型={context_type}（旧格式）")
+        else:
+            # 新格式：使用最近的上下文
+            latest_subcategory = user_contexts.get('_latest')
+            if not latest_subcategory or latest_subcategory not in user_contexts:
+                print(f"🔍 DEBUG: 没有找到最近的上下文")
+                return None
+
+            context = user_contexts[latest_subcategory]
+            context_type = context.get('type')
+            print(f"🔍 DEBUG: 找到最近的上下文类型={context_type}，子类别={latest_subcategory}")
 
         # 检测引用模式：操作词 + 序号
         # 支持：删除1. / 删除1 / 完成2. / 完成2 / 第3个删除 等
@@ -1588,17 +1629,13 @@ class AIAssistant:
         from category_system import CategoryManager
         category_mgr = CategoryManager()
 
-        # 获取所有子类别
+        # 获取所有子类别（包括用户自定义的）
         all_categories = category_mgr.get_all_categories()
         matched_subcategories = []
 
         for category in all_categories:
-            query = """
-                SELECT * FROM subcategories
-                WHERE category_id = %s
-                ORDER BY sort_order, id
-            """
-            subcategories = category_mgr.query(query, (category['id'],))
+            # 获取该类别下的所有子类别（包括系统预设和用户自定义）
+            subcategories = category_mgr.get_subcategories(category['id'], user_id=user_id)
 
             for sub in subcategories:
                 # 检查子类别名称是否包含关键词

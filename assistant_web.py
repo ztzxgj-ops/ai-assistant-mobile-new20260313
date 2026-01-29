@@ -283,6 +283,11 @@ class AssistantHandler(BaseHTTPRequestHandler):
             if user_id is None:
                 return
             plans = planner.list_plans(user_id=user_id)
+
+            # ✨ 按优先级排序：紧急 > 重要 > 普通（与命令处理保持一致）
+            from command_system import sort_by_priority
+            plans = sort_by_priority(plans)
+
             self.send_json(plans)
         elif self.path == '/api/categories':
             # 获取所有类别树（包含子类别）
@@ -354,6 +359,11 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 status = query_params.get('status', [None])[0]
 
                 tasks = work_task_manager.list_tasks(user_id=user_id, status=status)
+
+                # ✨ 按优先级排序：紧急 > 重要 > 普通（与命令处理保持一致）
+                from command_system import sort_by_priority
+                tasks = sort_by_priority(tasks)
+
                 self.send_json(tasks)
             except Exception as e:
                 print(f"❌ 获取任务列表失败: {e}")
@@ -391,6 +401,11 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     subcategory_id=subcategory_id,
                     status=status
                 )
+
+                # ✨ 按优先级排序：紧急 > 重要 > 普通（与命令处理保持一致）
+                from command_system import sort_by_priority
+                records = sort_by_priority(records)
+
                 self.send_json(records)
             except Exception as e:
                 print(f"❌ 获取记录列表失败: {e}")
@@ -1396,12 +1411,21 @@ class AssistantHandler(BaseHTTPRequestHandler):
                         print(f"✅ 已保存命令上下文: type={command_result['context']['type']}, data_count={len(command_result['context']['data'])}{subcategory_info}")
 
                     # 是命令，直接返回命令结果
-                    self.send_json({
+                    response_data = {
                         'response': command_result.get('response', ''),
                         'detected_plans': [],
                         'detected_reminders': [],
                         'completed_plans': []
-                    })
+                    }
+                    # ✨ 传递空列表相关字段（用于显示"+ 添加"按钮）
+                    if 'empty_list' in command_result:
+                        response_data['empty_list'] = command_result['empty_list']
+                    if 'subcategory_name' in command_result:
+                        response_data['subcategory_name'] = command_result['subcategory_name']
+                    if 'add_action' in command_result:
+                        response_data['add_action'] = command_result['add_action']
+
+                    self.send_json(response_data)
                     return
 
                 # 不是命令，继续使用AI处理
@@ -1928,7 +1952,8 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 data.get('remind_time', ''),
                 data.get('repeat', '不重复'),
                 data.get('sound', 'Ping'),
-                user_id=user_id
+                user_id=user_id,
+                repeat_type=data.get('repeat_type', 'once')
             )
             self.send_json({'success': True, 'message': '提醒已添加'})
         
@@ -1952,7 +1977,8 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 data.get('remind_time', ''),
                 data.get('repeat', '不重复'),
                 data.get('sound', 'Ping'),
-                user_id=user_id
+                user_id=user_id,
+                repeat_type=data.get('repeat_type', 'once')
             )
             self.send_json({'success': True, 'message': '提醒已创建'})
         
@@ -2886,6 +2912,313 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
             result = guestbook_manager.add_reaction(message_id, user_id, reaction_type)
             self.send_json(result)
+
+        # ========================================
+        # 自定义类别管理API
+        # ========================================
+
+        elif self.path == '/api/custom-category/list':
+            # 获取用户自定义类别列表
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            try:
+                query = """
+                    SELECT s.id, s.name, s.code, s.description, s.sort_order, s.created_at
+                    FROM subcategories s
+                    JOIN categories c ON s.category_id = c.id
+                    WHERE c.code = 'other' AND s.user_id = %s
+                    ORDER BY s.sort_order ASC, s.created_at ASC
+                """
+                with db_manager.get_cursor() as cursor:
+                    cursor.execute(query, (user_id,))
+                    categories = cursor.fetchall()
+
+                self.send_json({
+                    'success': True,
+                    'categories': categories,
+                    'count': len(categories)
+                })
+            except Exception as e:
+                print(f"❌ 获取自定义类别失败: {e}")
+                self.send_json({'success': False, 'message': f'获取失败: {str(e)}'}, status=500)
+
+        elif self.path == '/api/custom-category/add':
+            # 添加自定义类别
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            name = data.get('name', '').strip()
+            if not name:
+                self.send_json({'success': False, 'message': '类别名称不能为空'}, status=400)
+                return
+
+            if len(name) > 10:
+                self.send_json({'success': False, 'message': '类别名称不能超过10个字符'}, status=400)
+                return
+
+            try:
+                # 获取"其他类"的ID
+                with db_manager.get_cursor() as cursor:
+                    cursor.execute("SELECT id FROM categories WHERE code = 'other'")
+                    result = cursor.fetchone()
+                    if not result:
+                        self.send_json({'success': False, 'message': '系统错误：未找到其他类'}, status=500)
+                        return
+
+                    other_category_id = result['id']
+
+                    # 检查是否已达到10个上限
+                    cursor.execute("""
+                        SELECT COUNT(*) as count FROM subcategories
+                        WHERE category_id = %s AND user_id = %s
+                    """, (other_category_id, user_id))
+                    count_result = cursor.fetchone()
+
+                    if count_result['count'] >= 10:
+                        self.send_json({'success': False, 'message': '自定义类别已达上限（最多10个）'}, status=400)
+                        return
+
+                    # 检查名称是否重复
+                    cursor.execute("""
+                        SELECT id FROM subcategories
+                        WHERE category_id = %s AND user_id = %s AND name = %s
+                    """, (other_category_id, user_id, name))
+                    if cursor.fetchone():
+                        self.send_json({'success': False, 'message': '类别名称已存在'}, status=400)
+                        return
+
+                    # 生成code（使用拼音或简单的编号）
+                    import time
+                    code = f"custom_{int(time.time() * 1000)}"
+
+                    # 插入新类别
+                    cursor.execute("""
+                        INSERT INTO subcategories (category_id, name, code, user_id, sort_order)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, (other_category_id, name, code, user_id, count_result['count'] + 1))
+
+                    new_id = cursor.lastrowid
+
+                self.send_json({
+                    'success': True,
+                    'message': '添加成功',
+                    'category': {
+                        'id': new_id,
+                        'name': name,
+                        'code': code
+                    }
+                })
+
+                # ✨ 重置命令路由器，使新类别立即可用
+                import sys
+                print(f"🔄 准备重置命令路由器，新类别: {name}")
+                sys.stdout.flush()
+
+                from command_system import reset_command_router
+                reset_command_router()
+
+                print(f"✅ 已重置命令路由器，新类别 '{name}' 将在下次请求时可用")
+                sys.stdout.flush()
+            except Exception as e:
+                print(f"❌ 添加自定义类别失败: {e}")
+                self.send_json({'success': False, 'message': f'添加失败: {str(e)}'}, status=500)
+
+        elif self.path == '/api/custom-category/delete':
+            # 删除自定义类别
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            category_id = data.get('id')
+            if not category_id:
+                self.send_json({'success': False, 'message': '缺少类别ID'}, status=400)
+                return
+
+            try:
+                with db_manager.get_cursor() as cursor:
+                    # 验证类别是否属于当前用户
+                    cursor.execute("""
+                        SELECT s.id, s.name
+                        FROM subcategories s
+                        JOIN categories c ON s.category_id = c.id
+                        WHERE s.id = %s AND s.user_id = %s AND c.code = 'other'
+                    """, (category_id, user_id))
+
+                    result = cursor.fetchone()
+                    if not result:
+                        self.send_json({'success': False, 'message': '类别不存在或权限不足'}, status=403)
+                        return
+
+                    # 检查是否有关联的任务
+                    cursor.execute("""
+                        SELECT COUNT(*) as count FROM work_tasks
+                        WHERE subcategory_id = %s AND user_id = %s
+                    """, (category_id, user_id))
+                    task_count = cursor.fetchone()['count']
+
+                    # 删除类别（关联的任务的subcategory_id会被设置为NULL，因为外键是ON DELETE SET NULL）
+                    cursor.execute("DELETE FROM subcategories WHERE id = %s", (category_id,))
+
+                self.send_json({
+                    'success': True,
+                    'message': '删除成功',
+                    'affected_tasks': task_count
+                })
+
+                # ✨ 重置命令路由器，使删除的类别立即失效
+                import sys
+                print(f"🔄 准备重置命令路由器，删除的类别: {result['name']}")
+                sys.stdout.flush()
+
+                from command_system import reset_command_router
+                reset_command_router()
+
+                print(f"✅ 已重置命令路由器，删除的类别将在下次请求时失效")
+                sys.stdout.flush()
+            except Exception as e:
+                print(f"❌ 删除自定义类别失败: {e}")
+                self.send_json({'success': False, 'message': f'删除失败: {str(e)}'}, status=500)
+
+        # ========================================
+        # 系统类别管理API
+        # ========================================
+
+        elif self.path == '/api/system-category/list':
+            # 获取所有系统预设的子类别
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            try:
+                query = """
+                    SELECT s.id, s.name, s.code, s.description, c.name as category_name, c.code as category_code
+                    FROM subcategories s
+                    JOIN categories c ON s.category_id = c.id
+                    WHERE s.user_id IS NULL
+                    ORDER BY c.sort_order ASC, s.sort_order ASC
+                """
+                with db_manager.get_cursor() as cursor:
+                    cursor.execute(query)
+                    categories = cursor.fetchall()
+
+                self.send_json({
+                    'success': True,
+                    'categories': categories
+                })
+            except Exception as e:
+                print(f"❌ 获取系统类别失败: {e}")
+                self.send_json({'success': False, 'message': f'获取失败: {str(e)}'}, status=500)
+
+        elif self.path == '/api/system-category/enabled':
+            # 获取用户已启用的系统类别
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            try:
+                query = """
+                    SELECT s.id, s.name, s.code, c.name as category_name
+                    FROM user_enabled_categories uec
+                    JOIN subcategories s ON uec.subcategory_id = s.id
+                    JOIN categories c ON s.category_id = c.id
+                    WHERE uec.user_id = %s
+                    ORDER BY uec.enabled_at ASC
+                """
+                with db_manager.get_cursor() as cursor:
+                    cursor.execute(query, (user_id,))
+                    enabled = cursor.fetchall()
+
+                self.send_json({
+                    'success': True,
+                    'enabled': enabled
+                })
+            except Exception as e:
+                print(f"❌ 获取已启用类别失败: {e}")
+                self.send_json({'success': False, 'message': f'获取失败: {str(e)}'}, status=500)
+
+        elif self.path == '/api/system-category/enable':
+            # 启用系统类别
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            subcategory_id = data.get('subcategory_id')
+            if not subcategory_id:
+                self.send_json({'success': False, 'message': '缺少子类别ID'}, status=400)
+                return
+
+            try:
+                with db_manager.get_cursor() as cursor:
+                    # 验证子类别是否存在且是系统类别
+                    cursor.execute("""
+                        SELECT s.id, s.name
+                        FROM subcategories s
+                        WHERE s.id = %s AND s.user_id IS NULL
+                    """, (subcategory_id,))
+
+                    result = cursor.fetchone()
+                    if not result:
+                        self.send_json({'success': False, 'message': '系统类别不存在'}, status=404)
+                        return
+
+                    # 检查是否已启用
+                    cursor.execute("""
+                        SELECT id FROM user_enabled_categories
+                        WHERE user_id = %s AND subcategory_id = %s
+                    """, (user_id, subcategory_id))
+
+                    if cursor.fetchone():
+                        self.send_json({'success': False, 'message': '该类别已启用'}, status=400)
+                        return
+
+                    # 启用类别
+                    cursor.execute("""
+                        INSERT INTO user_enabled_categories (user_id, subcategory_id)
+                        VALUES (%s, %s)
+                    """, (user_id, subcategory_id))
+
+                self.send_json({
+                    'success': True,
+                    'message': '启用成功',
+                    'category': result
+                })
+            except Exception as e:
+                print(f"❌ 启用系统类别失败: {e}")
+                self.send_json({'success': False, 'message': f'启用失败: {str(e)}'}, status=500)
+
+        elif self.path == '/api/system-category/disable':
+            # 禁用系统类别
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            subcategory_id = data.get('subcategory_id')
+            if not subcategory_id:
+                self.send_json({'success': False, 'message': '缺少子类别ID'}, status=400)
+                return
+
+            try:
+                with db_manager.get_cursor() as cursor:
+                    # 删除启用记录
+                    cursor.execute("""
+                        DELETE FROM user_enabled_categories
+                        WHERE user_id = %s AND subcategory_id = %s
+                    """, (user_id, subcategory_id))
+
+                    if cursor.rowcount == 0:
+                        self.send_json({'success': False, 'message': '该类别未启用'}, status=400)
+                        return
+
+                self.send_json({
+                    'success': True,
+                    'message': '禁用成功'
+                })
+            except Exception as e:
+                print(f"❌ 禁用系统类别失败: {e}")
+                self.send_json({'success': False, 'message': f'禁用失败: {str(e)}'}, status=500)
 
         else:
             self.send_error(404)

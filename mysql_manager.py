@@ -388,7 +388,7 @@ class ReminderSystemMySQL:
         self.running = False
         self.monitor_thread = None
     
-    def add_reminder(self, title=None, message=None, remind_time=None, repeat='不重复', sound='Ping', content=None, user_id=None):
+    def add_reminder(self, title=None, message=None, remind_time=None, repeat='不重复', sound='Ping', content=None, user_id=None, repeat_type='once'):
         """添加提醒（兼容新旧接口）"""
         # 兼容两种调用方式
         if content is None:
@@ -398,11 +398,25 @@ class ReminderSystemMySQL:
         if not content or not remind_time:
             raise ValueError("content和remind_time是必需的")
 
+        # 映射中文循环类型到英文
+        repeat_type_map = {
+            '不重复': 'once',
+            '单次': 'once',
+            '每天': 'daily',
+            '每周': 'weekly',
+            '每月': 'monthly',
+            '每年': 'yearly'
+        }
+
+        # 如果repeat参数是中文，转换为英文
+        if repeat in repeat_type_map:
+            repeat_type = repeat_type_map[repeat]
+
         sql = """
-            INSERT INTO reminders (user_id, content, remind_time, status, triggered)
-            VALUES (%s, %s, %s, 'pending', 0)
+            INSERT INTO reminders (user_id, content, remind_time, repeat_type, status, triggered)
+            VALUES (%s, %s, %s, %s, 'pending', 0)
         """
-        reminder_id = self.db.execute(sql, (user_id, content, remind_time))
+        reminder_id = self.db.execute(sql, (user_id, content, remind_time, repeat_type))
 
         # 返回兼容格式
         return {
@@ -410,6 +424,7 @@ class ReminderSystemMySQL:
             'message': content,
             'content': content,
             'remind_time': remind_time,
+            'repeat_type': repeat_type,
             'status': 'pending'
         }
     
@@ -417,7 +432,7 @@ class ReminderSystemMySQL:
         """获取所有待处理的提醒"""
         if user_id is not None:
             sql = """
-                SELECT id, content, remind_time, status, triggered
+                SELECT id, content, remind_time, repeat_type, status, triggered
                 FROM reminders
                 WHERE status = 'pending' AND user_id = %s
                 ORDER BY remind_time ASC
@@ -425,7 +440,7 @@ class ReminderSystemMySQL:
             return self.db.query(sql, (user_id,))
         else:
             sql = """
-                SELECT id, content, remind_time, status, triggered
+                SELECT id, content, remind_time, repeat_type, status, triggered
                 FROM reminders
                 WHERE status = 'pending'
                 ORDER BY remind_time ASC
@@ -436,7 +451,7 @@ class ReminderSystemMySQL:
     def reminders(self):
         """兼容旧接口：获取所有提醒（作为属性）"""
         sql = """
-            SELECT id, content, remind_time, status, triggered, created_at
+            SELECT id, content, remind_time, repeat_type, status, triggered, created_at
             FROM reminders
             ORDER BY remind_time ASC
         """
@@ -450,6 +465,7 @@ class ReminderSystemMySQL:
                 'message': r['content'],
                 'content': r['content'],
                 'remind_time': r['remind_time'].strftime('%Y-%m-%d %H:%M') if hasattr(r['remind_time'], 'strftime') else str(r['remind_time']),
+                'repeat_type': r.get('repeat_type', 'once'),
                 'status': '已触发' if r['triggered'] else ('已完成' if r['status'] == 'completed' else '活跃'),
                 'created_at': r['created_at'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(r['created_at'], 'strftime') else str(r['created_at'])
             })
@@ -458,7 +474,7 @@ class ReminderSystemMySQL:
     def list_reminders(self, user_id=None):
         """获取提醒列表（兼容旧接口）"""
         sql = """
-            SELECT id, content, remind_time, status, triggered, created_at
+            SELECT id, content, remind_time, repeat_type, status, triggered, created_at
             FROM reminders
             WHERE user_id = %s
             ORDER BY remind_time ASC
@@ -473,6 +489,7 @@ class ReminderSystemMySQL:
                 'message': r['content'],
                 'content': r['content'],
                 'remind_time': r['remind_time'].strftime('%Y-%m-%d %H:%M') if hasattr(r['remind_time'], 'strftime') else str(r['remind_time']),
+                'repeat_type': r.get('repeat_type', 'once'),
                 'status': '已触发' if r['triggered'] else ('已完成' if r['status'] == 'completed' else '活跃'),
                 'created_at': r['created_at'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(r['created_at'], 'strftime') else str(r['created_at'])
             })
