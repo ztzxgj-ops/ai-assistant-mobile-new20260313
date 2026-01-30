@@ -107,12 +107,13 @@ class ReminderScheduler:
             if not hasattr(self.db, 'execute'):
                 return
 
-            # 查询所有待处理的提醒
+            # 查询所有待处理的提醒（包含repeat_type字段）
             reminders = self.db.query(
                 """
-                SELECT id, user_id, content, remind_time, status
+                SELECT id, user_id, content, remind_time, status, repeat_type
                 FROM reminders
                 WHERE status = 'pending'
+                AND triggered = 0
                 AND remind_time <= %s
                 LIMIT 10
                 """,
@@ -146,9 +147,14 @@ class ReminderScheduler:
                 content = reminder['content']
                 remind_time = reminder['remind_time']
                 status = reminder['status']
+                repeat_type = reminder.get('repeat_type', 'once')
             else:
                 # 处理元组格式的提醒（向后兼容）
-                reminder_id, user_id, content, remind_time, status = reminder
+                if len(reminder) >= 6:
+                    reminder_id, user_id, content, remind_time, status, repeat_type = reminder[:6]
+                else:
+                    reminder_id, user_id, content, remind_time, status = reminder[:5]
+                    repeat_type = 'once'
 
             # 1. 发送本地通知（桌面端）
             self.notification_service.toast_notification(
@@ -177,10 +183,28 @@ class ReminderScheduler:
 
             # 3. 更新数据库状态
             if self.db and hasattr(self.db, 'execute'):
-                self.db.execute(
-                    "UPDATE reminders SET status = %s, triggered = %s WHERE id = %s",
-                    ('completed', 1, reminder_id)
-                )
+                # 如果是循环提醒，计算下一次提醒时间并更新
+                if repeat_type in ['daily', 'weekly', 'monthly', 'yearly']:
+                    next_remind_time = self._calculate_next_remind_time(remind_time, repeat_type)
+                    if next_remind_time:
+                        # 更新为下一次提醒时间，保持pending状态，重置triggered
+                        self.db.execute(
+                            "UPDATE reminders SET remind_time = %s, triggered = 0 WHERE id = %s",
+                            (next_remind_time, reminder_id)
+                        )
+                        print(f"🔄 循环提醒已更新，下次提醒时间: {next_remind_time}")
+                    else:
+                        # 计算失败，标记为completed
+                        self.db.execute(
+                            "UPDATE reminders SET status = %s, triggered = %s WHERE id = %s",
+                            ('completed', 1, reminder_id)
+                        )
+                else:
+                    # 单次提醒，标记为completed
+                    self.db.execute(
+                        "UPDATE reminders SET status = %s, triggered = %s WHERE id = %s",
+                        ('completed', 1, reminder_id)
+                    )
 
             print(f"✅ 已发送提醒: {content}")
 
@@ -202,6 +226,69 @@ class ReminderScheduler:
 
         except Exception as e:
             print(f"❌ 发送通知失败: {e}")
+
+    def _calculate_next_remind_time(self, current_time, repeat_type):
+        """
+        计算下一次提醒时间
+
+        Args:
+            current_time: 当前提醒时间（datetime或字符串）
+            repeat_type: 循环类型（'daily', 'weekly', 'monthly', 'yearly'）
+
+        Returns:
+            datetime: 下一次提醒时间，如果计算失败返回None
+        """
+        try:
+            # 确保current_time是datetime对象
+            if isinstance(current_time, str):
+                current_time = dt.fromisoformat(current_time.replace('Z', '+00:00'))
+            elif not isinstance(current_time, dt):
+                # 如果是其他类型（如date），转换为datetime
+                current_time = dt.combine(current_time, dt.min.time())
+
+            # 根据repeat_type计算下一次时间
+            if repeat_type == 'daily':
+                # 每天：加1天
+                next_time = current_time + timedelta(days=1)
+            elif repeat_type == 'weekly':
+                # 每周：加7天
+                next_time = current_time + timedelta(days=7)
+            elif repeat_type == 'monthly':
+                # 每月：加1个月（处理月末情况）
+                year = current_time.year
+                month = current_time.month + 1
+                if month > 12:
+                    year += 1
+                    month = 1
+                day = current_time.day
+                # 处理月末日期（如1月31日 -> 2月28日）
+                import calendar
+                max_day = calendar.monthrange(year, month)[1]
+                if day > max_day:
+                    day = max_day
+                next_time = dt(year, month, day, current_time.hour, current_time.minute)
+            elif repeat_type == 'yearly':
+                # 每年：加1年
+                year = current_time.year + 1
+                month = current_time.month
+                day = current_time.day
+                # 处理闰年2月29日的情况
+                if month == 2 and day == 29:
+                    import calendar
+                    if not calendar.isleap(year):
+                        day = 28
+                next_time = dt(year, month, day, current_time.hour, current_time.minute)
+            else:
+                print(f"⚠️ 未知的循环类型: {repeat_type}")
+                return None
+
+            return next_time
+
+        except Exception as e:
+            print(f"❌ 计算下一次提醒时间失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
     def add_reminder(self, user_id, message, remind_time, remind_type='once'):
         """
