@@ -408,8 +408,8 @@ class ReminderSystemMySQL:
             '每年': 'yearly'
         }
 
-        # 如果repeat参数是中文，转换为英文
-        if repeat in repeat_type_map:
+        # 只有当 repeat_type 是默认值 'once' 且 repeat 参数不是默认值时，才使用 repeat 参数
+        if repeat_type == 'once' and repeat in repeat_type_map and repeat != '不重复':
             repeat_type = repeat_type_map[repeat]
 
         sql = """
@@ -472,11 +472,13 @@ class ReminderSystemMySQL:
         return formatted
 
     def list_reminders(self, user_id=None):
-        """获取提醒列表（兼容旧接口）"""
+        """获取提醒列表（只返回未完成的提醒）"""
         sql = """
             SELECT id, content, remind_time, repeat_type, status, triggered, created_at
             FROM reminders
             WHERE user_id = %s
+            AND status = 'pending'
+            AND triggered = 0
             ORDER BY remind_time ASC
         """
         results = self.db.query(sql, (user_id,)) if user_id else []
@@ -491,6 +493,7 @@ class ReminderSystemMySQL:
                 'remind_time': r['remind_time'].strftime('%Y-%m-%d %H:%M') if hasattr(r['remind_time'], 'strftime') else str(r['remind_time']),
                 'repeat_type': r.get('repeat_type', 'once'),
                 'status': '已触发' if r['triggered'] else ('已完成' if r['status'] == 'completed' else '活跃'),
+                'triggered': r['triggered'],
                 'created_at': r['created_at'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(r['created_at'], 'strftime') else str(r['created_at'])
             })
         return formatted
@@ -524,7 +527,44 @@ class ReminderSystemMySQL:
             WHERE id = %s
         """
         self.db.execute(sql, (reminder_id,))
-    
+
+    def update_reminder(self, reminder_id, content=None, remind_time=None, repeat_type=None, user_id=None):
+        """更新提醒"""
+        if user_id is not None:
+            # 先检查权限
+            check_sql = "SELECT user_id FROM reminders WHERE id = %s"
+            result = self.db.query_one(check_sql, (reminder_id,))
+            if result and result.get('user_id') != user_id:
+                return False  # 权限不足
+
+        # 构建更新语句
+        update_fields = []
+        update_values = []
+
+        if content is not None:
+            update_fields.append("content = %s")
+            update_values.append(content)
+
+        if remind_time is not None:
+            update_fields.append("remind_time = %s")
+            update_values.append(remind_time)
+
+        if repeat_type is not None:
+            update_fields.append("repeat_type = %s")
+            update_values.append(repeat_type)
+
+        if not update_fields:
+            return True  # 没有需要更新的字段
+
+        update_values.append(reminder_id)
+        sql = f"""
+            UPDATE reminders
+            SET {', '.join(update_fields)}
+            WHERE id = %s
+        """
+        self.db.execute(sql, tuple(update_values))
+        return True
+
     def delete_reminder(self, reminder_id, user_id=None):
         """删除提醒"""
         if user_id is not None:
@@ -1451,6 +1491,189 @@ class KeywordManager:
         except Exception as e:
             print(f"⚠️ 获取关键词失败: {e}")
             return []
+
+
+class DeviceTokenManager:
+    """设备FCM Token管理器"""
+
+    def __init__(self, db_manager):
+        """
+        初始化设备Token管理器
+
+        Args:
+            db_manager: MySQLManager实例
+        """
+        self.db = db_manager
+
+    def save_device_token(self, user_id, device_token, device_type, device_name=None,
+                         device_model=None, app_version=None):
+        """
+        保存或更新设备token
+
+        Args:
+            user_id: 用户ID
+            device_token: FCM设备token
+            device_type: 设备类型 ('ios', 'android', 'web')
+            device_name: 设备名称（可选）
+            device_model: 设备型号（可选）
+            app_version: 应用版本（可选）
+
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            # 检查表是否存在
+            tables = self.db.query("SHOW TABLES LIKE 'device_tokens'")
+            if not tables:
+                print("⚠️ device_tokens表不存在，请先执行database_device_tokens.sql")
+                return False
+
+            sql = """
+                INSERT INTO device_tokens
+                (user_id, device_token, device_type, device_name, device_model, app_version, is_active, last_used_at)
+                VALUES (%s, %s, %s, %s, %s, %s, 1, NOW())
+                ON DUPLICATE KEY UPDATE
+                    user_id = VALUES(user_id),
+                    device_type = VALUES(device_type),
+                    device_name = VALUES(device_name),
+                    device_model = VALUES(device_model),
+                    app_version = VALUES(app_version),
+                    is_active = 1,
+                    last_used_at = NOW(),
+                    updated_at = NOW()
+            """
+
+            self.db.execute(sql, (user_id, device_token, device_type, device_name,
+                                 device_model, app_version))
+            print(f"✅ 设备token已保存: user_id={user_id}, type={device_type}")
+            return True
+
+        except Exception as e:
+            print(f"❌ 保存设备token失败: {e}")
+            return False
+
+    def get_user_device_tokens(self, user_id, active_only=True):
+        """
+        获取用户的所有设备token
+
+        Args:
+            user_id: 用户ID
+            active_only: 是否只返回活跃的token
+
+        Returns:
+            list: 设备token列表
+        """
+        try:
+            # 检查表是否存在
+            tables = self.db.query("SHOW TABLES LIKE 'device_tokens'")
+            if not tables:
+                return []
+
+            where_clause = "WHERE user_id = %s"
+            params = [user_id]
+
+            if active_only:
+                where_clause += " AND is_active = 1"
+
+            sql = f"""
+                SELECT id, device_token, device_type, device_name, device_model,
+                       app_version, is_active, created_at, updated_at, last_used_at
+                FROM device_tokens
+                {where_clause}
+                ORDER BY last_used_at DESC
+            """
+
+            return self.db.query(sql, params)
+
+        except Exception as e:
+            print(f"❌ 获取设备token失败: {e}")
+            return []
+
+    def deactivate_device_token(self, device_token):
+        """
+        停用设备token（不删除，只标记为不活跃）
+
+        Args:
+            device_token: 设备token
+
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            # 检查表是否存在
+            tables = self.db.query("SHOW TABLES LIKE 'device_tokens'")
+            if not tables:
+                return False
+
+            sql = """
+                UPDATE device_tokens
+                SET is_active = 0, updated_at = NOW()
+                WHERE device_token = %s
+            """
+
+            self.db.execute(sql, (device_token,))
+            print(f"✅ 设备token已停用: {device_token[:20]}...")
+            return True
+
+        except Exception as e:
+            print(f"❌ 停用设备token失败: {e}")
+            return False
+
+    def delete_device_token(self, device_token):
+        """
+        删除设备token
+
+        Args:
+            device_token: 设备token
+
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            # 检查表是否存在
+            tables = self.db.query("SHOW TABLES LIKE 'device_tokens'")
+            if not tables:
+                return False
+
+            sql = "DELETE FROM device_tokens WHERE device_token = %s"
+            self.db.execute(sql, (device_token,))
+            print(f"✅ 设备token已删除: {device_token[:20]}...")
+            return True
+
+        except Exception as e:
+            print(f"❌ 删除设备token失败: {e}")
+            return False
+
+    def cleanup_inactive_tokens(self, days=90):
+        """
+        清理长时间未使用的token
+
+        Args:
+            days: 多少天未使用视为过期
+
+        Returns:
+            int: 清理的token数量
+        """
+        try:
+            # 检查表是否存在
+            tables = self.db.query("SHOW TABLES LIKE 'device_tokens'")
+            if not tables:
+                return 0
+
+            sql = """
+                DELETE FROM device_tokens
+                WHERE last_used_at < DATE_SUB(NOW(), INTERVAL %s DAY)
+                OR (last_used_at IS NULL AND created_at < DATE_SUB(NOW(), INTERVAL %s DAY))
+            """
+
+            result = self.db.execute(sql, (days, days))
+            count = result if result else 0
+            print(f"✅ 已清理{count}个过期的设备token")
+            return count
+
+        except Exception as e:
+            print(f"❌ 清理设备token失败: {e}")
+            return 0
 
 
 if __name__ == '__main__':

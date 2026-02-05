@@ -933,7 +933,14 @@ class AIAssistant:
                 response = f"📋 未完成的工作（共{len(pending_items)}个）：\n\n"
                 for idx, item in enumerate(pending_items, 1):
                     # 所有数据现在都来自 work_tasks 表
-                    response += f"{idx}. {item['title']}\n"
+                    title = item['title']
+                    content = item.get('content', '') or item.get('description', '')
+
+                    # 如果有内容，显示标题和内容；否则只显示标题
+                    if content and content.strip():
+                        response += f"{idx}. {title}\n{content}\n\n"
+                    else:
+                        response += f"{idx}. {title}\n\n"
 
                 # ✨ 保存上下文：记录显示了工作列表
                 if user_id not in self.last_response_context:
@@ -1045,13 +1052,20 @@ class AIAssistant:
                 response = f"✅ {time_desc}已完成的工作（共{len(recent_completed)}个）：\n\n"
                 for idx, item in enumerate(recent_completed, 1):
                     # 所有数据现在都来自 work_tasks 表
+                    title = item['title']
+                    content = item.get('content', '') or item.get('description', '')
                     completed_time = ""
                     if item.get('updated_at'):
                         if isinstance(item['updated_at'], str):
                             completed_time = f" (完成于: {item['updated_at'][:10]})"
                         elif isinstance(item['updated_at'], datetime):
                             completed_time = f" (完成于: {item['updated_at'].strftime('%Y-%m-%d')})"
-                    response += f"{idx}. {item['title']}{completed_time}\n"
+
+                    # 如果有内容，显示标题和内容；否则只显示标题
+                    if content and content.strip():
+                        response += f"{idx}. {title}{completed_time}\n{content}\n\n"
+                    else:
+                        response += f"{idx}. {title}{completed_time}\n\n"
             else:
                 response = f"✅ {time_desc}没有已完成的工作"
 
@@ -1076,6 +1090,21 @@ class AIAssistant:
         if verification_check:
             print(f"🔍 DEBUG chat: 需要验证，返回拦截消息")
             return verification_check
+
+        # ✨ 如果有file_id，获取文件信息并添加到消息中
+        if file_id:
+            try:
+                file_info = self.file_manager.get_file(file_id, user_id)
+                if file_info:
+                    file_type = file_info.get('category', 'file')
+                    file_name = file_info.get('original_name', '文件')
+                    if file_type == 'image':
+                        user_message = f"{user_message}\n[用户发送了图片: {file_name}]"
+                    else:
+                        user_message = f"{user_message}\n[用户发送了文件: {file_name}]"
+                    print(f"📎 添加文件信息到消息: {file_name}, 类型: {file_type}")
+            except Exception as e:
+                print(f"⚠️ 获取文件信息失败: {e}")
 
         context = self.get_smart_context(user_message, user_id, ai_assistant_name)
 

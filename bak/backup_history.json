@@ -1,5 +1,43 @@
 [
   {
+    "id": 107,
+    "timestamp": "2026-02-02 00:22:12",
+    "backup_dir": "backup-20260202-002156",
+    "status": "success",
+    "notes": "编辑栏手动排序保存成功！",
+    "error": "",
+    "git_commit": "86a6b90fc9951e868f4a74eab0968ff0dc3bcd0b",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260202-002156.tar.gz",
+        "size": 13325531
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260202-002156.sql",
+        "size": 1084698
+      }
+    }
+  },
+  {
+    "id": 106,
+    "timestamp": "2026-02-01 21:26:06",
+    "backup_dir": "backup-20260201-212547",
+    "status": "success",
+    "notes": "变更: 修复循环提醒消失的bug：提醒触发后自动计算并更新下一次提醒时间; 实现快捷按键使用频率统计和排序功能; 优化单项内容容量至1000字（主项目） (共4个提交) + 有未提交的代码修改",
+    "error": "",
+    "git_commit": "86a6b90fc9951e868f4a74eab0968ff0dc3bcd0b",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260201-212547.tar.gz",
+        "size": 13323775
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260201-212547.sql",
+        "size": 1084326
+      }
+    }
+  },
+  {
     "id": 105,
     "timestamp": "2026-01-28 15:07:34",
     "backup_dir": "backup-20260128-150706",

@@ -923,11 +923,16 @@ class DynamicSubcategoryCommand(Command):
 
                 response = f"未完成{self.name}（共{len(records)}个）：\n\n"
                 for idx, record in enumerate(records, 1):
-                    # ✨ 优先显示 title，如果 title 为空则显示 content
-                    display_text = record.get('title') or record.get('content', '')
-                    if len(display_text) > 50:
-                        display_text = display_text[:50]
-                    response += f"{idx}. {display_text}\n"
+                    # 优先显示完整content，如果content为空则显示title
+                    content = record.get('content', '')
+                    title = record.get('title', '')
+
+                    # 如果有content，只显示content（避免与title重复）
+                    # 如果content为空，则显示title
+                    if content and content.strip():
+                        response += f"{idx}. {content}\n\n"
+                    else:
+                        response += f"{idx}. {title}\n\n"
 
                 # ✨ 返回上下文信息，供AI系统使用
                 return {
@@ -1478,11 +1483,16 @@ class DynamicSubcategoryCommand(Command):
 
                 response = f"未完成{self.name}（共{len(records)}个）：\n\n"
                 for idx, record in enumerate(records, 1):
-                    # ✨ 优先显示 title，如果 title 为空则显示 content
-                    display_text = record.get('title') or record.get('content', '')
-                    if len(display_text) > 50:
-                        display_text = display_text[:50]
-                    response += f"{idx}. {display_text}\n"
+                    # 优先显示完整content，如果content为空则显示title
+                    content = record.get('content', '')
+                    title = record.get('title', '')
+
+                    # 如果有content，只显示content（避免与title重复）
+                    # 如果content为空，则显示title
+                    if content and content.strip():
+                        response += f"{idx}. {content}\n\n"
+                    else:
+                        response += f"{idx}. {title}\n\n"
 
                 # ✨ 返回上下文信息，供AI系统使用
                 return {

@@ -18,6 +18,15 @@ except ImportError:
     WEBSOCKET_AVAILABLE = False
     print("⚠️ WebSocket 模块未安装，将不支持移动端推送")
 
+# 导入 FCM 推送服务
+try:
+    from fcm_push_service import get_fcm_service
+    from mysql_manager import DeviceTokenManager
+    FCM_AVAILABLE = True
+except ImportError:
+    FCM_AVAILABLE = False
+    print("⚠️ FCM 模块未安装，将不支持推送通知")
+
 class ReminderScheduler:
     """提醒调度器 - 在后台管理和发送提醒"""
 
@@ -45,6 +54,18 @@ class ReminderScheduler:
                 print("✅ WebSocket 服务器已初始化")
             except Exception as e:
                 print(f"⚠️ WebSocket 服务器初始化失败: {e}")
+
+        # 初始化 FCM 推送服务
+        self.fcm_service = None
+        self.device_token_manager = None
+        if FCM_AVAILABLE:
+            try:
+                self.fcm_service = get_fcm_service()
+                if self.db:
+                    self.device_token_manager = DeviceTokenManager(self.db)
+                print("✅ FCM 推送服务已初始化")
+            except Exception as e:
+                print(f"⚠️ FCM 推送服务初始化失败: {e}")
 
     def start(self):
         """启动调度器"""
@@ -181,7 +202,41 @@ class ReminderScheduler:
             else:
                 print(f"⚠️ ws_server 为 None，无法推送")
 
-            # 3. 更新数据库状态
+            # 3. 通过 FCM 推送到移动端（支持后台通知）
+            if self.fcm_service and self.device_token_manager:
+                try:
+                    # 获取用户的所有活跃设备token
+                    devices = self.device_token_manager.get_user_device_tokens(user_id, active_only=True)
+
+                    if devices:
+                        device_tokens = [d['device_token'] for d in devices]
+                        print(f"📱 准备发送FCM推送到 {len(device_tokens)} 个设备")
+
+                        # 发送FCM推送通知
+                        result = self.fcm_service.send_reminder_notification(
+                            device_tokens=device_tokens,
+                            reminder_content=content,
+                            reminder_id=reminder_id
+                        )
+
+                        if result.get('success') or result.get('success_count', 0) > 0:
+                            print(f"✅ FCM推送成功: {result}")
+                        else:
+                            print(f"⚠️ FCM推送失败: {result}")
+                    else:
+                        print(f"⚠️ 用户 {user_id} 没有注册的设备token")
+
+                except Exception as e:
+                    print(f"❌ FCM推送失败: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                if not self.fcm_service:
+                    print(f"⚠️ FCM服务未初始化")
+                if not self.device_token_manager:
+                    print(f"⚠️ DeviceTokenManager未初始化")
+
+            # 4. 更新数据库状态
             if self.db and hasattr(self.db, 'execute'):
                 # 如果是循环提醒，计算下一次提醒时间并更新
                 if repeat_type in ['daily', 'weekly', 'monthly', 'yearly']:

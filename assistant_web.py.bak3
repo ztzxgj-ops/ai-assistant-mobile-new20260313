@@ -17,13 +17,12 @@ from io import BytesIO
 from decimal import Decimal
 
 # 初始化数据库和管理器
-from mysql_manager import MySQLManager, DeviceTokenManager
+from mysql_manager import MySQLManager
 from ai_chat_assistant import AIAssistant
 from user_manager import UserManager
 from notification_service import get_notification_service, get_notification_queue
 from reminder_scheduler import get_global_scheduler
 from verification_service import get_verification_manager
-from fcm_push_service import get_fcm_service
 from category_system import (
     CategoryManager,
     WorkTaskManager,
@@ -45,10 +44,6 @@ friendship_manager = FriendshipManager(db_manager)
 private_message_manager = PrivateMessageManager(db_manager, friendship_manager)
 shared_content_manager = SharedContentManager(db_manager, friendship_manager)
 guestbook_manager = GuestbookManager(db_manager, friendship_manager)
-
-# 初始化FCM推送服务和设备Token管理器
-device_token_manager = DeviceTokenManager(db_manager)
-fcm_service = get_fcm_service()
 
 # 从AI助手获取管理器
 memory = ai_assistant.memory
@@ -1158,28 +1153,6 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 import traceback
                 traceback.print_exc()
                 self.send_json({'success': False, 'message': str(e)}, status=500)
-
-        # ========== FCM推送通知相关API (GET) ==========
-        elif self.path == '/api/device/list':
-            # 获取用户的设备列表
-            user_id = self.require_auth()
-            if user_id is None:
-                return
-
-            try:
-                devices = device_token_manager.get_user_device_tokens(user_id, active_only=False)
-
-                # 转换datetime为字符串
-                for device in devices:
-                    for key in ['created_at', 'updated_at', 'last_used_at']:
-                        if key in device and device[key]:
-                            device[key] = device[key].isoformat() if hasattr(device[key], 'isoformat') else str(device[key])
-
-                self.send_json({'status': 'success', 'devices': devices})
-
-            except Exception as e:
-                print(f"❌ 获取设备列表失败: {e}")
-                self.send_json({'status': 'error', 'message': str(e)}, status=500)
 
         else:
             self.send_error(404)
@@ -2312,11 +2285,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                             user_id=user_id
                         )
                         print(f"✅ 图片已同步到文件管理，image_id={image_id}")
-                    except Exception as e:
-                        print(f"⚠️ 同步到images表失败: {e}")
-
-                # 返回文件信息 - file_path 格式应为 /uploads/files/xxx.pdf (前端使用)
-                relative_path = f"/{file_path}" if not file_path.startswith('/') else file_path
+                    relative_path = f"/{file_path}" if not file_path.startswith('/') else file_path
                 relative_thumbnail = f"/{thumbnail_path}" if thumbnail_path and not thumbnail_path.startswith('/') else thumbnail_path
 
                 file_info = {
@@ -3655,105 +3624,6 @@ class AssistantHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"❌ 获取隐藏按键列表失败: {e}")
                 self.send_json({'success': False, 'message': f'获取失败: {str(e)}'}, status=500)
-
-        # ========== FCM推送通知相关API ==========
-        elif self.path == '/api/device/register-token':
-            # 注册设备token
-            user_id = self.require_auth()
-            if user_id is None:
-                return
-
-            try:
-                content_length = int(self.headers['Content-Length'])
-                post_data = self.rfile.read(content_length)
-                data = json.loads(post_data.decode('utf-8'))
-
-                device_token = data.get('device_token')
-                device_type = data.get('device_type')
-                device_name = data.get('device_name')
-                device_model = data.get('device_model')
-                app_version = data.get('app_version')
-
-                if not device_token or not device_type:
-                    self.send_json({'status': 'error', 'message': '缺少必要参数'}, status=400)
-                    return
-
-                success = device_token_manager.save_device_token(
-                    user_id=user_id,
-                    device_token=device_token,
-                    device_type=device_type,
-                    device_name=device_name,
-                    device_model=device_model,
-                    app_version=app_version
-                )
-
-                if success:
-                    self.send_json({'status': 'success', 'message': '设备token已注册'})
-                else:
-                    self.send_json({'status': 'error', 'message': '注册失败'}, status=500)
-
-            except Exception as e:
-                print(f"❌ 注册设备token失败: {e}")
-                self.send_json({'status': 'error', 'message': str(e)}, status=500)
-
-        elif self.path == '/api/device/deactivate-token':
-            # 停用设备token
-            user_id = self.require_auth()
-            if user_id is None:
-                return
-
-            try:
-                content_length = int(self.headers['Content-Length'])
-                post_data = self.rfile.read(content_length)
-                data = json.loads(post_data.decode('utf-8'))
-
-                device_token = data.get('device_token')
-
-                if not device_token:
-                    self.send_json({'status': 'error', 'message': '缺少device_token参数'}, status=400)
-                    return
-
-                success = device_token_manager.deactivate_device_token(device_token)
-
-                if success:
-                    self.send_json({'status': 'success', 'message': '设备token已停用'})
-                else:
-                    self.send_json({'status': 'error', 'message': '停用失败'}, status=500)
-
-            except Exception as e:
-                print(f"❌ 停用设备token失败: {e}")
-                self.send_json({'status': 'error', 'message': str(e)}, status=500)
-
-        elif self.path == '/api/device/test-push':
-            # 测试推送通知
-            user_id = self.require_auth()
-            if user_id is None:
-                return
-
-            try:
-                devices = device_token_manager.get_user_device_tokens(user_id, active_only=True)
-
-                if not devices:
-                    self.send_json({'status': 'error', 'message': '没有找到活跃的设备token'}, status=404)
-                    return
-
-                device_tokens = [d['device_token'] for d in devices]
-
-                result = fcm_service.send_reminder_notification(
-                    device_tokens=device_tokens,
-                    reminder_content='这是一条测试推送通知',
-                    reminder_id=None
-                )
-
-                self.send_json({
-                    'status': 'success' if result.get('success') or result.get('success_count', 0) > 0 else 'error',
-                    'message': '推送通知已发送',
-                    'result': result
-                })
-
-            except Exception as e:
-                print(f"❌ 测试推送失败: {e}")
-                self.send_json({'status': 'error', 'message': str(e)}, status=500)
 
         else:
             self.send_error(404)
@@ -6289,19 +6159,6 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 background: #007bff !important;
                 box-shadow: none !important;
             }
-
-            /* 移动端文件按钮样式 */
-            .file-button {
-                width: 32px !important;
-                height: 32px !important;
-                margin-right: 4px !important;
-                background: linear-gradient(135deg, #9B9B9B 0%, #7A7A7A 50%, #5A5A5A 100%) !important;
-                flex-shrink: 0 !important;
-            }
-
-            .file-button span {
-                font-size: 18px !important;
-            }
         }
 
         @media (max-width: 480px) {
@@ -6441,39 +6298,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
             text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
             font-weight: bold;
         }
-
-        /* 文件上传按钮样式 */
-        .file-button {
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
-            padding: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: linear-gradient(135deg, #9B9B9B 0%, #7A7A7A 50%, #5A5A5A 100%);
-            border: none;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2),
-                        inset 0 1px 2px rgba(255, 255, 255, 0.3);
-            flex-shrink: 0;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            margin-right: 6px;
-        }
-
-        .file-button:hover {
-            background: linear-gradient(135deg, #ABABAB 0%, #8A8A8A 50%, #6A6A6A 100%);
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3),
-                        inset 0 1px 2px rgba(255, 255, 255, 0.4);
-            transform: translateY(-1px);
-        }
-
-        .file-button:active {
-            transform: translateY(1px);
-            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2),
-                        inset 0 1px 2px rgba(255, 255, 255, 0.2);
-        }
-
+        
         .card {
             background: rgba(30, 30, 30, 0.6);
             backdrop-filter: blur(10px);
@@ -7236,24 +7061,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 font-size: 16px !important;
                 margin-left: 2px !important;
             }
-
-            /* 移动端文件按钮样式 */
-            .file-button {
-                width: 30px !important;
-                height: 30px !important;
-                margin: 0 2px 1px 0 !important;
-                min-width: 30px !important;
-                background: linear-gradient(135deg, #9B9B9B 0%, #7A7A7A 50%, #5A5A5A 100%) !important;
-                flex-shrink: 0 !important;
-                display: flex !important;
-                align-items: center !important;
-                justify-content: center !important;
-            }
-
-            .file-button span {
-                font-size: 16px !important;
-            }
-
+            
             /* 5. 样式修复 */
             .sidebar { display: none !important; }
             .message { display: flex !important; width: 100% !important; margin-bottom: 16px !important; color: #1a1a1a !important; }
@@ -7378,25 +7186,12 @@ class AssistantHandler(BaseHTTPRequestHandler):
                         <div class="input-container">
                             <div class="input-wrapper">
                                 <input type="file" id="imageUpload" accept="image/*" multiple style="display:none" onchange="handleImageSelect(event)">
-                                <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none" onchange="handleCameraCapture(event)">
                                 <input type="file" id="fileUpload" style="display:none" onchange="handleFileSelect(event)">
-
-                                <!-- 文件上传按钮组 -->
-                                <button class="file-button" onclick="document.getElementById('cameraInput').click()" title="拍照">
-                                    <span style="font-size: 20px;">📷</span>
-                                </button>
-                                <button class="file-button" onclick="document.getElementById('imageUpload').click()" title="选择图片">
-                                    <span style="font-size: 20px;">🖼️</span>
-                                </button>
-                                <button class="file-button" onclick="document.getElementById('fileUpload').click()" title="选择文件">
-                                    <span style="font-size: 20px;">📎</span>
-                                </button>
-
                                 <textarea id="aiInput" rows="1" placeholder="How can I help you?" oninput="autoResizeTextarea(this)" onkeydown="handleAIKeyPress(event)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="search" name="chat_input" data-form-type="other"></textarea>
                                 <button class="send-button" onclick="sendAI()">
                                     <span style="font-size: 24px;">▶</span>
                                 </button>
-                            </div>
+                            </div>        
                 <!-- 图片预览区域 -->
                 <div id="imagePreviewContainer" style="display:none; margin-top:15px;">
                     <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;" id="imagePreviewList">
@@ -8904,7 +8699,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 const base64Data = e.target.result;
                 
                 try {
-                    const response = await fetch('/api/file/upload', {
+                    const response = await fetch('/ai/api/file/upload', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -8958,25 +8753,12 @@ class AssistantHandler(BaseHTTPRequestHandler):
         function handleImageSelect(event) {
             const files = event.target.files;
             if (!files || files.length === 0) return;
-
+            
             // 按钮选择时，清空之前及其预览（标准文件输入行为）
             selectedImages = [];
             document.getElementById('imagePreviewList').innerHTML = '';
-
+            
             addFilesToPreview(files);
-        }
-
-        // 处理拍照
-        function handleCameraCapture(event) {
-            const files = event.target.files;
-            if (!files || files.length === 0) return;
-
-            // 拍照后直接上传并发送
-            const file = files[0];
-            uploadAndSendFile(file);
-
-            // 清空input以便下次拍照
-            event.target.value = '';
         }
 
         function addFilesToPreview(files) {
@@ -9180,91 +8962,6 @@ class AssistantHandler(BaseHTTPRequestHandler):
             const loadingEl = document.getElementById(loadingId);
             if (loadingEl) {
                 loadingEl.remove();
-            }
-        }
-
-        // 上传文件并发送消息
-        async function uploadAndSendFile(file, message = '') {
-            try {
-                // 显示上传中提示
-                const loadingId = showLoading();
-
-                // 读取文件为base64
-                const reader = new FileReader();
-                reader.onload = async function(e) {
-                    try {
-                        const fileData = e.target.result;
-
-                        // 上传文件到服务器
-                        const response = await fetch('/api/file/upload', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': 'Bearer ' + localStorage.getItem('token')
-                            },
-                            body: JSON.stringify({
-                                file_data: fileData,
-                                original_name: file.name,
-                                mime_type: file.type,
-                                description: message || '聊天中发送的文件',
-                                tags: []
-                            })
-                        });
-
-                        const result = await response.json();
-
-                        if (result.success && result.file) {
-                            // 移除加载动画
-                            removeLoading(loadingId);
-
-                            // 设置文件ID并发送消息
-                            currentFileId = result.file.id;
-
-                            // 显示用户消息（包含文件信息）
-                            const fileInfo = {
-                                name: result.file.original_name,
-                                size: result.file.file_size
-                            };
-                            appendAI('user', message || '发送了文件', null, fileInfo);
-
-                            // 发送到AI
-                            const aiResponse = await fetch('/api/ai/chat', {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    'Authorization': 'Bearer ' + localStorage.getItem('token'),
-                                    'X-Session-ID': getOrCreateSessionId()
-                                },
-                                body: JSON.stringify({
-                                    message: message || '我发送了一个文件',
-                                    file_id: currentFileId
-                                })
-                            });
-
-                            const aiResult = await aiResponse.json();
-
-                            // 显示AI回复
-                            if (aiResult.response) {
-                                appendAI('assistant', aiResult.response);
-                            }
-
-                            // 清空文件ID
-                            currentFileId = null;
-                        } else {
-                            removeLoading(loadingId);
-                            alert('文件上传失败：' + (result.message || result.error || '未知错误'));
-                        }
-                    } catch (error) {
-                        removeLoading(loadingId);
-                        console.error('上传文件出错:', error);
-                        alert('上传文件出错：' + error.message);
-                    }
-                };
-
-                reader.readAsDataURL(file);
-            } catch (error) {
-                console.error('处理文件出错:', error);
-                alert('处理文件出错：' + error.message);
             }
         }
 

@@ -342,6 +342,11 @@ class DailyRecordManager(MySQLManager):
     def add_record(self, user_id, content, title='', record_date=None,
                    subcategory_id=None, mood='', weather='', tags='', is_private=False):
         """添加记录"""
+        # ✨ 防止创建空记录：title 和 content 都为空时不添加
+        if (not title or title.strip() == '') and (not content or content.strip() == ''):
+            print(f"⚠️ 警告：尝试创建空记录，已拒绝")
+            return None
+
         if not record_date:
             from datetime import datetime
             record_date = datetime.now().strftime('%Y-%m-%d')
@@ -372,6 +377,9 @@ class DailyRecordManager(MySQLManager):
         if status:
             conditions.append("status = %s")
             params.append(status)
+
+        # ✨ 过滤掉 title 和 content 都为空的记录（必须用括号包裹整个条件）
+        conditions.append("((title IS NOT NULL AND title != '') OR (content IS NOT NULL AND content != ''))")
 
         query = f"""
             SELECT * FROM daily_records

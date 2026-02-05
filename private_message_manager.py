@@ -6,6 +6,7 @@
 """
 
 from datetime import datetime
+import sys
 
 
 class PrivateMessageManager:
@@ -165,48 +166,86 @@ class PrivateMessageManager:
               'last_message', 'last_message_time', 'unread_count'}]
         """
         try:
-            # 查询所有与user_id相关的消息，按对方ID分组
+            # 使用更简单的查询：先获取所有相关消息，然后在Python中处理
             sql = """
                 SELECT
-                    CASE
-                        WHEN pm.sender_id = %s THEN pm.receiver_id
-                        ELSE pm.sender_id
-                    END as friend_id,
-                    u.username as friend_username,
-                    u.avatar_url as friend_avatar,
-                    (SELECT content FROM private_messages
-                     WHERE (sender_id = %s AND receiver_id = friend_id)
-                        OR (sender_id = friend_id AND receiver_id = %s)
-                     ORDER BY created_at DESC LIMIT 1) as last_message,
-                    MAX(pm.created_at) as last_message_time,
-                    SUM(CASE WHEN pm.receiver_id = %s AND pm.is_read = 0 THEN 1 ELSE 0 END) as unread_count
+                    pm.id,
+                    pm.sender_id,
+                    pm.receiver_id,
+                    pm.content,
+                    pm.created_at,
+                    pm.is_read
                 FROM private_messages pm
-                JOIN users u ON u.id = CASE
-                    WHEN pm.sender_id = %s THEN pm.receiver_id
-                    ELSE pm.sender_id
-                END
                 WHERE pm.sender_id = %s OR pm.receiver_id = %s
-                GROUP BY friend_id, u.username, u.avatar_url
-                ORDER BY last_message_time DESC
+                ORDER BY pm.created_at DESC
             """
-            results = self.db.query(sql, (user_id, user_id, user_id, user_id, user_id, user_id, user_id))
+            messages = self.db.query(sql, (user_id, user_id))
 
-            # 添加调试日志
-            print(f"🔍 [get_conversation_list] user_id={user_id}, 查询结果数量: {len(results) if results else 0}")
-            if results:
-                for item in results:
-                    print(f"  - friend_id={item.get('friend_id')}, friend_username={item.get('friend_username')}, friend_avatar={item.get('friend_avatar')}")
+            print(f"🔍 [get_conversation_list] user_id={user_id}, 查询到消息数量: {len(messages) if messages else 0}", flush=True)
+            sys.stdout.flush()
+
+            if not messages:
+                return []
+
+            # 在Python中按好友ID分组
+            conversations = {}
+            for msg in messages:
+                # 确定对方ID
+                friend_id = msg['receiver_id'] if msg['sender_id'] == user_id else msg['sender_id']
+
+                if friend_id not in conversations:
+                    conversations[friend_id] = {
+                        'friend_id': friend_id,
+                        'last_message': msg['content'],
+                        'last_message_time': msg['created_at'],
+                        'unread_count': 0
+                    }
+
+                # 统计未读消息（只统计对方发给我的未读消息）
+                if msg['receiver_id'] == user_id and msg['is_read'] == 0:
+                    conversations[friend_id]['unread_count'] += 1
+
+            print(f"🔍 [get_conversation_list] 分组后会话数量: {len(conversations)}", flush=True)
+            sys.stdout.flush()
+
+            # 获取好友信息
+            if conversations:
+                friend_ids = list(conversations.keys())
+                placeholders = ','.join(['%s'] * len(friend_ids))
+                user_sql = f"""
+                    SELECT id, username, avatar_url
+                    FROM users
+                    WHERE id IN ({placeholders})
+                """
+                users = self.db.query(user_sql, friend_ids)
+
+                print(f"🔍 [get_conversation_list] 查询到用户信息数量: {len(users) if users else 0}", flush=True)
+                sys.stdout.flush()
+
+                # 将用户信息添加到会话中
+                for user in users:
+                    friend_id = user['id']
+                    if friend_id in conversations:
+                        conversations[friend_id]['friend_username'] = user['username']
+                        conversations[friend_id]['friend_avatar'] = user['avatar_url']
+
+            # 转换为列表并排序
+            result = list(conversations.values())
+            result.sort(key=lambda x: x['last_message_time'], reverse=True)
 
             # 转换datetime为字符串
-            if results:
-                for item in results:
-                    if item.get('last_message_time'):
-                        item['last_message_time'] = item['last_message_time'].strftime('%Y-%m-%d %H:%M:%S')
+            for item in result:
+                if item.get('last_message_time'):
+                    item['last_message_time'] = item['last_message_time'].strftime('%Y-%m-%d %H:%M:%S')
+                print(f"  - friend_id={item.get('friend_id')}, username={item.get('friend_username')}, unread={item.get('unread_count')}", flush=True)
+            sys.stdout.flush()
 
-            return results if results else []
+            return result
 
         except Exception as e:
-            print(f"获取会话列表失败: {e}")
+            print(f"❌ 获取会话列表失败: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
     def mark_as_read(self, user_id, message_ids):

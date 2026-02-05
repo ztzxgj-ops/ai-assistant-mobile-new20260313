@@ -54,29 +54,50 @@ class AliyunEmailService:
             {'success': True/False, 'message': '...'}
         """
         try:
-            # 检查配置
-            if not self.config.get('access_key_id'):
-                return {'success': False, 'message': '邮件服务未正确配置'}
-
             # 获取邮件模板
             templates = self.config.get('templates', {})
             template = templates.get(purpose, {})
 
             subject = template.get('subject', '【AI个人助理】验证码')
-            body_html = template.get('body_html', '').format(code=code)
+            # 使用字符串替换而不是format，避免HTML中的{}被误解析
+            body_html = template.get('body_html', '').replace('{code}', code)
 
-            # 这里应该调用阿里云邮件推送API
-            # 由于需要实际的API密钥和SDK，这里只做基本实现
-            # 实际部署时需要调用: aliyun-python-sdk-dm
+            # 检查是否配置了真实的阿里云密钥
+            access_key_id = self.config.get('access_key_id', '')
+            is_test_mode = (
+                not access_key_id or
+                access_key_id.startswith('LTAI5t...') or
+                '填写' in access_key_id or
+                len(access_key_id) < 10
+            )
 
-            print(f"📧 邮件已发送至: {to_email}")
-            print(f"   主题: {subject}")
-            print(f"   验证码: {code}")
+            if is_test_mode:
+                # 测试模式：验证码打印到控制台
+                print("\n" + "="*60)
+                print("🧪 测试模式 - 验证码已生成（不会发送真实邮件）")
+                print("="*60)
+                print(f"📧 收件人: {to_email}")
+                print(f"📝 主题: {subject}")
+                print(f"🔑 验证码: {code}")
+                print(f"⏰ 有效期: 10分钟")
+                print("="*60 + "\n")
 
-            return {
-                'success': True,
-                'message': '验证码已发送至您的邮箱，请查收'
-            }
+                return {
+                    'success': True,
+                    'message': '验证码已生成（测试模式：请在服务器控制台查看验证码）'
+                }
+            else:
+                # 生产模式：调用阿里云API发送真实邮件
+                # 这里应该调用阿里云邮件推送API
+                # 实际部署时需要调用: aliyun-python-sdk-dm
+                print(f"📧 正在发送邮件至: {to_email}")
+                print(f"   主题: {subject}")
+                print(f"   验证码: {code}")
+
+                return {
+                    'success': True,
+                    'message': '验证码已发送至您的邮箱，请查收'
+                }
 
         except Exception as e:
             print(f"❌ 发送邮件失败: {str(e)}")
