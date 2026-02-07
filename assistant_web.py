@@ -2091,12 +2091,15 @@ class AssistantHandler(BaseHTTPRequestHandler):
             user_id = self.require_auth()
             if user_id is None:
                 return
+            # 支持新旧两种参数格式
+            content = data.get('content') or data.get('message') or data.get('title', '')
             reminder_sys.add_reminder(
-                data.get('title', ''),
-                data.get('message', ''),
-                data.get('remind_time', ''),
-                data.get('repeat', '不重复'),
-                data.get('sound', 'Ping'),
+                title=data.get('title', ''),
+                message=data.get('message', ''),
+                content=content,
+                remind_time=data.get('remind_time', ''),
+                repeat=data.get('repeat', '不重复'),
+                sound=data.get('sound', 'Ping'),
                 user_id=user_id,
                 repeat_type=data.get('repeat_type', 'once')
             )
@@ -2130,7 +2133,9 @@ class AssistantHandler(BaseHTTPRequestHandler):
             user_id = self.require_auth()
             if user_id is None:
                 return
-            success = reminder_sys.delete_reminder(data.get('id'), user_id=user_id)
+            # 支持 id 和 reminder_id 两种参数名
+            reminder_id = data.get('id') or data.get('reminder_id')
+            success = reminder_sys.delete_reminder(reminder_id, user_id=user_id)
             if success:
                 self.send_json({'success': True, 'message': '提醒已删除'})
             else:
@@ -3664,10 +3669,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                content_length = int(self.headers['Content-Length'])
-                post_data = self.rfile.read(content_length)
-                data = json.loads(post_data.decode('utf-8'))
-
+                # 使用已经解析好的 data 变量，不要重复读取 POST 数据
                 device_token = data.get('device_token')
                 device_type = data.get('device_type')
                 device_name = data.get('device_name')
@@ -3703,10 +3705,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                content_length = int(self.headers['Content-Length'])
-                post_data = self.rfile.read(content_length)
-                data = json.loads(post_data.decode('utf-8'))
-
+                # 使用已经解析好的 data 变量
                 device_token = data.get('device_token')
 
                 if not device_token:
@@ -5889,24 +5888,100 @@ class AssistantHandler(BaseHTTPRequestHandler):
             display: flex;
         }
         
-        /* 左侧图标栏 */
+        /* 左侧导航栏 */
         .sidebar {
-            width: 72px;
-            background: rgba(26, 26, 26, 0.95);
-            backdrop-filter: blur(20px);
+            width: 250px;
+            background: #2c3e50;
             display: flex;
             flex-direction: column;
-            align-items: center;
-            padding: 20px 0;
-            gap: 20px;
             position: fixed;
             left: 0;
             top: 0;
             bottom: 0;
             z-index: 100;
-            border-right: 1px solid rgba(255, 255, 255, 0.1);
+            color: white;
+            transition: all 0.3s;
         }
-        
+
+        /* 侧边栏头部 */
+        .sidebar-header {
+            padding: 20px;
+            background: #34495e;
+            border-bottom: 1px solid #465669;
+        }
+
+        .sidebar-header h2 {
+            font-size: 18px;
+            margin-bottom: 5px;
+            color: white;
+        }
+
+        .sidebar-header p {
+            font-size: 12px;
+            opacity: 0.7;
+            color: white;
+        }
+
+        /* 侧边栏导航区域 */
+        .sidebar-nav {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px 0;
+        }
+
+        /* 导航项 */
+        .nav-item {
+            padding: 15px 20px;
+            cursor: pointer;
+            border-left: 3px solid transparent;
+            transition: all 0.3s;
+            color: white;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 15px;
+        }
+
+        .nav-item:hover {
+            background: #34495e;
+        }
+
+        .nav-item.active {
+            background: #34495e;
+            border-left-color: #3498db;
+        }
+
+        .nav-item-icon {
+            font-size: 20px;
+            width: 24px;
+            text-align: center;
+        }
+
+        /* 侧边栏底部 */
+        .sidebar-footer {
+            padding: 15px;
+            background: #1a252f;
+            border-top: 1px solid #465669;
+        }
+
+        .sidebar-footer button {
+            width: 100%;
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .sidebar-footer button:hover {
+            background: #c0392b;
+        }
+
+        /* 旧的图标样式保留用于兼容 */
         .sidebar-icon {
             width: 40px;
             height: 40px;
@@ -5920,12 +5995,12 @@ class AssistantHandler(BaseHTTPRequestHandler):
             color: #fff;
             font-size: 20px;
         }
-        
+
         .sidebar-icon:hover {
             background: rgba(255, 255, 255, 0.2);
             transform: scale(1.1);
         }
-        
+
         .sidebar-icon.active {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         }
@@ -5980,7 +6055,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
         
         .container {
             flex: 1;
-            margin-left: 72px;
+            margin-left: 250px;
             display: flex;
             flex-direction: column;
             height: 100vh;
@@ -7256,6 +7331,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
             /* 5. 样式修复 */
             .sidebar { display: none !important; }
+            .container { margin-left: 0 !important; }
             .message { display: flex !important; width: 100% !important; margin-bottom: 16px !important; color: #1a1a1a !important; }
             .message.user { flex-direction: row-reverse !important; }
             .message.user .message-content, .message.user .message-bubble { background: #10a37f !important; color: white !important; margin-right: 0 !important; margin-left: auto !important; border-bottom-right-radius: 4px !important; }
@@ -7331,37 +7407,47 @@ class AssistantHandler(BaseHTTPRequestHandler):
         </div>
     </div>
 
-    <!-- 左侧图标栏 -->
+    <!-- 左侧导航栏 -->
     <div class="sidebar">
-        <button class="new-chat-btn" onclick="clearConversation()">
-            ✏️
-        </button>
-        <div class="sidebar-icon" onclick="openWorkPlans()" title="工作计划" style="margin-bottom:20px;">📋</div>
-        <div class="sidebar-icon" onclick="window.open('/ai/image-gallery', '_blank')" title="图片管理（新窗口）" style="margin-bottom:20px;">🖼️</div>
-        <div class="sidebar-icon" onclick="window.open('/ai/file-manager', '_blank')" title="文件管理（新窗口）" style="margin-bottom:20px;">📁</div>
-        <div class="sidebar-icon" onclick="openSettings()" title="设置" style="margin-top: auto; margin-bottom:20px;">⚙️</div>
-        <div class="sidebar-icon" onclick="toggleUserPanel()" title="用户菜单" style="margin-top: 0; cursor: pointer; padding:0; overflow:hidden;" id="userAvatarIcon">
-            <img id="sidebarUserAvatar" src="" alt="头像" style="width:100%; height:100%; object-fit:cover; display:none;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
-            <span id="sidebarDefaultAvatar" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; font-size:20px;">👤</span>
+        <!-- 侧边栏头部 -->
+        <div class="sidebar-header">
+            <h2>AI Personal Assistant</h2>
+            <p id="sidebar-username">加载中...</p>
         </div>
-
-        <!-- 用户菜单面板 -->
-        <div id="userPanel" style="display: none; position: fixed; bottom: 80px; left: 10px; background: #1a1a2e; border-radius: 12px; padding: 12px 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); color: white; min-width: 200px; z-index: 1001;">
-            <div style="display: flex; align-items: center; margin-bottom: 12px; gap: 10px;">
-                <div style="position:relative; width:40px; height:40px; flex-shrink:0;">
-                    <img id="panelUserAvatar" src="" alt="头像" style="width:100%; height:100%; border-radius:50%; object-fit:cover; display:none;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
-                    <span id="panelDefaultAvatar" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; font-size:24px; background:#4A90E2; border-radius:50%;">👤</span>
-                </div>
-                <div style="flex: 1;">
-                    <div style="font-size: 12px; color: #999;">用户ID</div>
-                    <div id="userIdDisplay" style="font-size: 16px; font-weight: 600; color: #fff;">-</div>
-                </div>
+        
+        <!-- 侧边栏导航 -->
+        <div class="sidebar-nav">
+            <div class="nav-item active" data-view="chat" onclick="switchView('chat')">
+                <span class="nav-item-icon">💬</span>
+                <span>聊天</span>
             </div>
-            <button onclick="logout()" style="width: 100%; padding: 8px 12px; background: #ff6b6b; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 14px;">
-                🚪 退出登录
-            </button>
+            <div class="nav-item" data-view="plans" onclick="switchView('plans')">
+                <span class="nav-item-icon">📋</span>
+                <span>工作计划</span>
+            </div>
+            <div class="nav-item" data-view="reminders" onclick="switchView('reminders')">
+                <span class="nav-item-icon">⏰</span>
+                <span>提醒事项</span>
+            </div>
+            <div class="nav-item" data-view="friends" onclick="switchView('friends')">
+                <span class="nav-item-icon">👥</span>
+                <span>朋友</span>
+            </div>
+            <div class="nav-item" data-view="files" onclick="switchView('files')">
+                <span class="nav-item-icon">📁</span>
+                <span>文件管理</span>
+            </div>
+            <div class="nav-item" data-view="settings" onclick="switchView('settings')">
+                <span class="nav-item-icon">⚙️</span>
+                <span>设置</span>
+            </div>
         </div>
+        
+        <!-- 侧边栏底部 -->
+        <div class="sidebar-footer">
+            <button onclick="logout()">退出登录</button>
         </div>
+    </div>
         
     <div class="container">
         <!-- AI助手 -->
@@ -7379,7 +7465,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                             <div class="input-wrapper">
                                 <input type="file" id="imageUpload" accept="image/*" multiple style="display:none" onchange="handleImageSelect(event)">
                                 <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none" onchange="handleCameraCapture(event)">
-                                <input type="file" id="fileUpload" style="display:none" onchange="handleFileSelect(event)">
+                                <input type="file" id="fileUpload" multiple style="display:none" onchange="handleFileSelect(event)">
 
                                 <!-- 文件上传按钮组 -->
                                 <button class="file-button" onclick="document.getElementById('cameraInput').click()" title="拍照">
@@ -7403,8 +7489,8 @@ class AssistantHandler(BaseHTTPRequestHandler):
                         <!-- 动态添加图片预览 -->
             </div>
                     <div style="margin-top:10px;">
-                        <input type="text" id="imageDescription" placeholder="添加图片描述（可选）" style="width:100%; padding:8px; margin-bottom:8px; background:rgba(40,40,40,0.9); border:1px solid rgba(255,255,255,0.2); border-radius:8px; color:#fff;">
-                        <input type="text" id="imageTags" placeholder="添加标签，用逗号分隔（可选）" style="width:100%; padding:8px; margin-bottom:8px; background:rgba(40,40,40,0.9); border:1px solid rgba(255,255,255,0.2); border-radius:8px; color:#fff;">
+                        <input type="text" id="imageDescription" placeholder="添加图片描述（可选）" lang="zh-CN" style="width:100%; padding:8px; margin-bottom:8px; background:rgba(40,40,40,0.9); border:1px solid rgba(255,255,255,0.2); border-radius:8px; color:#fff;">
+                        <input type="text" id="imageTags" placeholder="添加标签，用逗号分隔（可选）" lang="zh-CN" style="width:100%; padding:8px; margin-bottom:8px; background:rgba(40,40,40,0.9); border:1px solid rgba(255,255,255,0.2); border-radius:8px; color:#fff;">
                         <button onclick="uploadSelectedImages()" style="width:100%; padding:12px; background:#28a745; color:white; border:none; border-radius:8px; cursor:pointer; font-size:16px; font-weight:600;">
                             ✅ 上传图片到图片库
                         </button>
@@ -7627,6 +7713,68 @@ class AssistantHandler(BaseHTTPRequestHandler):
                             </button>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 提醒事项弹窗 -->
+    <div id="remindersModal" class="modal">
+        <div class="modal-content" style="max-width: 700px; max-height: 90vh; overflow-y: auto;">
+            <span class="close" onclick="closeReminders()">&times;</span>
+            <h3>⏰ 提醒事项</h3>
+
+            <!-- 创建提醒按钮 -->
+            <button onclick="showCreateReminderForm()" style="width: 100%; padding: 12px; background: #10a37f; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: 600; margin-bottom: 20px;">
+                ➕ 创建新提醒
+            </button>
+
+            <!-- 创建提醒表单（默认隐藏） -->
+            <div id="createReminderForm" style="display: none; background: #ffffff; padding: 20px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #ddd;">
+                <h4 style="margin-top: 0; margin-bottom: 15px; color: #000;">创建新提醒</h4>
+
+                <!-- 提醒内容 -->
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px; font-weight: 600; color: #000;">提醒内容</label>
+                    <textarea id="reminderContent" placeholder="请输入提醒内容（最多5000字）" maxlength="5000" rows="3" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; resize: vertical; color: #000; background: #fff;"></textarea>
+                </div>
+
+                <!-- 日期选择 -->
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px; font-weight: 600; color: #000;">📅 日期</label>
+                    <input type="date" id="reminderDate" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; color: #000; background: #fff;">
+                </div>
+
+                <!-- 时间选择 -->
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px; font-weight: 600; color: #000;">⏰ 时间</label>
+                    <input type="time" id="reminderTime" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; color: #000; background: #fff;">
+                </div>
+
+                <!-- 循环类型 -->
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #000;">🔄 循环类型</label>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                        <button class="repeat-type-btn" data-type="once" onclick="selectRepeatType('once')" style="padding: 8px 16px; border: 2px solid #10a37f; background: #10a37f; color: white; border-radius: 20px; cursor: pointer; font-size: 14px;">单次</button>
+                        <button class="repeat-type-btn" data-type="daily" onclick="selectRepeatType('daily')" style="padding: 8px 16px; border: 2px solid #ddd; background: white; color: #333; border-radius: 20px; cursor: pointer; font-size: 14px;">每天</button>
+                        <button class="repeat-type-btn" data-type="weekly" onclick="selectRepeatType('weekly')" style="padding: 8px 16px; border: 2px solid #ddd; background: white; color: #333; border-radius: 20px; cursor: pointer; font-size: 14px;">每周</button>
+                        <button class="repeat-type-btn" data-type="monthly" onclick="selectRepeatType('monthly')" style="padding: 8px 16px; border: 2px solid #ddd; background: white; color: #333; border-radius: 20px; cursor: pointer; font-size: 14px;">每月</button>
+                        <button class="repeat-type-btn" data-type="yearly" onclick="selectRepeatType('yearly')" style="padding: 8px 16px; border: 2px solid #ddd; background: white; color: #333; border-radius: 20px; cursor: pointer; font-size: 14px;">每年</button>
+                    </div>
+                </div>
+
+                <!-- 按钮组 -->
+                <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                    <button onclick="hideCreateReminderForm()" style="padding: 10px 20px; background: #f0f0f0; color: #333; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600;">取消</button>
+                    <button onclick="saveNewReminder()" style="padding: 10px 20px; background: #10a37f; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600;">保存</button>
+                </div>
+            </div>
+
+            <!-- 提醒列表 -->
+            <div id="remindersView" style="margin-top: 20px;">
+                <div style="text-align: center; padding: 40px;">
+                    <div style="font-size: 48px; margin-bottom: 10px;">⏰</div>
+                    <p style="color: #666;">加载中...</p>
                 </div>
             </div>
         </div>
@@ -8883,62 +9031,100 @@ class AssistantHandler(BaseHTTPRequestHandler):
         let selectedImages = []; // 改为数组以支持多张图片
         let selectedImageData = null;
         
+        let selectedFiles = []; // 支持多文件上传
         let currentFileId = null;
+        let uploadedFileIds = []; // 存储已上传的文件ID
 
         function triggerFileUpload() {
             document.getElementById('fileUpload').click();
         }
 
         async function handleFileSelect(event) {
-            const file = event.target.files[0];
-            if (!file) return;
+            const files = event.target.files;
+            if (!files || files.length === 0) return;
 
-            // 显示上传中
+            // 清空之前的选择
+            selectedFiles = [];
+            uploadedFileIds = [];
+
+            // 显示文件预览容器
             document.getElementById('filePreviewContainer').style.display = 'block';
-            document.getElementById('fileName').textContent = '正在上传: ' + file.name;
-            document.getElementById('fileSize').textContent = formatFileSize(file.size);
 
-            // 读取文件并上传
-            const reader = new FileReader();
-            reader.onload = async function(e) {
-                const base64Data = e.target.result;
-                
-                try {
-                    const response = await fetch('/api/file/upload', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': 'Bearer ' + localStorage.getItem('token')
-                        },
-                        body: JSON.stringify({
-                            file_data: base64Data,
-                            original_name: file.name,
-                            mime_type: file.type,
-                            file_size: file.size
-                        })
-                    });
-                    
-                    const result = await response.json();
-                    if (result.success) {
-                        currentFileId = result.file.id;
-                        document.getElementById('fileName').textContent = result.file.original_name;
-                        // 上传成功，不需要其他操作，只需保留currentFileId
-                    } else {
-                        alert('上传失败: ' + result.message);
-                        clearFileSelection();
-                    }
-                } catch (error) {
-                    alert('上传出错: ' + error);
-                    clearFileSelection();
+            if (files.length === 1) {
+                // 单文件：显示文件名和大小，立即上传
+                const file = files[0];
+                document.getElementById('fileName').textContent = '正在上传: ' + file.name;
+                document.getElementById('fileSize').textContent = formatFileSize(file.size);
+                await uploadSingleFile(file);
+            } else {
+                // 多文件：显示文件数量和总大小，逐个上传
+                let totalSize = 0;
+                Array.from(files).forEach(file => {
+                    selectedFiles.push(file);
+                    totalSize += file.size;
+                });
+                document.getElementById('fileName').textContent = `正在上传 ${files.length} 个文件...`;
+                document.getElementById('fileSize').textContent = `总大小: ${formatFileSize(totalSize)}`;
+
+                // 逐个上传文件
+                for (let i = 0; i < selectedFiles.length; i++) {
+                    const file = selectedFiles[i];
+                    document.getElementById('fileName').textContent = `正在上传: ${file.name} (${i + 1}/${selectedFiles.length})`;
+                    await uploadSingleFile(file);
                 }
-            };
-            reader.readAsDataURL(file);
-            
+
+                // 所有文件上传完成
+                document.getElementById('fileName').textContent = `已上传 ${uploadedFileIds.length} 个文件`;
+                document.getElementById('fileSize').textContent = `总大小: ${formatFileSize(totalSize)}`;
+            }
+
             // 清空 input，允许重复选择同一文件
             document.getElementById('fileUpload').value = '';
         }
 
+        async function uploadSingleFile(file) {
+            const reader = new FileReader();
+            return new Promise((resolve, reject) => {
+                reader.onload = async function(e) {
+                    const base64Data = e.target.result;
+
+                    try {
+                        const response = await fetch('/api/file/upload', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': 'Bearer ' + localStorage.getItem('token')
+                            },
+                            body: JSON.stringify({
+                                file_data: base64Data,
+                                original_name: file.name,
+                                mime_type: file.type,
+                                file_size: file.size
+                            })
+                        });
+
+                        const result = await response.json();
+                        if (result.success) {
+                            uploadedFileIds.push(result.file.id);
+                            currentFileId = result.file.id; // 保存最后一个上传的文件ID
+                            resolve(result);
+                        } else {
+                            alert('上传失败: ' + result.message);
+                            reject(new Error(result.message));
+                        }
+                    } catch (error) {
+                        alert('上传出错: ' + error);
+                        reject(error);
+                    }
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+
         function clearFileSelection() {
+            selectedFiles = [];
+            uploadedFileIds = [];
             currentFileId = null;
             document.getElementById('filePreviewContainer').style.display = 'none';
         }
@@ -9916,6 +10102,246 @@ class AssistantHandler(BaseHTTPRequestHandler):
         }
 
 
+        // ============ 视图切换函数 ============
+
+        function switchView(viewName) {
+            console.log('切换到视图:', viewName);
+
+            // 更新导航项的active状态
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            document.querySelector(`.nav-item[data-view="${viewName}"]`)?.classList.add('active');
+
+            // 根据不同视图执行不同操作
+            switch(viewName) {
+                case 'chat':
+                    // 显示聊天界面（默认视图）
+                    window.location.href = '/ai/';
+                    break;
+                case 'plans':
+                    // 打开工作计划
+                    openWorkPlans();
+                    break;
+                case 'reminders':
+                    // 打开提醒事项
+                    openReminders();
+                    break;
+                case 'friends':
+                    // 打开朋友/社交中心
+                    window.open('/ai/social', '_blank');
+                    break;
+                case 'files':
+                    // 打开文件管理
+                    window.open('/ai/file-manager', '_blank');
+                    break;
+                case 'settings':
+                    // 打开设置
+                    openSettings();
+                    break;
+            }
+        }
+
+        function openReminders() {
+            // 显示提醒事项弹窗
+            document.getElementById('remindersModal').style.display = 'block';
+            // 加载提醒列表
+            loadReminders();
+        }
+
+        function closeReminders() {
+            document.getElementById('remindersModal').style.display = 'none';
+        }
+
+        async function loadReminders() {
+            try {
+                const token = localStorage.getItem('token');
+                const response = await fetch('/api/reminders', {
+                    headers: {
+                        'Authorization': 'Bearer ' + token
+                    }
+                });
+
+                if (!response.ok) throw new Error('加载失败');
+
+                const data = await response.json();
+                const reminders = data.reminders || [];
+
+                const container = document.getElementById('remindersView');
+                if (!container) return;
+
+                if (reminders.length === 0) {
+                    container.innerHTML = `
+                        <div style="text-align: center; padding: 40px;">
+                            <div style="font-size: 48px; margin-bottom: 10px;">⏰</div>
+                            <p style="color: #666;">暂无提醒事项</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                let html = '<div style="padding: 10px;">';
+                reminders.forEach(reminder => {
+                    const time = new Date(reminder.remind_time).toLocaleString('zh-CN');
+                    const status = reminder.triggered ? '已触发' : '待触发';
+                    const statusColor = reminder.triggered ? '#999' : '#10a37f';
+
+                    html += `
+                        <div style="background: #ffffff; padding: 15px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #e0e0e0;">
+                            <div style="display: flex; justify-content: space-between; align-items: start;">
+                                <div style="flex: 1;">
+                                    <div style="font-weight: 600; margin-bottom: 5px; color: #000;">${reminder.content}</div>
+                                    <div style="font-size: 12px; color: #666;">
+                                        ⏰ ${time}
+                                        <span style="margin-left: 10px; color: ${statusColor}; font-weight: 600;">${status}</span>
+                                    </div>
+                                </div>
+                                <button onclick="deleteReminder(${reminder.id})" style="background: #ff6b6b; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: 600;">删除</button>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+
+                container.innerHTML = html;
+            } catch (error) {
+                console.error('加载提醒失败:', error);
+                const container = document.getElementById('remindersView');
+                if (container) {
+                    container.innerHTML = `
+                        <div style="text-align: center; padding: 40px;">
+                            <p style="color: #ff6b6b;">加载失败，请重试</p>
+                        </div>
+                    `;
+                }
+            }
+        }
+
+        async function deleteReminder(id) {
+            if (!confirm('确定要删除这个提醒吗？')) return;
+
+            try {
+                const token = localStorage.getItem('token');
+                const response = await fetch('/api/reminder/delete', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ reminder_id: id })
+                });
+
+                if (!response.ok) throw new Error('删除失败');
+
+                // 重新加载列表
+                loadReminders();
+            } catch (error) {
+                console.error('删除提醒失败:', error);
+                alert('删除失败，请重试');
+            }
+        }
+
+        // 全局变量存储当前选择的循环类型
+        let currentRepeatType = 'once';
+
+        function showCreateReminderForm() {
+            const form = document.getElementById('createReminderForm');
+            form.style.display = 'block';
+
+            // 设置默认日期和时间
+            const now = new Date();
+            const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+            // 设置日期为明天
+            const dateStr = tomorrow.toISOString().split('T')[0];
+            document.getElementById('reminderDate').value = dateStr;
+
+            // 设置时间为当前时间
+            const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+            document.getElementById('reminderTime').value = timeStr;
+
+            // 清空内容
+            document.getElementById('reminderContent').value = '';
+
+            // 重置循环类型为单次
+            currentRepeatType = 'once';
+            selectRepeatType('once');
+        }
+
+        function hideCreateReminderForm() {
+            document.getElementById('createReminderForm').style.display = 'none';
+        }
+
+        function selectRepeatType(type) {
+            currentRepeatType = type;
+
+            // 更新所有按钮的样式
+            document.querySelectorAll('.repeat-type-btn').forEach(btn => {
+                if (btn.dataset.type === type) {
+                    btn.style.background = '#10a37f';
+                    btn.style.color = 'white';
+                    btn.style.borderColor = '#10a37f';
+                } else {
+                    btn.style.background = 'white';
+                    btn.style.color = '#333';
+                    btn.style.borderColor = '#ddd';
+                }
+            });
+        }
+
+        async function saveNewReminder() {
+            const content = document.getElementById('reminderContent').value.trim();
+            const date = document.getElementById('reminderDate').value;
+            const time = document.getElementById('reminderTime').value;
+
+            // 验证输入
+            if (!content) {
+                alert('请输入提醒内容');
+                return;
+            }
+
+            if (!date || !time) {
+                alert('请选择日期和时间');
+                return;
+            }
+
+            // 组合日期和时间
+            const remindTimeStr = `${date} ${time}:00`;
+
+            try {
+                const token = localStorage.getItem('token');
+                const response = await fetch('/api/reminder/add', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        content: content,
+                        remind_time: remindTimeStr,
+                        repeat_type: currentRepeatType
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || '创建失败');
+                }
+
+                // 隐藏表单
+                hideCreateReminderForm();
+
+                // 重新加载列表
+                loadReminders();
+
+                // 显示成功提示
+                alert('✅ 提醒创建成功！');
+            } catch (error) {
+                console.error('创建提醒失败:', error);
+                alert('创建失败：' + error.message);
+            }
+        }
+
         function logout() {
             if (!confirm('确定要退出登录吗？')) return;
 
@@ -10373,6 +10799,17 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 initUserPanel();
             } catch (e) {
                 console.error('Init user panel failed:', e);
+            }
+
+            // 2.5. 初始化侧边栏用户名显示
+            try {
+                const username = localStorage.getItem('username') || '用户';
+                const sidebarUsername = document.getElementById('sidebar-username');
+                if (sidebarUsername) {
+                    sidebarUsername.textContent = username;
+                }
+            } catch (e) {
+                console.error('Init sidebar username failed:', e);
             }
 
             // 3. 计算文本框最大高度 (新功能)
