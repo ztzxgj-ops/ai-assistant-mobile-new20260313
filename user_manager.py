@@ -118,7 +118,9 @@ class UserManager:
                 'message': '登录成功',
                 'token': token,
                 'user_id': user['id'],
-                'username': user['username']
+                'username': user['username'],
+                'storage_mode': user.get('storage_mode', 'cloud'),
+                'storage_mode_selected': bool(user.get('storage_mode_selected', 0))
             }
         except Exception as e:
             return {'success': False, 'message': f'登录失败: {str(e)}'}
@@ -198,7 +200,8 @@ class UserManager:
         """
         try:
             sql = """
-                SELECT id, username, password_hash, phone, created_at, last_login
+                SELECT id, username, password_hash, phone, created_at, last_login,
+                       storage_mode, storage_mode_selected
                 FROM users
                 WHERE username = %s
             """
@@ -220,7 +223,8 @@ class UserManager:
         """
         try:
             sql = """
-                SELECT id, username, password_hash, phone, avatar_url, chat_background, theme, ai_avatar_url, ai_assistant_name, created_at, last_login
+                SELECT id, username, password_hash, phone, avatar_url, chat_background, theme, ai_avatar_url, ai_assistant_name, created_at, last_login,
+                       storage_mode, storage_mode_selected
                 FROM users
                 WHERE id = %s
             """
@@ -556,4 +560,63 @@ class UserManager:
         except Exception as e:
             print(f"❌ 更新AI助理名字失败: {e}")
             return False
+
+    def set_storage_mode(self, user_id, storage_mode):
+        """
+        设置用户的数据存储模式
+
+        参数:
+            user_id: 用户ID
+            storage_mode: 存储模式 ('cloud' 或 'local')
+
+        返回:
+            字典，包含success和message字段
+        """
+        if storage_mode not in ['cloud', 'local']:
+            return {'success': False, 'message': '无效的存储模式'}
+
+        try:
+            sql = """
+                UPDATE users
+                SET storage_mode = %s, storage_mode_selected = 1
+                WHERE id = %s
+            """
+            self.db.execute(sql, (storage_mode, user_id))
+            print(f"✅ 用户 {user_id} 的存储模式已设置为: {storage_mode}")
+            return {
+                'success': True,
+                'message': '存储模式设置成功',
+                'storage_mode': storage_mode
+            }
+        except Exception as e:
+            print(f"❌ 设置存储模式失败: {e}")
+            return {'success': False, 'message': f'设置失败: {str(e)}'}
+
+    def get_storage_mode(self, user_id):
+        """
+        获取用户的存储模式
+
+        参数:
+            user_id: 用户ID
+
+        返回:
+            字典，包含storage_mode和storage_mode_selected字段
+        """
+        try:
+            sql = """
+                SELECT storage_mode, storage_mode_selected
+                FROM users
+                WHERE id = %s
+            """
+            result = self.db.query_one(sql, (user_id,))
+            if result:
+                return {
+                    'success': True,
+                    'storage_mode': result.get('storage_mode', 'cloud'),
+                    'storage_mode_selected': bool(result.get('storage_mode_selected', 0))
+                }
+            return {'success': False, 'message': '用户不存在'}
+        except Exception as e:
+            print(f"❌ 获取存储模式失败: {e}")
+            return {'success': False, 'message': f'获取失败: {str(e)}'}
 

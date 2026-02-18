@@ -260,6 +260,23 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 self.wfile.write(css_content.encode('utf-8'))
             except Exception as e:
                 self.send_error(404, f'CSS file not found: {e}')
+        elif self.path.endswith('.html') and self.path not in ['/', '/index.html', '/login.html', '/image-gallery.html', '/social.html']:
+            # 提供HTML文件服务（隐私政策、用户协议等）
+            try:
+                file_path = self.path[1:]  # 去掉开头的 /
+                if os.path.exists(file_path):
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        html_content = f.read()
+                    self.send_response(200)
+                    self.send_header('Content-type', 'text/html; charset=utf-8')
+                    self.send_header('Cache-Control', 'no-cache')
+                    self.end_headers()
+                    self.wfile.write(html_content.encode('utf-8'))
+                else:
+                    self.send_error(404, 'File not found')
+            except Exception as e:
+                print(f'❌ 提供HTML文件失败: {e}')
+                self.send_error(500, f'Internal server error: {e}')
         elif self.path == '/login' or self.path == '/login.html':
             self.send_login_html()
         elif self.path == '/image-gallery' or self.path == '/image-gallery.html':
@@ -520,7 +537,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 with db_manager.get_cursor() as cursor:
                     cursor.execute(
                         """
-                        SELECT id, content, remind_time
+                        SELECT id, content, remind_time, repeat_type
                         FROM reminders
                         WHERE user_id = %s
                         AND status = 'pending'
@@ -540,11 +557,33 @@ class AssistantHandler(BaseHTTPRequestHandler):
                         }
                         due_reminders.append(reminder)
 
-                        # 标记为已触发（Web端）
-                        cursor.execute(
-                            "UPDATE reminders SET triggered = 1, status = 'completed' WHERE id = %s",
-                            (row['id'],)
-                        )
+                        # 处理循环提醒
+                        repeat_type = row.get('repeat_type', 'once')
+                        if repeat_type in ['minutely', 'hourly', 'daily', 'weekly', 'monthly', 'yearly']:
+                            # 计算下一次提醒时间
+                            from reminder_scheduler import ReminderScheduler
+                            scheduler_instance = ReminderScheduler()
+                            next_remind_time = scheduler_instance._calculate_next_remind_time(row['remind_time'], repeat_type)
+
+                            if next_remind_time:
+                                # 更新为下一次提醒时间，保持pending状态，重置triggered
+                                cursor.execute(
+                                    "UPDATE reminders SET remind_time = %s, triggered = 0 WHERE id = %s",
+                                    (next_remind_time, row['id'])
+                                )
+                                print(f"🔄 Web端循环提醒已更新，下次提醒时间: {next_remind_time}")
+                            else:
+                                # 计算失败，标记为completed
+                                cursor.execute(
+                                    "UPDATE reminders SET triggered = 1, status = 'completed' WHERE id = %s",
+                                    (row['id'],)
+                                )
+                        else:
+                            # 单次提醒，标记为已触发和已完成
+                            cursor.execute(
+                                "UPDATE reminders SET triggered = 1, status = 'completed' WHERE id = %s",
+                                (row['id'],)
+                            )
 
                         print(f"✅ Web端触发提醒: {reminder['content']}")
 
@@ -748,6 +787,32 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 self.send_json({'success': True, 'user': user_profile})
             else:
                 self.send_json({'success': False, 'message': '用户不存在'}, status=404)
+        elif self.path == '/api/user/settings':
+            # 获取用户设置
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            try:
+                with db_manager.get_cursor() as cursor:
+                    cursor.execute(
+                        "SELECT setting_key, setting_value FROM user_settings WHERE user_id = %s",
+                        (user_id,)
+                    )
+                    settings = {}
+                    for row in cursor.fetchall():
+                        settings[row['setting_key']] = row['setting_value']
+
+                    # 设置默认值
+                    if 'reminder_sound_type' not in settings:
+                        settings['reminder_sound_type'] = 'default'
+                    if 'reminder_sound_volume' not in settings:
+                        settings['reminder_sound_volume'] = '0.7'
+
+                    self.send_json({'success': True, 'settings': settings})
+            except Exception as e:
+                print(f"获取用户设置失败: {e}")
+                self.send_json({'success': False, 'message': str(e)}, status=500)
         elif self.path.startswith('/api/image/'):
             # 获取单个图片信息
             image_id = int(self.path.split('/')[-1])
@@ -961,6 +1026,28 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
             count = private_message_manager.get_unread_count(user_id)
             self.send_json({'success': True, 'count': count})
+
+        # ========================================
+        # 好友提醒系统API (GET)
+        # ========================================
+
+        elif self.path == '/api/social/reminders/unconfirmed':
+            # 获取未确认的好友提醒
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            reminders = reminder_sys.get_unconfirmed_friend_reminders(user_id)
+            self.send_json({'success': True, 'reminders': reminders})
+
+        elif self.path == '/api/reminders/unconfirmed':
+            # 获取未确认的个人提醒
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            reminders = reminder_sys.get_unconfirmed_personal_reminders(user_id)
+            self.send_json({'success': True, 'reminders': reminders})
 
         # ========================================
         # 内容分享系统API (GET)
@@ -1253,6 +1340,29 @@ class AssistantHandler(BaseHTTPRequestHandler):
             # 验证Token
             token = self.headers.get('Authorization', '').replace('Bearer ', '')
             result = user_manager.verify_token(token)
+            self.send_json(result)
+
+        elif self.path == '/api/auth/set-storage-mode':
+            # 设置存储模式（首次登录时必须选择）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            storage_mode = data.get('storage_mode', '')
+            if storage_mode not in ['cloud', 'local']:
+                self.send_json({'success': False, 'message': '无效的存储模式，请选择cloud或local'})
+                return
+
+            result = user_manager.set_storage_mode(user_id, storage_mode)
+            self.send_json(result)
+
+        elif self.path == '/api/auth/get-storage-mode':
+            # 获取存储模式
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            result = user_manager.get_storage_mode(user_id)
             self.send_json(result)
 
         # ========================================
@@ -2091,8 +2201,22 @@ class AssistantHandler(BaseHTTPRequestHandler):
             user_id = self.require_auth()
             if user_id is None:
                 return
+
+            # 调试日志 - 打印原始请求数据
+            print(f"🔍 [API] 收到创建提醒请求 - 原始数据:")
+            print(f"  - 完整data: {data}")
+
             # 支持新旧两种参数格式
             content = data.get('content') or data.get('message') or data.get('title', '')
+            repeat_type = data.get('repeat_type', 'once')
+
+            # 调试日志 - 打印解析后的数据
+            print(f"🔍 [API] 解析后的参数:")
+            print(f"  - user_id: {user_id}")
+            print(f"  - content: {content}")
+            print(f"  - repeat_type: {repeat_type}")
+            print(f"  - remind_time: {data.get('remind_time', '')}")
+
             reminder_sys.add_reminder(
                 title=data.get('title', ''),
                 message=data.get('message', ''),
@@ -2101,7 +2225,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 repeat=data.get('repeat', '不重复'),
                 sound=data.get('sound', 'Ping'),
                 user_id=user_id,
-                repeat_type=data.get('repeat_type', 'once')
+                repeat_type=repeat_type
             )
             self.send_json({'success': True, 'message': '提醒已添加'})
 
@@ -2140,7 +2264,55 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 self.send_json({'success': True, 'message': '提醒已删除'})
             else:
                 self.send_json({'success': False, 'message': '删除失败或权限不足'}, status=403)
-        
+
+        elif self.path == '/api/reminder/snooze':
+            # 延迟提醒（稍后再提醒）
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            reminder_id = data.get('id')
+            minutes = data.get('minutes', 30)  # 默认30分钟
+
+            if not reminder_id:
+                self.send_json({'success': False, 'message': '缺少提醒ID'})
+                return
+
+            try:
+                # 获取原提醒信息
+                reminder = reminder_sys.get_reminder_by_id(reminder_id, user_id=user_id)
+                if not reminder:
+                    self.send_json({'success': False, 'message': '提醒不存在或权限不足'}, status=403)
+                    return
+
+                # 计算新的提醒时间
+                from datetime import datetime, timedelta
+                new_remind_time = datetime.now() + timedelta(minutes=minutes)
+                new_remind_time_str = new_remind_time.strftime('%Y-%m-%d %H:%M:%S')
+
+                # 更新提醒时间，并重置triggered状态
+                success = reminder_sys.update_reminder(
+                    reminder_id=reminder_id,
+                    remind_time=new_remind_time_str,
+                    user_id=user_id
+                )
+
+                # 重置triggered状态
+                if success:
+                    db_manager.execute(
+                        "UPDATE reminders SET triggered = 0 WHERE id = %s",
+                        (reminder_id,)
+                    )
+
+                if success:
+                    self.send_json({'success': True, 'message': f'已设置{minutes}分钟后再次提醒'})
+                else:
+                    self.send_json({'success': False, 'message': '延迟提醒失败'}, status=500)
+
+            except Exception as e:
+                print(f"❌ 延迟提醒失败: {e}")
+                self.send_json({'success': False, 'message': f'延迟提醒失败: {str(e)}'}, status=500)
+
         elif self.path == '/api/chat/create_reminder':
             user_id = self.require_auth()
             if user_id is None:
@@ -2666,6 +2838,33 @@ class AssistantHandler(BaseHTTPRequestHandler):
             result = user_manager.change_password(user_id, old_password, new_password)
             self.send_json(result)
 
+        elif self.path == '/api/user/settings':
+            # 更新用户设置
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            settings = data.get('settings', {})
+            if not settings:
+                self.send_json({'success': False, 'message': '设置不能为空'}, status=400)
+                return
+
+            try:
+                with db_manager.get_cursor() as cursor:
+                    for key, value in settings.items():
+                        cursor.execute(
+                            """
+                            INSERT INTO user_settings (user_id, setting_key, setting_value)
+                            VALUES (%s, %s, %s)
+                            ON DUPLICATE KEY UPDATE setting_value = %s
+                            """,
+                            (user_id, key, value, value)
+                        )
+                    self.send_json({'success': True, 'message': '设置已更新'})
+            except Exception as e:
+                print(f"更新用户设置失败: {e}")
+                self.send_json({'success': False, 'message': str(e)}, status=500)
+
         # ============ 新增：提醒调度器相关API ============
 
         elif self.path == '/api/scheduler/reminder/add':
@@ -2915,6 +3114,64 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 return
 
             result = private_message_manager.delete_conversation(user_id, friend_id)
+            self.send_json(result)
+
+        # ========================================
+        # 好友提醒系统API (POST)
+        # ========================================
+
+        elif self.path == '/api/social/reminders/create':
+            # 创建好友提醒
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            friend_id = data.get('friend_id')
+            content = data.get('content')
+            remind_time = data.get('remind_time')
+            repeat_type = data.get('repeat_type', 'once')
+
+            if not friend_id:
+                self.send_json({'success': False, 'message': '请提供好友ID'})
+                return
+
+            if not content:
+                self.send_json({'success': False, 'message': '提醒内容不能为空'})
+                return
+
+            if not remind_time:
+                self.send_json({'success': False, 'message': '请提供提醒时间'})
+                return
+
+            result = reminder_sys.add_friend_reminder(user_id, friend_id, content, remind_time, repeat_type)
+            self.send_json(result)
+
+        elif self.path == '/api/social/reminders/confirm':
+            # 确认好友提醒
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            reminder_id = data.get('reminder_id')
+            if not reminder_id:
+                self.send_json({'success': False, 'message': '请提供提醒ID'})
+                return
+
+            result = reminder_sys.confirm_friend_reminder(reminder_id, user_id)
+            self.send_json(result)
+
+        elif self.path == '/api/reminders/confirm':
+            # 确认个人提醒
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            reminder_id = data.get('reminder_id')
+            if not reminder_id:
+                self.send_json({'success': False, 'message': '请提供提醒ID'})
+                return
+
+            result = reminder_sys.confirm_personal_reminder(reminder_id, user_id)
             self.send_json(result)
 
         # ========================================
@@ -3186,6 +3443,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
             mood_tag = data.get('mood_tag')
             bg_color = data.get('bg_color', '#FFF9C4')
             image_id = data.get('image_id')
+            image_ids = data.get('image_ids')  # 新增：支持多张图片
             is_public = data.get('is_public', True)
             parent_id = data.get('parent_id')  # 新增：父留言ID（用于回复）
             visibility = data.get('visibility', 'all_friends')  # 新增：可见范围
@@ -3202,6 +3460,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 mood_tag=mood_tag,
                 bg_color=bg_color,
                 image_id=image_id,
+                image_ids=image_ids,
                 is_public=is_public,
                 parent_id=parent_id,
                 visibility=visibility,
@@ -7756,10 +8015,31 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #000;">🔄 循环类型</label>
                     <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                         <button class="repeat-type-btn" data-type="once" onclick="selectRepeatType('once')" style="padding: 8px 16px; border: 2px solid #10a37f; background: #10a37f; color: white; border-radius: 20px; cursor: pointer; font-size: 14px;">单次</button>
+                        <button class="repeat-type-btn" data-type="minutely" onclick="selectRepeatType('minutely')" style="padding: 8px 16px; border: 2px solid #ddd; background: white; color: #333; border-radius: 20px; cursor: pointer; font-size: 14px;">每分钟</button>
+                        <button class="repeat-type-btn" data-type="hourly" onclick="selectRepeatType('hourly')" style="padding: 8px 16px; border: 2px solid #ddd; background: white; color: #333; border-radius: 20px; cursor: pointer; font-size: 14px;">每小时</button>
                         <button class="repeat-type-btn" data-type="daily" onclick="selectRepeatType('daily')" style="padding: 8px 16px; border: 2px solid #ddd; background: white; color: #333; border-radius: 20px; cursor: pointer; font-size: 14px;">每天</button>
                         <button class="repeat-type-btn" data-type="weekly" onclick="selectRepeatType('weekly')" style="padding: 8px 16px; border: 2px solid #ddd; background: white; color: #333; border-radius: 20px; cursor: pointer; font-size: 14px;">每周</button>
                         <button class="repeat-type-btn" data-type="monthly" onclick="selectRepeatType('monthly')" style="padding: 8px 16px; border: 2px solid #ddd; background: white; color: #333; border-radius: 20px; cursor: pointer; font-size: 14px;">每月</button>
                         <button class="repeat-type-btn" data-type="yearly" onclick="selectRepeatType('yearly')" style="padding: 8px 16px; border: 2px solid #ddd; background: white; color: #333; border-radius: 20px; cursor: pointer; font-size: 14px;">每年</button>
+                    </div>
+                </div>
+
+                <!-- 同时提醒好友 -->
+                <div style="margin-bottom: 15px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
+                        <input type="checkbox" id="alsoNotifyFriends" onchange="toggleFriendSelection()" style="width: 18px; height: 18px; cursor: pointer;">
+                        <span style="font-weight: 600; color: #000;">👥 同时提醒好友</span>
+                    </label>
+                </div>
+
+                <!-- 好友选择区域（默认隐藏） -->
+                <div id="friendSelectionArea" style="display: none; margin-bottom: 15px; background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e0e0e0;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <label style="font-weight: 600; color: #000;">选择要提醒的好友</label>
+                        <button onclick="selectAllFriends()" style="padding: 4px 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">全选</button>
+                    </div>
+                    <div id="friendCheckboxList" style="max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;">
+                        <p style="text-align: center; color: #666; padding: 20px;">加载好友列表中...</p>
                     </div>
                 </div>
 
@@ -8336,10 +8616,21 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
                 for (let i = 0; i < lines.length; i++) {
                     const line = lines[i];
-                    const match = line.match(/^(\\d+)\\. (.+)$/);
+                    const match = line.match(/^(\d+)\. (.+)$/);
                     if (match) {
                         const num = match[1];
-                        const content = match[2];
+                        let content = match[2];
+
+                        // 收集后续的子项内容（不以数字开头的行）
+                        let j = i + 1;
+                        while (j < lines.length && !lines[j].match(/^\d+\. /)) {
+                            if (lines[j].trim()) {  // 跳过空行
+                                content += '\\n' + lines[j];
+                            }
+                            j++;
+                        }
+                        i = j - 1;  // 跳过已处理的子项
+
                         const taskData = listData[taskIndex] || {};
                         const taskId = taskData.id || 0;
                         const hasUrgent = content.startsWith('急');
@@ -8363,9 +8654,9 @@ class AssistantHandler(BaseHTTPRequestHandler):
                         result += `<span style="margin-left: 12px; color: #999; font-size: 11px;">☰ 拖动排序</span>`;
                         result += `</div>`;
 
-                        // 任务内容（不再显示序号）
+                        // 任务内容（包含子项，整体截断）
                         result += `<div style="flex: 1; display: flex; align-items: center; gap: 8px;">`;
-                        result += `<span style="flex: 1;">`;
+                        result += `<span style="flex: 1; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.5; white-space: pre-wrap;">`;
                         if (content.startsWith('急')) {
                             result += `<span style="color:red;font-weight:bold;">${content}</span>`;
                         } else if (content.startsWith('重要')) {
@@ -8381,9 +8672,13 @@ class AssistantHandler(BaseHTTPRequestHandler):
                         result += `</div>`;
                         taskIndex++;
                     } else {
-                        result += line + '<br>';
+                        // 非列表项的行（通常不会执行到这里，因为已经被合并到上面的列表项中了）
+                        if (line.trim()) {
+                            result += line + '<br>';
+                        }
                     }
                 }
+
 
                 listContent.innerHTML = result;
                 container.appendChild(listContent);
@@ -10289,6 +10584,102 @@ class AssistantHandler(BaseHTTPRequestHandler):
             });
         }
 
+        // 切换好友选择区域
+        function toggleFriendSelection() {
+            const checkbox = document.getElementById('alsoNotifyFriends');
+            const friendArea = document.getElementById('friendSelectionArea');
+
+            if (checkbox.checked) {
+                friendArea.style.display = 'block';
+                loadFriendsForReminder();
+            } else {
+                friendArea.style.display = 'none';
+            }
+        }
+
+        // 加载好友列表用于提醒
+        async function loadFriendsForReminder() {
+            try {
+                const token = localStorage.getItem('token');
+                const response = await fetch('/api/social/friends', {
+                    headers: {'Authorization': 'Bearer ' + token}
+                });
+
+                if (!response.ok) {
+                    throw new Error('加载好友列表失败');
+                }
+
+                const data = await response.json();
+                const friends = data.friends || [];
+
+                const container = document.getElementById('friendCheckboxList');
+
+                if (friends.length === 0) {
+                    container.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">暂无好友</p>';
+                    return;
+                }
+
+                container.innerHTML = friends.map(friend => `
+                    <label style="display: flex; align-items: center; gap: 8px; padding: 8px; background: white; border-radius: 6px; cursor: pointer; user-select: none; border: 1px solid #e0e0e0;">
+                        <input type="checkbox" class="friend-checkbox" value="${friend.id}" style="width: 18px; height: 18px; cursor: pointer;">
+                        <div style="width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 14px;">
+                            ${friend.username.substring(0, 1).toUpperCase()}
+                        </div>
+                        <span style="color: #000; font-weight: 500;">${friend.username}</span>
+                    </label>
+                `).join('');
+            } catch (error) {
+                console.error('加载好友列表失败:', error);
+                document.getElementById('friendCheckboxList').innerHTML = '<p style="text-align: center; color: #ff6b6b; padding: 20px;">加载失败</p>';
+            }
+        }
+
+        // 全选好友
+        function selectAllFriends() {
+            const checkboxes = document.querySelectorAll('.friend-checkbox');
+            const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+
+            checkboxes.forEach(cb => {
+                cb.checked = !allChecked;
+            });
+        }
+
+        // 从工作计划创建提醒
+        function createReminderFromPlan(planId, title, deadline) {
+            showCreateReminderForm();
+
+            // 填充内容
+            document.getElementById('reminderContent').value = title;
+
+            // 如果有截止日期，使用截止日期
+            if (deadline) {
+                const deadlineDate = new Date(deadline);
+                const dateStr = deadlineDate.toISOString().split('T')[0];
+                document.getElementById('reminderDate').value = dateStr;
+
+                // 设置时间为9:00
+                document.getElementById('reminderTime').value = '09:00';
+            }
+        }
+
+        // 从工作记录创建提醒
+        function createReminderFromRecord(content, deadline) {
+            showCreateReminderForm();
+
+            // 填充内容
+            document.getElementById('reminderContent').value = content;
+
+            // 如果有截止日期，使用截止日期
+            if (deadline) {
+                const deadlineDate = new Date(deadline);
+                const dateStr = deadlineDate.toISOString().split('T')[0];
+                document.getElementById('reminderDate').value = dateStr;
+
+                // 设置时间为9:00
+                document.getElementById('reminderTime').value = '09:00';
+            }
+        }
+
         async function saveNewReminder() {
             const content = document.getElementById('reminderContent').value.trim();
             const date = document.getElementById('reminderDate').value;
@@ -10308,19 +10699,30 @@ class AssistantHandler(BaseHTTPRequestHandler):
             // 组合日期和时间
             const remindTimeStr = `${date} ${time}:00`;
 
+            // 调试日志
+            console.log('🔍 [前端] 准备创建提醒:');
+            console.log('  - content:', content);
+            console.log('  - remind_time:', remindTimeStr);
+            console.log('  - currentRepeatType:', currentRepeatType);
+
             try {
                 const token = localStorage.getItem('token');
+
+                const requestBody = {
+                    content: content,
+                    remind_time: remindTimeStr,
+                    repeat_type: currentRepeatType
+                };
+                console.log('  - 请求体:', JSON.stringify(requestBody));
+
+                // 为自己创建提醒
                 const response = await fetch('/api/reminder/add', {
                     method: 'POST',
                     headers: {
                         'Authorization': 'Bearer ' + token,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({
-                        content: content,
-                        remind_time: remindTimeStr,
-                        repeat_type: currentRepeatType
-                    })
+                    body: JSON.stringify(requestBody)
                 });
 
                 if (!response.ok) {
@@ -10328,14 +10730,53 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     throw new Error(errorData.error || '创建失败');
                 }
 
+                // 检查是否需要同时提醒好友
+                const alsoNotifyFriends = document.getElementById('alsoNotifyFriends').checked;
+                if (alsoNotifyFriends) {
+                    // 获取选中的好友ID
+                    const selectedFriends = Array.from(document.querySelectorAll('.friend-checkbox:checked'))
+                        .map(cb => cb.value);
+
+                    if (selectedFriends.length > 0) {
+                        // 为每个好友创建提醒
+                        const friendPromises = selectedFriends.map(friendId =>
+                            fetch('/api/social/reminders/create', {
+                                method: 'POST',
+                                headers: {
+                                    'Authorization': 'Bearer ' + token,
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    friend_id: friendId,
+                                    content: content,
+                                    remind_time: remindTimeStr,
+                                    repeat_type: currentRepeatType
+                                })
+                            })
+                        );
+
+                        // 等待所有好友提醒创建完成
+                        await Promise.all(friendPromises);
+                    }
+                }
+
                 // 隐藏表单
                 hideCreateReminderForm();
+
+                // 重置好友选择
+                document.getElementById('alsoNotifyFriends').checked = false;
+                document.getElementById('friendSelectionArea').style.display = 'none';
 
                 // 重新加载列表
                 loadReminders();
 
                 // 显示成功提示
-                alert('✅ 提醒创建成功！');
+                if (alsoNotifyFriends) {
+                    const selectedCount = document.querySelectorAll('.friend-checkbox:checked').length;
+                    alert(`✅ 提醒创建成功！已同时提醒 ${selectedCount} 位好友`);
+                } else {
+                    alert('✅ 提醒创建成功！');
+                }
             } catch (error) {
                 console.error('创建提醒失败:', error);
                 alert('创建失败：' + error.message);
@@ -11054,6 +11495,9 @@ class AssistantHandler(BaseHTTPRequestHandler):
                             </button>
                             <button class="plan-btn plan-btn-edit" onclick="editWorkPlan(${plan.id}, '${plan.title.replace(/'/g, "\\'")}', '${description.replace(/'/g, "\\'")}', '${plan.deadline || plan.due_date || ''}', '${plan.priority}')">
                                 ✏️ 编辑
+                            </button>
+                            <button class="plan-btn plan-btn-reminder" onclick="createReminderFromPlan(${plan.id}, '${plan.title.replace(/'/g, "\\'")}', '${plan.deadline || plan.due_date || ''}')">
+                                ⏰ 提醒
                             </button>
                             ${plan.status !== 'completed' ? `
                                 <button class="plan-btn plan-btn-status" onclick="updatePlanStatus(${plan.id}, 'completed')">
@@ -12004,13 +12448,18 @@ class AssistantHandler(BaseHTTPRequestHandler):
                                 📝 ${record.timestamp}
                                 ${record.deadline ? `<span style="margin-left:15px; background:#fff3cd; color:#856404; padding:2px 8px; border-radius:6px; font-size:12px;">⏰ ${record.deadline}</span>` : ''}
                             </div>
-                            <div style="color:#333; font-size:15px; line-height:1.6;">
+                            <div style="color:#333; font-size:15px; line-height:1.6; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;">
                                 ${record.content}
                             </div>
                         </div>
-                        <span style="background:#e7f3ff; color:#0056b3; padding:4px 12px; border-radius:12px; font-size:12px; font-weight:600; white-space:nowrap; margin-left:10px;">
-                            ✓ ${record.status}
-                        </span>
+                        <div style="display:flex; flex-direction:column; gap:8px; align-items:flex-end; margin-left:10px;">
+                            <span style="background:#e7f3ff; color:#0056b3; padding:4px 12px; border-radius:12px; font-size:12px; font-weight:600; white-space:nowrap;">
+                                ✓ ${record.status}
+                            </span>
+                            <button class="plan-btn plan-btn-reminder" onclick="createReminderFromRecord('${record.content.replace(/'/g, "\\'")}', '${record.deadline || ''}')">
+                                ⏰ 提醒
+                            </button>
+                        </div>
                     </div>
                 </div>
             `).join('');
