@@ -407,9 +407,9 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     self.send_json({'success': False, 'error': '缺少subcategory_name参数'})
                     return
 
-                # 查找子类别ID
-                query = "SELECT id FROM subcategories WHERE name = %s LIMIT 1"
-                result = db_manager.query(query, (subcategory_name,))
+                # 查找子类别ID（必须加上user_id条件，避免查到其他用户的同名子类别）
+                query = "SELECT id FROM subcategories WHERE name = %s AND user_id = %s LIMIT 1"
+                result = db_manager.query(query, (subcategory_name, user_id))
                 if not result:
                     self.send_json([])  # 子类别不存在，返回空列表
                     return
@@ -559,7 +559,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
                         # 处理循环提醒
                         repeat_type = row.get('repeat_type', 'once')
-                        if repeat_type in ['minutely', 'hourly', 'daily', 'weekly', 'monthly', 'yearly']:
+                        if repeat_type in ['every_10_minutes', 'hourly', 'daily', 'weekly', 'monthly', 'yearly']:
                             # 计算下一次提醒时间
                             from reminder_scheduler import ReminderScheduler
                             scheduler_instance = ReminderScheduler()
@@ -782,6 +782,8 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     'avatar_url': user.get('avatar_url', ''),
                     'chat_background': user.get('chat_background', ''),
                     'theme': user.get('theme', 'light'),
+                    'storage_mode': user.get('storage_mode', 'cloud'),
+                    'storage_mode_selected': bool(user.get('storage_mode_selected', 0)),
                     'created_at': user.get('created_at', '').strftime('%Y-%m-%d %H:%M:%S') if hasattr(user.get('created_at', ''), 'strftime') else str(user.get('created_at', ''))
                 }
                 self.send_json({'success': True, 'user': user_profile})
@@ -2217,17 +2219,24 @@ class AssistantHandler(BaseHTTPRequestHandler):
             print(f"  - repeat_type: {repeat_type}")
             print(f"  - remind_time: {data.get('remind_time', '')}")
 
-            reminder_sys.add_reminder(
-                title=data.get('title', ''),
-                message=data.get('message', ''),
-                content=content,
-                remind_time=data.get('remind_time', ''),
-                repeat=data.get('repeat', '不重复'),
-                sound=data.get('sound', 'Ping'),
-                user_id=user_id,
-                repeat_type=repeat_type
-            )
-            self.send_json({'success': True, 'message': '提醒已添加'})
+            try:
+                reminder_sys.add_reminder(
+                    title=data.get('title', ''),
+                    message=data.get('message', ''),
+                    content=content,
+                    remind_time=data.get('remind_time', ''),
+                    repeat=data.get('repeat', '不重复'),
+                    sound=data.get('sound', 'Ping'),
+                    user_id=user_id,
+                    repeat_type=repeat_type
+                )
+                print(f"✅ [API] 提醒创建成功")
+                self.send_json({'success': True, 'message': '提醒已添加'})
+            except Exception as e:
+                print(f"❌ [API] 提醒创建失败: {e}")
+                import traceback
+                traceback.print_exc()
+                self.send_json({'success': False, 'message': f'提醒创建失败: {str(e)}'}, status=500)
 
         elif self.path == '/api/reminder/update':
             user_id = self.require_auth()
@@ -2312,6 +2321,37 @@ class AssistantHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"❌ 延迟提醒失败: {e}")
                 self.send_json({'success': False, 'message': f'延迟提醒失败: {str(e)}'}, status=500)
+
+        elif self.path == '/api/reminder/complete':
+            # 标记提醒为完成
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            reminder_id = data.get('id')
+
+            if not reminder_id:
+                self.send_json({'success': False, 'message': '缺少提醒ID'})
+                return
+
+            try:
+                # 获取原提醒信息
+                reminder = reminder_sys.get_reminder_by_id(reminder_id, user_id=user_id)
+                if not reminder:
+                    self.send_json({'success': False, 'message': '提醒不存在或权限不足'}, status=403)
+                    return
+
+                # 标记为已完成
+                db_manager.execute(
+                    "UPDATE reminders SET status = 'completed', triggered = 1 WHERE id = %s AND user_id = %s",
+                    (reminder_id, user_id)
+                )
+
+                self.send_json({'success': True, 'message': '已标记为完成'})
+
+            except Exception as e:
+                print(f"❌ 标记完成失败: {e}")
+                self.send_json({'success': False, 'message': f'标记完成失败: {str(e)}'}, status=500)
 
         elif self.path == '/api/chat/create_reminder':
             user_id = self.require_auth()
@@ -8015,7 +8055,7 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #000;">🔄 循环类型</label>
                     <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                         <button class="repeat-type-btn" data-type="once" onclick="selectRepeatType('once')" style="padding: 8px 16px; border: 2px solid #10a37f; background: #10a37f; color: white; border-radius: 20px; cursor: pointer; font-size: 14px;">单次</button>
-                        <button class="repeat-type-btn" data-type="minutely" onclick="selectRepeatType('minutely')" style="padding: 8px 16px; border: 2px solid #ddd; background: white; color: #333; border-radius: 20px; cursor: pointer; font-size: 14px;">每分钟</button>
+                        <button class="repeat-type-btn" data-type="every_10_minutes" onclick="selectRepeatType('every_10_minutes')" style="padding: 8px 16px; border: 2px solid #ddd; background: white; color: #333; border-radius: 20px; cursor: pointer; font-size: 14px;">每10分钟</button>
                         <button class="repeat-type-btn" data-type="hourly" onclick="selectRepeatType('hourly')" style="padding: 8px 16px; border: 2px solid #ddd; background: white; color: #333; border-radius: 20px; cursor: pointer; font-size: 14px;">每小时</button>
                         <button class="repeat-type-btn" data-type="daily" onclick="selectRepeatType('daily')" style="padding: 8px 16px; border: 2px solid #ddd; background: white; color: #333; border-radius: 20px; cursor: pointer; font-size: 14px;">每天</button>
                         <button class="repeat-type-btn" data-type="weekly" onclick="selectRepeatType('weekly')" style="padding: 8px 16px; border: 2px solid #ddd; background: white; color: #333; border-radius: 20px; cursor: pointer; font-size: 14px;">每周</button>
