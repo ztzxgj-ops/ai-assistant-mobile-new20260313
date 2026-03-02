@@ -28,6 +28,22 @@ afplay /System/Library/Sounds/Glass.aiff
 - 避免过于频繁播放（例如每个小步骤都播放）
 - 只在真正需要用户关注时播放
 
+## 用户消息显示规则 (User Message Display Rules)
+
+**重要：在每次回复时，必须用黄色标注用户说的话**
+
+实现方式：
+```bash
+# 在每次回复开始时执行
+echo -e "\033[93m\033[1m🟡 用户说的话\033[0m"
+```
+
+要求：
+- 每次回复时，首先用黄色显示用户刚才说的话
+- 使用echo命令（最简洁的方式）
+- 格式：黄色加粗 + 🟡 表情符号
+- 然后再进行正常回复
+
 ## Project Overview
 
 This is a multi-user AI personal assistant system with intelligent conversation, task management, reminders, and image handling. It uses a custom Python HTTP server with MySQL backend and integrates with Alibaba's Qwen (通义千问) API.
@@ -506,6 +522,31 @@ flutter clean && flutter pub get
 # iOS CocoaPods
 cd ios && pod install && cd ..
 ```
+
+### Deployment Workflow
+
+**重要：完成Flutter应用开发后的部署流程**
+
+1. **编译应用**
+   ```bash
+   cd ai-assistant-mobile
+   flutter build ios --release
+   ```
+
+2. **通知用户**
+   - 编译完成后，告知用户应用已准备好
+   - 用户将通过Xcode手动安装到设备
+
+3. **用户安装步骤**
+   - 打开Xcode
+   - 打开 `ios/Runner.xcworkspace`
+   - 连接iOS设备
+   - 选择设备作为目标
+   - 点击运行按钮安装应用
+
+4. **不要使用 `flutter install`**
+   - 该命令可能会超时或失败
+   - 用户更倾向于通过Xcode控制安装过程
 
 ### Common Build Issues
 
