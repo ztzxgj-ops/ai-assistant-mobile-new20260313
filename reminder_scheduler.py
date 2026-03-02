@@ -125,27 +125,52 @@ class ReminderScheduler:
     def _process_db_reminders(self, now):
         """处理数据库中的提醒"""
         try:
+            if not self.db:
+                return
+
             if not hasattr(self.db, 'execute'):
                 return
 
-            # 查询所有待处理的提醒（包含repeat_type字段）
-            reminders = self.db.query(
-                """
-                SELECT id, user_id, content, remind_time, status, repeat_type
-                FROM reminders
-                WHERE status = 'pending'
-                AND triggered = 0
-                AND remind_time <= %s
-                LIMIT 10
-                """,
-                (now.isoformat(),)
-            )
+            # 格式化当前时间为数据库格式（YYYY-MM-DD HH:MM:SS）
+            now_str = now.strftime('%Y-%m-%d %H:%M:%S')
+            print(f"🕐 [调度器] 当前时间: {now_str}")
+
+            # 查询所有待处理的提醒（包含好友提醒相关字段）
+            # 注意：使用 datetime 对象而不是字符串，避免 pymysql 参数绑定问题
+            print(f"🔍 [调度器] 准备查询，now类型: {type(now)}, 值: {now}")
+
+            try:
+                reminders = self.db.query(
+                    """
+                    SELECT r.id, r.user_id, r.content, r.remind_time, r.status, r.repeat_type,
+                           r.is_friend_reminder, r.creator_id, u.username AS creator_name
+                    FROM reminders r
+                    LEFT JOIN users u ON r.creator_id = u.id
+                    WHERE r.status = 'pending'
+                    AND r.triggered = 0
+                    AND r.remind_time <= %s
+                    LIMIT 10
+                    """,
+                    (now,)  # 传递 datetime 对象而不是字符串
+                )
+                print(f"🔍 [调度器] 查询成功，结果类型: {type(reminders)}, 长度: {len(reminders) if reminders else 0}")
+            except Exception as query_ex:
+                print(f"❌ [调度器] 查询异常: {query_ex}")
+                import traceback
+                traceback.print_exc()
+                reminders = []
+
+            print(f"🔍 [调度器] 查询到 {len(reminders)} 个待处理提醒")
+            for reminder in reminders:
+                print(f"  📋 ID:{reminder['id']}, 内容:{reminder['content']}, 计划时间:{reminder['remind_time']}")
 
             for reminder in reminders:
                 self._send_reminder(reminder)
 
         except Exception as e:
             print(f"⚠️ 处理数据库提醒失败: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _process_queued_notifications(self, now):
         """处理队列中的通知"""
@@ -169,6 +194,8 @@ class ReminderScheduler:
                 remind_time = reminder['remind_time']
                 status = reminder['status']
                 repeat_type = reminder.get('repeat_type', 'once')
+                is_friend_reminder = reminder.get('is_friend_reminder', 0)
+                creator_name = reminder.get('creator_name', '')
             else:
                 # 处理元组格式的提醒（向后兼容）
                 if len(reminder) >= 6:
@@ -176,75 +203,111 @@ class ReminderScheduler:
                 else:
                     reminder_id, user_id, content, remind_time, status = reminder[:5]
                     repeat_type = 'once'
+                is_friend_reminder = 0
+                creator_name = ''
+
+            # 🔒 关键修复：立即标记triggered=1，防止重复触发
+            if self.db and hasattr(self.db, 'execute'):
+                self.db.execute(
+                    "UPDATE reminders SET triggered = 1 WHERE id = %s AND triggered = 0",
+                    (reminder_id,)
+                )
+                print(f"🔒 已锁定提醒 ID:{reminder_id}，防止重复触发")
+
+            # 根据是否为好友提醒设置不同的标题
+            if is_friend_reminder == 1 and creator_name:
+                title = f"📢 来自 {creator_name} 的提醒"
+            else:
+                title = "📢 任务提醒"
+
+            # 获取用户的声音设置
+            sound_type = 'default'
+            volume = 0.7
+            try:
+                if self.db and hasattr(self.db, 'query'):
+                    settings = self.db.query(
+                        "SELECT setting_key, setting_value FROM user_settings WHERE user_id = %s AND setting_key IN ('reminder_sound_type', 'reminder_sound_volume')",
+                        (user_id,)
+                    )
+                    for setting in settings:
+                        if setting['setting_key'] == 'reminder_sound_type':
+                            sound_type = setting['setting_value']
+                        elif setting['setting_key'] == 'reminder_sound_volume':
+                            volume = float(setting['setting_value'])
+            except Exception as e:
+                print(f"⚠️ 读取用户声音设置失败，使用默认值: {e}")
 
             # 1. 发送本地通知（桌面端）
             self.notification_service.toast_notification(
-                title="📢 任务提醒",
+                title=title,
                 message=content,
-                timeout=10
+                timeout=10,
+                sound_type=sound_type,
+                volume=volume
             )
 
-            # 2. 通过 WebSocket 推送到移动端
-            print(f"🔍 DEBUG: 准备推送 WebSocket, ws_server={self.ws_server}, user_id={user_id}")
-            if self.ws_server:
-                try:
-                    print(f"🔍 DEBUG: 调用 send_reminder, user_id={user_id}, content={content}")
-                    result = self.ws_server.send_reminder(user_id, {
-                        'id': reminder_id,
-                        'content': content,
-                        'remind_time': str(remind_time)
-                    })
-                    print(f"🔍 DEBUG: send_reminder 返回值={result}")
-                except Exception as e:
-                    print(f"⚠️ WebSocket 推送失败: {e}")
-                    import traceback
-                    traceback.print_exc()
-            else:
-                print(f"⚠️ ws_server 为 None，无法推送")
+            # 2. 通过 WebSocket 推送到移动端 - 已禁用，改用本地通知
+            # print(f"🔍 DEBUG: 准备推送 WebSocket, ws_server={self.ws_server}, user_id={user_id}")
+            # if self.ws_server:
+            #     try:
+            #         print(f"🔍 DEBUG: 调用 send_reminder, user_id={user_id}, content={content}")
+            #         result = self.ws_server.send_reminder(user_id, {
+            #             'id': reminder_id,
+            #             'content': content,
+            #             'remind_time': str(remind_time),
+            #             'is_friend_reminder': is_friend_reminder,
+            #             'creator_name': creator_name,
+            #             'title': title,
+            #             'repeat_type': repeat_type  # 添加循环类型字段
+            #         })
+            #         print(f"🔍 DEBUG: send_reminder 返回值={result}")
+            #     except Exception as e:
+            #         print(f"⚠️ WebSocket 推送失败: {e}")
+            #         import traceback
+            #         traceback.print_exc()
+            # else:
+            #     print(f"⚠️ ws_server 为 None，无法推送")
+            print(f"ℹ️ WebSocket推送已禁用，移动端使用本地通知")
 
-            # 3. 通过 FCM 推送到移动端（支持后台通知）
-            if self.fcm_service and self.device_token_manager:
-                try:
-                    # 获取用户的所有活跃设备token
-                    devices = self.device_token_manager.get_user_device_tokens(user_id, active_only=True)
+            # 3. 通过 FCM 推送到移动端（支持后台通知）- 已禁用，改用本地通知
+            # if self.fcm_service and self.device_token_manager:
+            #     try:
+            #         # 获取用户的所有活跃设备token
+            #         devices = self.device_token_manager.get_user_device_tokens(user_id, active_only=True)
+            #
+            #         if devices:
+            #             device_tokens = [d['device_token'] for d in devices]
+            #             print(f"📱 准备发送FCM推送到 {len(device_tokens)} 个设备")
+            #
+            #             # 发送FCM推送通知（使用自定义标题）
+            #             result = self.fcm_service.send_reminder_notification(
+            #                 device_tokens=device_tokens,
+            #                 reminder_content=content,
+            #                 reminder_id=reminder_id,
+            #                 title=title
+            #             )
+            #
+            #             if result.get('success') or result.get('success_count', 0) > 0:
+            #                 print(f"✅ FCM推送成功: {result}")
+            #             else:
+            #                 print(f"⚠️ FCM推送失败: {result}")
+            #         else:
+            #             print(f"⚠️ 用户 {user_id} 没有注册的设备token")
+            #
+            #     except Exception as e:
+            #         print(f\"❌ FCM推送失败: {e}\")\n            #         import traceback
+            #         traceback.print_exc()
+            print(f"ℹ️ FCM推送已禁用，移动端使用本地通知")
 
-                    if devices:
-                        device_tokens = [d['device_token'] for d in devices]
-                        print(f"📱 准备发送FCM推送到 {len(device_tokens)} 个设备")
-
-                        # 发送FCM推送通知
-                        result = self.fcm_service.send_reminder_notification(
-                            device_tokens=device_tokens,
-                            reminder_content=content,
-                            reminder_id=reminder_id
-                        )
-
-                        if result.get('success') or result.get('success_count', 0) > 0:
-                            print(f"✅ FCM推送成功: {result}")
-                        else:
-                            print(f"⚠️ FCM推送失败: {result}")
-                    else:
-                        print(f"⚠️ 用户 {user_id} 没有注册的设备token")
-
-                except Exception as e:
-                    print(f"❌ FCM推送失败: {e}")
-                    import traceback
-                    traceback.print_exc()
-            else:
-                if not self.fcm_service:
-                    print(f"⚠️ FCM服务未初始化")
-                if not self.device_token_manager:
-                    print(f"⚠️ DeviceTokenManager未初始化")
-
-            # 4. 更新数据库状态
+            # 4. 更新数据库状态（根据提醒类型）
             if self.db and hasattr(self.db, 'execute'):
                 # 如果是循环提醒，计算下一次提醒时间并更新
-                if repeat_type in ['daily', 'weekly', 'monthly', 'yearly']:
+                if repeat_type in ['minutely', 'every_5_minutes', 'every_10_minutes', 'every_30_minutes', 'hourly', 'daily', 'weekly', 'monthly', 'yearly']:
                     next_remind_time = self._calculate_next_remind_time(remind_time, repeat_type)
                     if next_remind_time:
-                        # 更新为下一次提醒时间，保持pending状态，重置triggered
+                        # 更新为下一次提醒时间，保持pending状态，重置triggered=0
                         self.db.execute(
-                            "UPDATE reminders SET remind_time = %s, triggered = 0 WHERE id = %s",
+                            "UPDATE reminders SET remind_time = %s, status = 'pending', triggered = 0 WHERE id = %s",
                             (next_remind_time, reminder_id)
                         )
                         print(f"🔄 循环提醒已更新，下次提醒时间: {next_remind_time}")
@@ -254,12 +317,8 @@ class ReminderScheduler:
                             "UPDATE reminders SET status = %s, triggered = %s WHERE id = %s",
                             ('completed', 1, reminder_id)
                         )
-                else:
-                    # 单次提醒，标记为completed
-                    self.db.execute(
-                        "UPDATE reminders SET status = %s, triggered = %s WHERE id = %s",
-                        ('completed', 1, reminder_id)
-                    )
+                # 单次提醒：triggered已在前面设置为1，这里不需要再更新
+                # 等待用户手动标记完成或删除
 
             print(f"✅ 已发送提醒: {content}")
 
@@ -302,7 +361,22 @@ class ReminderScheduler:
                 current_time = dt.combine(current_time, dt.min.time())
 
             # 根据repeat_type计算下一次时间
-            if repeat_type == 'daily':
+            if repeat_type == 'minutely':
+                # 每分钟：加1分钟
+                next_time = current_time + timedelta(minutes=1)
+            elif repeat_type == 'every_5_minutes':
+                # 每5分钟：加5分钟
+                next_time = current_time + timedelta(minutes=5)
+            elif repeat_type == 'every_10_minutes':
+                # 每10分钟：加10分钟
+                next_time = current_time + timedelta(minutes=10)
+            elif repeat_type == 'every_30_minutes':
+                # 每30分钟：加30分钟
+                next_time = current_time + timedelta(minutes=30)
+            elif repeat_type == 'hourly':
+                # 每小时：加1小时
+                next_time = current_time + timedelta(hours=1)
+            elif repeat_type == 'daily':
                 # 每天：加1天
                 next_time = current_time + timedelta(days=1)
             elif repeat_type == 'weekly':
