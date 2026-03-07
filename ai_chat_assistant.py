@@ -675,11 +675,18 @@ class AIAssistant:
     def _query_by_main_keyword(self, user_id, keyword):
         """
         查询包含主关键词的记录（匹配"关键词:"格式）
-        查询范围：messages表 + daily_records表
+        查询范围：仅messages表（不包括daily_records表）
+
+        主关键词定义：在"保存 关键词:内容"或"记录 关键词:内容"中，
+        冒号前面的词就是主关键词。
+
+        例如：
+        - "保存 google:账号xxx" → 主关键词是"google"
+        - "保存 银行卡:6222xxxx" → 主关键词是"银行卡"
         """
         results = []
 
-        # 1. 查询messages表（匹配"关键词:"格式）
+        # 只查询messages表（匹配"关键词:"格式）
         try:
             query = """
                 SELECT content, timestamp, 'messages' as source
@@ -702,21 +709,10 @@ class AIAssistant:
                     'role': 'user',
                     'source': 'messages'
                 })
+
+            print(f"🔍 格式三查询: 主关键词'{keyword}'在messages表中找到{len(results)}条记录")
         except Exception as e:
             print(f"❌ 查询messages表失败: {e}")
-
-        # 2. 查询daily_records表（完整匹配关键词）
-        try:
-            daily_results = self._search_daily_records(keyword, user_id)
-            for record in daily_results:
-                results.append({
-                    'timestamp': record.get('created_at', ''),
-                    'content': f"[记录] {record.get('title', '')} - {record.get('content', '')}",
-                    'role': 'user',
-                    'source': 'daily_records'
-                })
-        except Exception as e:
-            print(f"❌ 查询daily_records表失败: {e}")
 
         return results
 
@@ -800,7 +796,25 @@ class AIAssistant:
                 source = item.get('source', 'unknown')
                 context += f"{idx}. [{timestamp}] [{source}] {content}\n"
         else:
-            context += "未找到符合条件的记录。\n"
+            # 根据查询类型给出不同的提示
+            if query_info['type'] == 'format3':
+                # 格式三：主关键词查询
+                keyword = query_info.get('keyword', '')
+                context += f"未找到'{keyword}'主关键词的记录。\n"
+                context += f"提示：主关键词格式为'保存 {keyword}:内容'或'记录 {keyword}:内容'。\n"
+            elif query_info['type'] == 'format2':
+                # 格式二：时间范围查询
+                time_range = query_info.get('time_range', '')
+                context += f"未找到{time_range}内的保存/记录数据。\n"
+            elif query_info['type'] == 'format1':
+                # 格式一：24小时查询
+                context += "未找到最近24小时内的保存/记录数据。\n"
+            elif query_info['type'] == 'format4':
+                # 格式四：关键词相关查询
+                keyword = query_info.get('keyword', '')
+                context += f"未找到包含'{keyword}'的相关记录。\n"
+            else:
+                context += "未找到符合条件的记录。\n"
 
         context += "\n请根据以上查询结果，简洁地总结并回答用户。\n"
         return context
