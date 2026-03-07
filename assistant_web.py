@@ -2341,16 +2341,82 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     self.send_json({'success': False, 'message': '提醒不存在或权限不足'}, status=403)
                     return
 
-                # 标记为已完成
-                db_manager.execute(
-                    "UPDATE reminders SET status = 'completed', triggered = 1 WHERE id = %s AND user_id = %s",
-                    (reminder_id, user_id)
-                )
+                # 检查是否为循环提醒
+                repeat_type = reminder.get('repeat_type', 'once')
 
-                self.send_json({'success': True, 'message': '已标记为完成'})
+                if repeat_type in ['minutely', 'every_5_minutes', 'every_10_minutes', 'every_30_minutes', 'hourly', 'daily', 'weekly', 'monthly', 'yearly']:
+                    # 循环提醒：计算下一次提醒时间
+                    from datetime import datetime, timedelta
+                    import calendar
+
+                    current_time = reminder.get('remind_time')
+                    if isinstance(current_time, str):
+                        current_time = datetime.fromisoformat(current_time.replace('Z', '+00:00'))
+
+                    # 计算下一次提醒时间
+                    if repeat_type == 'minutely':
+                        next_time = current_time + timedelta(minutes=1)
+                    elif repeat_type == 'every_5_minutes':
+                        next_time = current_time + timedelta(minutes=5)
+                    elif repeat_type == 'every_10_minutes':
+                        next_time = current_time + timedelta(minutes=10)
+                    elif repeat_type == 'every_30_minutes':
+                        next_time = current_time + timedelta(minutes=30)
+                    elif repeat_type == 'hourly':
+                        next_time = current_time + timedelta(hours=1)
+                    elif repeat_type == 'daily':
+                        next_time = current_time + timedelta(days=1)
+                    elif repeat_type == 'weekly':
+                        next_time = current_time + timedelta(days=7)
+                    elif repeat_type == 'monthly':
+                        year = current_time.year
+                        month = current_time.month + 1
+                        if month > 12:
+                            year += 1
+                            month = 1
+                        day = current_time.day
+                        max_day = calendar.monthrange(year, month)[1]
+                        if day > max_day:
+                            day = max_day
+                        next_time = datetime(year, month, day, current_time.hour, current_time.minute)
+                    elif repeat_type == 'yearly':
+                        year = current_time.year + 1
+                        month = current_time.month
+                        day = current_time.day
+                        if month == 2 and day == 29:
+                            if not calendar.isleap(year):
+                                day = 28
+                        next_time = datetime(year, month, day, current_time.hour, current_time.minute)
+                    else:
+                        next_time = None
+
+                    if next_time:
+                        # 更新为下一次提醒时间，保持活跃状态，重置triggered
+                        db_manager.execute(
+                            "UPDATE reminders SET remind_time = %s, status = '活跃', triggered = 0 WHERE id = %s AND user_id = %s",
+                            (next_time.strftime('%Y-%m-%d %H:%M:%S'), reminder_id, user_id)
+                        )
+                        print(f"🔄 循环提醒已更新到下次时间: {next_time}")
+                        self.send_json({'success': True, 'message': f'已完成，下次提醒: {next_time.strftime("%Y-%m-%d %H:%M")}'})
+                    else:
+                        # 计算失败，标记为完成
+                        db_manager.execute(
+                            "UPDATE reminders SET status = 'completed', triggered = 1 WHERE id = %s AND user_id = %s",
+                            (reminder_id, user_id)
+                        )
+                        self.send_json({'success': True, 'message': '已标记为完成'})
+                else:
+                    # 单次提醒：标记为已完成
+                    db_manager.execute(
+                        "UPDATE reminders SET status = 'completed', triggered = 1 WHERE id = %s AND user_id = %s",
+                        (reminder_id, user_id)
+                    )
+                    self.send_json({'success': True, 'message': '已标记为完成'})
 
             except Exception as e:
                 print(f"❌ 标记完成失败: {e}")
+                import traceback
+                traceback.print_exc()
                 self.send_json({'success': False, 'message': f'标记完成失败: {str(e)}'}, status=500)
 
         elif self.path == '/api/chat/create_reminder':

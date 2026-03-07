@@ -289,7 +289,7 @@ class GuestbookManager:
 
     def post_message_v2(self, owner_id, author_id, content,
                         mood_tag=None, bg_color='#FFF9C4',
-                        image_id=None, is_public=True, parent_id=None,
+                        image_id=None, image_ids=None, is_public=True, parent_id=None,
                         visibility='all_friends', visible_to_users=None):
         """发表留言（增强版 - 支持便签墙功能和可见范围控制）
 
@@ -299,7 +299,8 @@ class GuestbookManager:
             content: 留言内容
             mood_tag: 心情标签（happy/sad/excited等）
             bg_color: 背景颜色（默认黄色）
-            image_id: 关联图片ID
+            image_id: 关联图片ID（单张，兼容旧版）
+            image_ids: 关联图片ID列表（多张，新版）
             is_public: 是否公开（已废弃，使用visibility代替）
             parent_id: 父留言ID（回复时使用）
             visibility: 可见范围（all_friends=所有好友，specific_friends=指定好友，private=仅自己）
@@ -327,16 +328,25 @@ class GuestbookManager:
             if visibility == 'specific_friends' and visible_to_users:
                 visible_to_json = json.dumps(visible_to_users)
 
+            # 处理图片ID列表
+            image_ids_json = None
+            if image_ids:
+                # 如果提供了 image_ids 列表
+                image_ids_json = json.dumps(image_ids)
+            elif image_id:
+                # 如果只提供了单个 image_id（兼容旧版）
+                image_ids_json = json.dumps([image_id])
+
             # 插入留言记录
             sql = """
                 INSERT INTO guestbook_messages
-                (owner_id, author_id, content, mood_tag, bg_color, image_id,
+                (owner_id, author_id, content, mood_tag, bg_color, image_id, image_ids,
                  position_x, position_y, rotation, is_public, parent_id,
                  visibility, visible_to_users)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             self.db.execute(sql, (owner_id, author_id, content, mood_tag, bg_color,
-                                 image_id, position_x, position_y, rotation,
+                                 image_id, image_ids_json, position_x, position_y, rotation,
                                  is_public, parent_id, visibility, visible_to_json))
 
             # 获取插入的留言ID
@@ -412,7 +422,7 @@ class GuestbookManager:
             sql = f"""
                 SELECT gm.id, gm.author_id, u.username as author_username,
                        u.avatar_url as author_avatar, gm.content, gm.mood_tag,
-                       gm.bg_color, gm.image_id, gm.position_x, gm.position_y,
+                       gm.bg_color, gm.image_id, gm.image_ids, gm.position_x, gm.position_y,
                        gm.rotation, gm.is_public, gm.parent_id, gm.like_count,
                        gm.visibility, gm.visible_to_users, gm.created_at,
                        i.filename as image_filename, i.file_path as image_path,
@@ -439,6 +449,37 @@ class GuestbookManager:
                             item['visible_to_users'] = json.loads(item['visible_to_users'])
                         except:
                             item['visible_to_users'] = []
+
+                    # 解析 image_ids JSON 并获取所有图片信息
+                    if item.get('image_ids'):
+                        try:
+                            image_ids_list = json.loads(item['image_ids'])
+                            if image_ids_list:
+                                # 查询所有图片的信息
+                                image_ids_str = ','.join(map(str, image_ids_list))
+                                images_sql = f"""
+                                    SELECT id, filename, file_path
+                                    FROM images
+                                    WHERE id IN ({image_ids_str})
+                                    ORDER BY FIELD(id, {image_ids_str})
+                                """
+                                images_result = self.db.query(images_sql)
+                                item['images'] = images_result if images_result else []
+                            else:
+                                item['images'] = []
+                        except Exception as e:
+                            print(f"解析图片ID列表失败: {e}")
+                            item['images'] = []
+                    else:
+                        # 兼容旧数据：如果没有 image_ids 但有 image_id，使用单张图片
+                        if item.get('image_id') and item.get('image_path'):
+                            item['images'] = [{
+                                'id': item['image_id'],
+                                'filename': item.get('image_filename'),
+                                'file_path': item.get('image_path')
+                            }]
+                        else:
+                            item['images'] = []
 
                     # 获取表情回应
                     item['reactions'] = self.get_message_reactions(item['id'])

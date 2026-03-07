@@ -246,27 +246,28 @@ class ReminderScheduler:
                 volume=volume
             )
 
-            # 2. 通过 WebSocket 推送到移动端
-            print(f"🔍 DEBUG: 准备推送 WebSocket, ws_server={self.ws_server}, user_id={user_id}")
-            if self.ws_server:
-                try:
-                    print(f"🔍 DEBUG: 调用 send_reminder, user_id={user_id}, content={content}")
-                    result = self.ws_server.send_reminder(user_id, {
-                        'id': reminder_id,
-                        'content': content,
-                        'remind_time': str(remind_time),
-                        'is_friend_reminder': is_friend_reminder,
-                        'creator_name': creator_name,
-                        'title': title,
-                        'repeat_type': repeat_type  # 添加循环类型字段
-                    })
-                    print(f"✅ WebSocket推送成功: {result}")
-                except Exception as e:
-                    print(f"⚠️ WebSocket 推送失败: {e}")
-                    import traceback
-                    traceback.print_exc()
-            else:
-                print(f"⚠️ ws_server 为 None，无法推送")
+            # 2. 通过 WebSocket 推送到移动端 - 已禁用，改用本地通知
+            # print(f"🔍 DEBUG: 准备推送 WebSocket, ws_server={self.ws_server}, user_id={user_id}")
+            # if self.ws_server:
+            #     try:
+            #         print(f"🔍 DEBUG: 调用 send_reminder, user_id={user_id}, content={content}")
+            #         result = self.ws_server.send_reminder(user_id, {
+            #             'id': reminder_id,
+            #             'content': content,
+            #             'remind_time': str(remind_time),
+            #             'is_friend_reminder': is_friend_reminder,
+            #             'creator_name': creator_name,
+            #             'title': title,
+            #             'repeat_type': repeat_type  # 添加循环类型字段
+            #         })
+            #         print(f"🔍 DEBUG: send_reminder 返回值={result}")
+            #     except Exception as e:
+            #         print(f"⚠️ WebSocket 推送失败: {e}")
+            #         import traceback
+            #         traceback.print_exc()
+            # else:
+            #     print(f"⚠️ ws_server 为 None，无法推送")
+            print(f"ℹ️ WebSocket推送已禁用，移动端使用本地通知")
 
             # 3. 通过 FCM 推送到移动端（支持后台通知）- 已禁用，改用本地通知
             # if self.fcm_service and self.device_token_manager:

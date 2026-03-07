@@ -44,12 +44,16 @@ def sort_by_priority(records):
     try:
         def get_priority(record):
             title = record.get('title', '') or record.get('content', '')
+            priority = 2  # 默认普通优先级
             if '紧急' in str(title):
-                return 0  # 紧急优先级最高
+                priority = 0  # 紧急优先级最高
             elif '重要' in str(title):
-                return 1  # 重要优先级次高
-            else:
-                return 2  # 普通优先级最低
+                priority = 1  # 重要优先级次高
+
+            # 返回元组：(优先级, -sort_order)
+            # sort_order越大越靠前，所以用负数
+            sort_order = record.get('sort_order', 0)
+            return (priority, -sort_order)
 
         return sorted(records, key=get_priority)
     except Exception as e:
@@ -282,7 +286,7 @@ class WorkCommand(Command):
             if not tasks:
                 return {'response': '✅ 当前没有未完成工作', 'is_command': True}
 
-            response = f"未完成工作（共{len(tasks)}个）：\n\n"
+            response = f"未完成工作（共{len(tasks)}项）：\n\n"
             for idx, task in enumerate(tasks, 1):
                 response += f"{idx}. {task['title']}\n"
 
@@ -921,7 +925,7 @@ class DynamicSubcategoryCommand(Command):
                         'add_action': True
                     }
 
-                response = f"未完成{self.name}（共{len(records)}个）：\n\n"
+                response = f"未完成{self.name}（共{len(records)}项）：\n\n"
                 for idx, record in enumerate(records, 1):
                     # 优先显示完整content，如果content为空则显示title
                     content = record.get('content', '')
@@ -1161,7 +1165,7 @@ class DynamicSubcategoryCommand(Command):
                             'add_action': True
                         }
 
-                    response = f"未完成{self.name}（共{len(records)}个）：\n\n"
+                    response = f"未完成{self.name}（共{len(records)}项）：\n\n"
                     for idx, record in enumerate(records, 1):
                         display_text = record.get('title') or record.get('content', '')
                         if len(display_text) > 50:
@@ -1481,7 +1485,7 @@ class DynamicSubcategoryCommand(Command):
                         'add_action': True
                     }
 
-                response = f"未完成{self.name}（共{len(records)}个）：\n\n"
+                response = f"未完成{self.name}（共{len(records)}项）：\n\n"
                 for idx, record in enumerate(records, 1):
                     # 优先显示完整content，如果content为空则显示title
                     content = record.get('content', '')

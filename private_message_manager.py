@@ -52,7 +52,8 @@ class PrivateMessageManager:
             # 获取插入的消息ID
             message_id = self.db.query_one("SELECT LAST_INSERT_ID() as id")['id']
 
-            # 3. 发送WebSocket通知给接收者
+            # 3. 发送WebSocket通知给接收者（如果在线）
+            ws_success = False
             try:
                 from websocket_server import get_websocket_server
                 ws_server = get_websocket_server()
@@ -74,11 +75,59 @@ class PrivateMessageManager:
                 }
 
                 # 发送通知
-                ws_server.send_message(receiver_id, message_data)
-                print(f"✅ 已发送WebSocket通知给用户 {receiver_id}")
+                ws_success = ws_server.send_message(receiver_id, message_data)
+                if ws_success:
+                    print(f"✅ 已发送WebSocket通知给用户 {receiver_id}")
+                else:
+                    print(f"⚠️ WebSocket通知发送失败（用户可能离线）")
             except Exception as ws_e:
                 print(f"⚠️ WebSocket通知发送失败: {ws_e}")
+
+            # 4. 同时发送FCM推送（确保用户在后台或离线时也能收到通知）
+            # 暂时禁用FCM推送，因为服务器网络问题导致超时
+            # TODO: 修复服务器网络问题后重新启用
+            """
+            try:
+                from fcm_push_service import get_fcm_service
+                from mysql_manager import DeviceTokenManager
+
+                fcm_service = get_fcm_service()
+                device_manager = DeviceTokenManager(self.db)
+
+                # 获取接收者的所有设备Token
+                tokens = device_manager.get_user_device_tokens(receiver_id, active_only=True)
+
+                if tokens and len(tokens) > 0:
+                    # 获取发送者信息（如果之前没有获取）
+                    if 'sender_name' not in locals():
+                        sender_info = self.db.query_one(
+                            "SELECT id, username FROM users WHERE id = %s",
+                            (sender_id,)
+                        )
+                        sender_name = sender_info['username'] if sender_info else '好友'
+
+                    # 发送FCM推送
+                    token_list = [t['device_token'] for t in tokens]
+                    result = fcm_service.send_multicast(
+                        device_tokens=token_list,
+                        title=f"💬 {sender_name}",
+                        body=content[:100],
+                        data={
+                            'type': 'new_message',
+                            'sender_id': str(sender_id),
+                            'sender_name': sender_name,
+                            'message_id': str(message_id)
+                        }
+                    )
+                    print(f"✅ 已发送FCM推送通知给用户 {receiver_id}（{len(token_list)}个设备，成功{result.get('success_count', 0)}个）")
+                else:
+                    print(f"⚠️ 用户 {receiver_id} 没有注册的设备Token")
+            except Exception as fcm_e:
+                print(f"⚠️ FCM推送发送失败: {fcm_e}")
+                import traceback
+                traceback.print_exc()
                 # 不影响消息发送，继续返回成功
+            """
 
             return {'success': True, 'message_id': message_id}
 

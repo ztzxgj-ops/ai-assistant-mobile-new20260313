@@ -6,6 +6,7 @@ import json
 import os
 import re
 from datetime import datetime, timedelta
+from enum import Enum
 # 使用MySQL版本的管理器
 from mysql_manager import (
     MySQLManager,
@@ -26,6 +27,15 @@ try:
     from development_log import DevelopmentLogManager
 except ImportError:
     DevelopmentLogManager = None
+
+
+class ConversationState(Enum):
+    """对话状态枚举"""
+    IDLE = "idle"                      # 空闲状态
+    WAITING_CONFIRMATION = "waiting"   # 等待用户确认
+    EXECUTING = "executing"            # 执行中
+    WAITING_INPUT = "input"            # 等待补充信息
+
 
 class AIAssistant:
     """AI聊天助手 (MySQL版本)"""
@@ -92,7 +102,16 @@ class AIAssistant:
         # 格式：{user_id: {'type': 'work_list'/'plan_list'/etc, 'data': [...], 'timestamp': ...}}
         self.last_response_context = {}
 
-        
+        # ✨ 新增：待确认的计划和提醒 {user_id: {'plans': [...], 'reminders': [...]}}
+        self.pending_confirmations = {}
+
+        # ✨ 新增：对话状态管理 {user_id: ConversationState}
+        self.conversation_states = {}
+
+        # ✨ 新增：状态上下文数据 {user_id: {...}}
+        self.state_context = {}
+
+
     def load_config(self):
         """加载AI配置"""
         config_file = 'ai_config.json'
@@ -226,6 +245,31 @@ class AIAssistant:
             traceback.print_exc()
             return []
 
+    def _clean_command_prefix(self, content):
+        """
+        清理消息内容中的命令前缀
+        例如："保存: 内容" -> "内容"
+        """
+        if not content:
+            return content
+
+        # 定义需要清理的命令前缀
+        command_prefixes = [
+            '保存:', '保存：', '保存 ',
+            '记录:', '记录：', '记录 ',
+            '工作:', '工作：', '工作 ',
+            '计划:', '计划：', '计划 ',
+            '提醒:', '提醒：', '提醒 ',
+            '查询:', '查询：', '查询 ',
+        ]
+
+        # 尝试移除前缀
+        for prefix in command_prefixes:
+            if content.startswith(prefix):
+                return content[len(prefix):].strip()
+
+        return content
+
     def _extract_keywords_from_message(self, user_message):
         """
         ✨ 改进的关键词提取：不依赖白名单，直接从用户输入提取所有有意义的词
@@ -241,6 +285,27 @@ class AIAssistant:
         # 这样可以捕获任何中文词，包括"留言墙"、"图片"等
         chinese_words = re.findall(r'[\u4e00-\u9fff]{2,10}', user_message)
         keywords.extend(chinese_words)
+
+        # ✨ 新增：对长词进行拆分，提取子词（解决"高俊相关"无法匹配"高俊"的问题）
+        # 例如："高俊相关" -> ["高俊相关", "高俊", "相关"]
+        # 定义常见的后缀词，用于智能拆分
+        common_suffixes = {'相关', '有关', '关于', '方面', '问题', '情况', '事情', '内容', '信息', '资料', '记录'}
+
+        for word in chinese_words:
+            if len(word) > 2:
+                # 优先检查是否以常见后缀结尾，如果是则提取前面的主体词
+                for suffix in common_suffixes:
+                    if word.endswith(suffix) and len(word) > len(suffix):
+                        main_word = word[:-len(suffix)]
+                        if main_word and main_word not in keywords:
+                            keywords.append(main_word)
+
+                # 拆分为2字词（但跳过明显无意义的组合）
+                for i in range(len(word) - 1):
+                    sub_word = word[i:i+2]
+                    # 只添加不包含停用词的子词
+                    if sub_word not in keywords and not any(stop in sub_word for stop in ['的', '了', '吗', '呢', '啊']):
+                        keywords.append(sub_word)
 
         # 3. 提取英文词汇
         english_words = re.findall(r'[a-zA-Z]+', user_message)
@@ -261,7 +326,8 @@ class AIAssistant:
             '在', '到', '从', '给', '被', '把', '让', '使', '叫', '要',
             '想', '能', '会', '应该', '必须', '可能', '也许', '就', '才',
             '又', '还', '都', '很', '太', '最', '比', '像', '似', '等',
-            '及', '与', '而', '则', '否', '若', '乃', '矣', '焉', '耳'
+            '及', '与', '而', '则', '否', '若', '乃', '矣', '焉', '耳',
+            '查询', '搜索', '查找', '找', '看', '显示', '相关'  # ✨ 新增：过滤查询类动词
         }
 
         # 6. 过滤停用词
@@ -270,6 +336,89 @@ class AIAssistant:
         print(f"🔍 改进的关键词提取: 用户输入='{user_message}' -> 提取的关键词={keywords}")
 
         return keywords
+
+    def highlight_keywords(self, text, keywords):
+        """高亮显示关键词（使用markdown加粗）"""
+        if not text or not keywords:
+            return text
+
+        highlighted_text = text
+        for keyword in keywords:
+            if keyword and len(keyword) > 0:
+                # 使用markdown加粗语法高亮关键词
+                # 使用正则替换，避免重复高亮
+                pattern = re.compile(re.escape(keyword), re.IGNORECASE)
+                highlighted_text = pattern.sub(f"**{keyword}**", highlighted_text)
+
+        return highlighted_text
+
+    def calculate_relevance_score(self, content, keyword, timestamp=None):
+        """计算内容与关键词的相关性评分"""
+        if not content or not keyword:
+            return 0.0
+
+        score = 0.0
+        content_lower = content.lower()
+        keyword_lower = keyword.lower()
+
+        # 1. 关键词出现次数（权重0.4）
+        count = content_lower.count(keyword_lower)
+        score += count * 0.4
+
+        # 2. 关键词位置（标题/开头权重更高，权重0.3）
+        if len(content) > 0:
+            # 如果关键词在前50个字符内，加分
+            if keyword_lower in content_lower[:50]:
+                score += 0.3
+            # 如果关键词在前20个字符内（标题位置），再加分
+            if keyword_lower in content_lower[:20]:
+                score += 0.2
+
+        # 3. 完整匹配加分（权重0.2）
+        if keyword_lower in content_lower:
+            score += 0.2
+
+        # 4. 时间衰减（越新越好，权重0.1）
+        if timestamp:
+            try:
+                if isinstance(timestamp, str):
+                    record_time = datetime.strptime(timestamp[:10], '%Y-%m-%d')
+                elif isinstance(timestamp, datetime):
+                    record_time = timestamp
+                else:
+                    record_time = None
+
+                if record_time:
+                    days_old = (datetime.now() - record_time).days
+                    # 时间衰减：1年内的记录得分最高
+                    time_score = max(0, 0.1 * (1 - days_old / 365))
+                    score += time_score
+            except:
+                pass
+
+        return score
+
+    def get_conversation_state(self, user_id):
+        """获取用户的对话状态"""
+        user_key = user_id or 'default'
+        return self.conversation_states.get(user_key, ConversationState.IDLE)
+
+    def set_conversation_state(self, user_id, state, context=None):
+        """设置用户的对话状态"""
+        user_key = user_id or 'default'
+        self.conversation_states[user_key] = state
+        if context:
+            self.state_context[user_key] = context
+        print(f"🔄 用户{user_key}状态变更: {state.value}")
+
+    def clear_conversation_state(self, user_id):
+        """清除用户的对话状态"""
+        user_key = user_id or 'default'
+        if user_key in self.conversation_states:
+            del self.conversation_states[user_key]
+        if user_key in self.state_context:
+            del self.state_context[user_key]
+        print(f"🔄 用户{user_key}状态已清除")
 
     def get_smart_context(self, user_message, user_id=None, ai_assistant_name='小助手'):
         """✨ 改进的智能两阶段搜索：不依赖白名单，直接搜索用户输入的所有关键词"""
@@ -420,6 +569,10 @@ class AIAssistant:
 - 当用户说"提醒我..."、"X分钟后提醒我..."等时，你应该回复"好的，我将为您设置提醒"
 - 系统会自动提取提醒内容和时间，创建提醒任务
 
+**名字设置说明**：
+- 当用户想给你取名字时（如"叫你小马"、"以后就叫你小明"），系统会自动识别并设置
+- 你只需要自然地回应即可，不需要特殊处理
+
 用户查询的主题：{user_message}
 当前时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}
 
@@ -463,7 +616,7 @@ class AIAssistant:
                             completed_time = f" (完成于: {plan['updated_at'].strftime('%Y-%m-%d')})"
                     context += f"{idx}. {plan['title']}{completed_time}\n"
             else:
-                context += f"\n**未完成的工作计划（共{len(relevant_plans)}个，请用序号列出，格式: 1. 标题）：**\n"
+                context += f"\n**未完成的工作计划（共{len(relevant_plans)}项，请用序号列出，格式: 1. 标题）：**\n"
                 for idx, plan in enumerate(relevant_plans, 1):
                     context += f"{idx}. {plan['title']}\n"
         else:
@@ -741,12 +894,957 @@ class AIAssistant:
             print(f"❌ 安全检查出错: {e}")
             return None
 
+    def process_confirmation_command(self, user_message, user_id=None):
+        """处理确认命令（保存计划、保存提醒等）"""
+        user_key = user_id or 'default'
+
+        # 检查当前状态是否为等待确认
+        current_state = self.get_conversation_state(user_id)
+        if current_state != ConversationState.WAITING_CONFIRMATION:
+            return None
+
+        # 检查是否有待确认的内容
+        if user_key not in self.pending_confirmations:
+            return None
+
+        pending = self.pending_confirmations[user_key]
+        pending_plans = pending.get('plans', [])
+        pending_reminders = pending.get('reminders', [])
+
+        if not pending_plans and not pending_reminders:
+            return None
+
+        # 检查确认命令
+        msg_lower = user_message.lower().strip()
+
+        # 全部保存
+        if msg_lower in ['全部保存', '全保存', '都保存', '保存全部', '确认', '是的', '是', 'yes', 'y']:
+            saved_plans = []
+            saved_reminders = []
+
+            # 保存所有计划
+            for plan in pending_plans:
+                try:
+                    # 使用work_task_manager保存到work_tasks表
+                    task_id = self.work_task_manager.add_task(
+                        user_id=user_id,
+                        title=plan['title'],
+                        content=plan.get('deadline', ''),
+                        priority=plan.get('priority', '中'),
+                        category='工作'
+                    )
+                    if task_id:
+                        saved_plans.append(plan)
+                except Exception as e:
+                    print(f"⚠️ 保存计划失败: {e}")
+
+            # 保存所有提醒
+            for reminder in pending_reminders:
+                try:
+                    scheduler = get_global_scheduler()
+                    if scheduler:
+                        scheduler.add_reminder(
+                            content=reminder['content'],
+                            remind_time=reminder['remind_time'],
+                            user_id=user_id,
+                            repeat_type=reminder.get('repeat_type', 'once')
+                        )
+                        saved_reminders.append(reminder)
+                except Exception as e:
+                    print(f"⚠️ 保存提醒失败: {e}")
+
+            # 清除待确认内容和状态
+            del self.pending_confirmations[user_key]
+            self.clear_conversation_state(user_id)
+
+            response = "✅ 已保存：\n\n"
+            if saved_plans:
+                response += f"📋 计划（{len(saved_plans)}个）：\n"
+                for i, plan in enumerate(saved_plans, 1):
+                    response += f"{i}. {plan['title']}\n"
+                response += "\n"
+            if saved_reminders:
+                response += f"⏰ 提醒（{len(saved_reminders)}个）：\n"
+                for i, reminder in enumerate(saved_reminders, 1):
+                    response += f"{i}. {reminder['content']} ({reminder['remind_time']})\n"
+
+            return {
+                'response': response,
+                'detected_plans': [],
+                'detected_reminders': [],
+                'completed_plans': []
+            }
+
+        # 选择性保存（如"保存1,2"或"保存1"）
+        save_pattern = r'保存\s*(\d+(?:\s*[,，]\s*\d+)*)'
+        match = re.search(save_pattern, user_message)
+        if match:
+            numbers_str = match.group(1)
+            numbers = [int(n.strip()) for n in re.split(r'[,，]', numbers_str)]
+
+            saved_items = []
+            total_items = pending_plans + pending_reminders
+
+            for num in numbers:
+                if 1 <= num <= len(total_items):
+                    item = total_items[num - 1]
+
+                    # 判断是计划还是提醒
+                    if num <= len(pending_plans):
+                        # 是计划
+                        plan = item
+                        try:
+                            task_id = self.work_task_manager.add_task(
+                                user_id=user_id,
+                                title=plan['title'],
+                                content=plan.get('deadline', ''),
+                                priority=plan.get('priority', '中'),
+                                category='工作'
+                            )
+                            if task_id:
+                                saved_items.append(('计划', plan['title']))
+                        except Exception as e:
+                            print(f"⚠️ 保存计划失败: {e}")
+                    else:
+                        # 是提醒
+                        reminder = item
+                        try:
+                            scheduler = get_global_scheduler()
+                            if scheduler:
+                                scheduler.add_reminder(
+                                    content=reminder['content'],
+                                    remind_time=reminder['remind_time'],
+                                    user_id=user_id,
+                                    repeat_type=reminder.get('repeat_type', 'once')
+                                )
+                                saved_items.append(('提醒', reminder['content']))
+                        except Exception as e:
+                            print(f"⚠️ 保存提醒失败: {e}")
+
+            # 清除待确认内容和状态
+            del self.pending_confirmations[user_key]
+            self.clear_conversation_state(user_id)
+
+            response = f"✅ 已保存{len(saved_items)}项：\n\n"
+            for i, (item_type, content) in enumerate(saved_items, 1):
+                response += f"{i}. [{item_type}] {content}\n"
+
+            return {
+                'response': response,
+                'detected_plans': [],
+                'detected_reminders': [],
+                'completed_plans': []
+            }
+
+        # 取消保存
+        if msg_lower in ['取消', '不保存', '不用', '算了', 'no', 'n']:
+            del self.pending_confirmations[user_key]
+            self.clear_conversation_state(user_id)
+            return {
+                'response': "❌ 已取消保存",
+                'detected_plans': [],
+                'detected_reminders': [],
+                'completed_plans': []
+            }
+
+        return None
+
+    def process_ai_name_command(self, user_message, user_id=None):
+        """处理设置AI助理名字的命令 - 使用智能检测而非死板的正则"""
+        if not user_id:
+            return None
+
+        print(f"🔍 [名字设置] 检查消息: '{user_message}'")
+
+        # ✨ 先检查是否是疑问句，如果是疑问句则不处理为设置名字命令
+        question_indicators = ['什么', '啥', '哪个', '哪', '吗', '呢', '？', '?']
+        if any(indicator in user_message for indicator in question_indicators):
+            print(f"🔍 [名字设置] 检测到疑问句，跳过")
+            return None  # 是疑问句，不处理为设置名字命令
+
+        # ✨ 智能检测：检查是否包含设置名字的关键词组合
+        # 关键词1：表示"称呼"的词
+        name_keywords = ['叫', '名字', '称呼', '取名', '起名', '改名']
+        # 关键词2：表示"你"（AI）的词
+        target_keywords = ['你', '助理', '助手']
+
+        # 检查是否同时包含这两类关键词
+        has_name_keyword = any(kw in user_message for kw in name_keywords)
+        has_target_keyword = any(kw in user_message for kw in target_keywords)
+
+        print(f"🔍 [名字设置] 关键词检测: name={has_name_keyword}, target={has_target_keyword}")
+
+        if not (has_name_keyword and has_target_keyword):
+            print(f"🔍 [名字设置] 关键词不匹配，跳过")
+            return None  # 不是设置名字的命令
+
+        # ✨ 使用更灵活的正则表达式模式提取名字
+        patterns = [
+            # 直接命令式
+            r'^你叫(.+)$',
+            r'^叫你(.+)$',
+            r'^改名为(.+)$',
+            r'^改名叫(.+)$',
+            r'^你的名字是(.+)$',
+            r'^你的名字叫(.+)$',
+            r'^设置助理名字[：:](.+)$',
+            r'^设置助理名[：:](.+)$',
+            r'^助理名字[：:](.+)$',
+            # ✨ 新增：更灵活的模式
+            r'.*叫你(.+)[！!。\.]?$',  # "以后就叫你小马！"
+            r'.*就叫(.+)[！!。\.]?$',   # "就叫小明"
+            r'.*取名(.+)[！!。\.]?$',   # "给你取名小红"
+            r'.*起名(.+)[！!。\.]?$',   # "给你起名小蓝"
+            r'.*名字是(.+)[！!。\.]?$', # "你的名字是小绿"
+            r'.*称呼你(.+)[！!。\.]?$', # "我称呼你小黄"
+        ]
+
+        for pattern in patterns:
+            match = re.match(pattern, user_message.strip())
+            if match:
+                new_name = match.group(1).strip()
+
+                print(f"🔍 [名字设置] 匹配到模式，原始提取: '{new_name}'")
+
+                # ✨ 清理名字：去除标点符号、语气词和多余字符
+                new_name = re.sub(r'[！!。\.，,、？?；;：:]+$', '', new_name)  # 去除末尾标点
+                new_name = re.sub(r'(吧|呗|啊|呀|哦|哈|嘛|啦|哟|喽|咯)$', '', new_name)  # 去除末尾语气词
+                new_name = new_name.strip()
+
+                print(f"🔍 [名字设置] 清理后的名字: '{new_name}'")
+
+                # 验证名字长度
+                if len(new_name) < 1 or len(new_name) > 20:
+                    return {
+                        'response': '❌ 名字长度应该在1-20个字符之间',
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': []
+                    }
+
+                # 更新数据库中的AI助理名字
+                try:
+                    from user_manager import UserManager
+                    user_manager = UserManager(self.db)  # 使用self.db作为参数
+                    success = user_manager.update_ai_assistant_name(user_id, new_name)
+
+                    if success:
+                        response = f"✅ 好的！从现在开始，我就叫「{new_name}」了。\n\n"
+                        response += f"你可以随时通过以下方式修改我的名字：\n"
+                        response += f"• 你叫xxx\n"
+                        response += f"• 改名为xxx\n"
+                        response += f"• 设置助理名字：xxx"
+
+                        return {
+                            'response': response,
+                            'detected_plans': [],
+                            'detected_reminders': [],
+                            'completed_plans': []
+                        }
+                    else:
+                        return {
+                            'response': '❌ 设置名字失败，请稍后重试',
+                            'detected_plans': [],
+                            'detected_reminders': [],
+                            'completed_plans': []
+                        }
+                except Exception as e:
+                    print(f"⚠️ 设置AI助理名字失败: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    return {
+                        'response': f'❌ 设置名字时出错：{str(e)}',
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': []
+                    }
+
+        return None
+
+    def parse_time_range(self, time_text, user_message):
+        """
+        解析时间范围表达式
+        返回: (start_time, end_time) 或 None
+        """
+        now = datetime.now()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        print(f"🔍 [时间解析] 输入: time_text='{time_text}', user_message='{user_message}'")
+        print(f"🔍 [时间解析] 当前时间: {now}")
+
+        # ✨ 优先处理相对时间（N分钟内、N小时内、半小时内等）
+        # 匹配 "刚才" 或 "刚刚"
+        if '刚才' in user_message or '刚刚' in user_message:
+            start_time = now - timedelta(minutes=5)
+            result = (start_time, now)
+            print(f"🔍 [时间解析] 匹配: 刚才/刚刚 -> {result}")
+            return result
+
+        # 匹配 "N分钟内" 或 "N分钟"
+        minutes_match = re.search(r'(\d+)\s*分钟', user_message)
+        if minutes_match:
+            minutes = int(minutes_match.group(1))
+            start_time = now - timedelta(minutes=minutes)
+            result = (start_time, now)
+            print(f"🔍 [时间解析] 匹配: {minutes}分钟内 -> {result}")
+            return result
+
+        # 匹配 "半小时内" 或 "半小时"
+        if '半小时' in user_message:
+            start_time = now - timedelta(minutes=30)
+            result = (start_time, now)
+            print(f"🔍 [时间解析] 匹配: 半小时内 -> {result}")
+            return result
+
+        # 匹配 "N小时内" 或 "N小时"
+        hours_match = re.search(r'(\d+)\s*小时', user_message)
+        if hours_match:
+            hours = int(hours_match.group(1))
+            start_time = now - timedelta(hours=hours)
+            result = (start_time, now)
+            print(f"🔍 [时间解析] 匹配: {hours}小时内 -> {result}")
+            return result
+
+        # ✨ 处理具体时间点范围（如"下午3点至4点"、"15:00到16:00"）
+        # 匹配模式1: "下午3点至4点" / "下午3点到4点"
+        time_range_match = re.search(r'(上午|下午|晚上|中午)?(\d+)\s*[点:：]\s*(\d+)?\s*[至到]\s*(\d+)\s*[点:：]\s*(\d+)?', user_message)
+        if time_range_match:
+            period = time_range_match.group(1)  # 上午/下午/晚上
+            start_hour = int(time_range_match.group(2))
+            start_minute = int(time_range_match.group(3)) if time_range_match.group(3) else 0
+            end_hour = int(time_range_match.group(4))
+            end_minute = int(time_range_match.group(5)) if time_range_match.group(5) else 0
+
+            # 转换为24小时制
+            if period == '下午' and start_hour < 12:
+                start_hour += 12
+                end_hour += 12 if end_hour < 12 else 0
+            elif period == '晚上' and start_hour < 12:
+                start_hour += 12
+                end_hour += 12 if end_hour < 12 else 0
+            elif period == '上午' and start_hour == 12:
+                start_hour = 0
+
+            # 确定日期（默认今天）
+            base_date = today_start
+            if '昨天' in user_message or '昨日' in user_message:
+                base_date = today_start - timedelta(days=1)
+
+            start_time = base_date.replace(hour=start_hour, minute=start_minute)
+            end_time = base_date.replace(hour=end_hour, minute=end_minute)
+
+            result = (start_time, end_time)
+            print(f"🔍 [时间解析] 匹配: 具体时间点范围 {period if period else ''}({start_hour}:{start_minute:02d}-{end_hour}:{end_minute:02d}) -> {result}")
+            return result
+
+        # ✨ 处理更细粒度的时段（早上、中午、傍晚、深夜）
+        # 今天的细分时段
+        if '今天' in user_message or '今日' in user_message:
+            if '早上' in user_message or '早晨' in user_message or '今早' in user_message:
+                result = (today_start.replace(hour=6), today_start.replace(hour=9))
+                print(f"🔍 [时间解析] 匹配: 今天早上 -> {result}")
+                return result
+            elif '中午' in user_message:
+                result = (today_start.replace(hour=11), today_start.replace(hour=13))
+                print(f"🔍 [时间解析] 匹配: 今天中午 -> {result}")
+                return result
+            elif '傍晚' in user_message:
+                result = (today_start.replace(hour=17), today_start.replace(hour=19))
+                print(f"🔍 [时间解析] 匹配: 今天傍晚 -> {result}")
+                return result
+            elif '深夜' in user_message or '凌晨' in user_message:
+                # 深夜：今天23:00到明天5:59
+                result = (today_start.replace(hour=23), (today_start + timedelta(days=1)).replace(hour=5, minute=59))
+                print(f"🔍 [时间解析] 匹配: 今天深夜 -> {result}")
+                return result
+
+        # 昨天的细分时段
+        if '昨天' in user_message or '昨日' in user_message:
+            yesterday_start = today_start - timedelta(days=1)
+            if '早上' in user_message or '早晨' in user_message:
+                result = (yesterday_start.replace(hour=6), yesterday_start.replace(hour=9))
+                print(f"🔍 [时间解析] 匹配: 昨天早上 -> {result}")
+                return result
+            elif '中午' in user_message:
+                result = (yesterday_start.replace(hour=11), yesterday_start.replace(hour=13))
+                print(f"🔍 [时间解析] 匹配: 昨天中午 -> {result}")
+                return result
+            elif '傍晚' in user_message:
+                result = (yesterday_start.replace(hour=17), yesterday_start.replace(hour=19))
+                print(f"🔍 [时间解析] 匹配: 昨天傍晚 -> {result}")
+                return result
+
+        # 前天、大前天
+        if '前天' in user_message:
+            day_before_yesterday = today_start - timedelta(days=2)
+            result = (day_before_yesterday, day_before_yesterday.replace(hour=23, minute=59))
+            print(f"🔍 [时间解析] 匹配: 前天 -> {result}")
+            return result
+
+        if '大前天' in user_message:
+            three_days_ago = today_start - timedelta(days=3)
+            result = (three_days_ago, three_days_ago.replace(hour=23, minute=59))
+            print(f"🔍 [时间解析] 匹配: 大前天 -> {result}")
+            return result
+
+        # 本月、上月
+        if '本月' in user_message or '这个月' in user_message:
+            month_start = today_start.replace(day=1)
+            result = (month_start, now)
+            print(f"🔍 [时间解析] 匹配: 本月 -> {result}")
+            return result
+
+        if '上月' in user_message or '上个月' in user_message:
+            # 计算上个月的第一天和最后一天
+            first_day_this_month = today_start.replace(day=1)
+            last_day_last_month = first_day_this_month - timedelta(days=1)
+            first_day_last_month = last_day_last_month.replace(day=1)
+            result = (first_day_last_month, last_day_last_month.replace(hour=23, minute=59))
+            print(f"🔍 [时间解析] 匹配: 上月 -> {result}")
+            return result
+
+        # 星期表达
+        weekday_map = {
+            '周一': 0, '星期一': 0, '礼拜一': 0,
+            '周二': 1, '星期二': 1, '礼拜二': 1,
+            '周三': 2, '星期三': 2, '礼拜三': 2,
+            '周四': 3, '星期四': 3, '礼拜四': 3,
+            '周五': 4, '星期五': 4, '礼拜五': 4,
+            '周六': 5, '星期六': 5, '礼拜六': 5,
+            '周日': 6, '星期日': 6, '礼拜日': 6, '周天': 6, '星期天': 6
+        }
+
+        for weekday_name, weekday_num in weekday_map.items():
+            if weekday_name in user_message:
+                current_weekday = now.weekday()
+                # 计算本周该天
+                days_diff = weekday_num - current_weekday
+                target_day = today_start + timedelta(days=days_diff)
+
+                # 如果是"上周X"
+                if '上周' in user_message or '上星期' in user_message:
+                    target_day = target_day - timedelta(days=7)
+                    result = (target_day, target_day.replace(hour=23, minute=59))
+                    print(f"🔍 [时间解析] 匹配: 上{weekday_name} -> {result}")
+                    return result
+                else:
+                    # 本周该天
+                    result = (target_day, target_day.replace(hour=23, minute=59))
+                    print(f"🔍 [时间解析] 匹配: {weekday_name} -> {result}")
+                    return result
+
+        # 具体日期（如"2月20日"）
+        date_match = re.search(r'(\d+)\s*月\s*(\d+)\s*[日号]', user_message)
+        if date_match:
+            month = int(date_match.group(1))
+            day = int(date_match.group(2))
+            # 默认使用今年
+            year = now.year
+            try:
+                target_date = datetime(year, month, day)
+                target_start = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+
+                # 检查是否有时段限定
+                if '上午' in user_message:
+                    result = (target_start.replace(hour=0), target_start.replace(hour=12))
+                    print(f"🔍 [时间解析] 匹配: {month}月{day}日上午 -> {result}")
+                    return result
+                elif '下午' in user_message:
+                    result = (target_start.replace(hour=12), target_start.replace(hour=18))
+                    print(f"🔍 [时间解析] 匹配: {month}月{day}日下午 -> {result}")
+                    return result
+                elif '晚上' in user_message:
+                    result = (target_start.replace(hour=18), target_start.replace(hour=23, minute=59))
+                    print(f"🔍 [时间解析] 匹配: {month}月{day}日晚上 -> {result}")
+                    return result
+                else:
+                    # 全天
+                    result = (target_start, target_start.replace(hour=23, minute=59))
+                    print(f"🔍 [时间解析] 匹配: {month}月{day}日 -> {result}")
+                    return result
+            except ValueError:
+                print(f"⚠️ [时间解析] 无效日期: {year}-{month}-{day}")
+
+        # 今天的时间段
+        if '今天' in time_text or '今日' in time_text:
+            if '上午' in time_text:
+                result = (today_start.replace(hour=0), today_start.replace(hour=12))
+                print(f"🔍 [时间解析] 匹配: 今天上午 -> {result}")
+                return result
+            elif '下午' in time_text:
+                if '到现在' in user_message or '至今' in user_message:
+                    result = (today_start.replace(hour=12), now)
+                    print(f"🔍 [时间解析] 匹配: 今天下午到现在 -> {result}")
+                    return result
+                else:
+                    result = (today_start.replace(hour=12), today_start.replace(hour=18))
+                    print(f"🔍 [时间解析] 匹配: 今天下午 -> {result}")
+                    return result
+            elif '晚上' in time_text or '夜间' in time_text:
+                result = (today_start.replace(hour=18), today_start.replace(hour=23, minute=59))
+                print(f"🔍 [时间解析] 匹配: 今天晚上 -> {result}")
+                return result
+            else:
+                # 今天全天
+                if '到现在' in user_message or '至今' in user_message:
+                    result = (today_start, now)
+                    print(f"🔍 [时间解析] 匹配: 今天到现在 -> {result}")
+                    return result
+                else:
+                    result = (today_start, today_start.replace(hour=23, minute=59))
+                    print(f"🔍 [时间解析] 匹配: 今天全天 -> {result}")
+                    return result
+
+        # 昨天
+        if '昨天' in time_text or '昨日' in time_text:
+            yesterday_start = today_start - timedelta(days=1)
+            if '上午' in time_text:
+                result = (yesterday_start.replace(hour=0), yesterday_start.replace(hour=12))
+                print(f"🔍 [时间解析] 匹配: 昨天上午 -> {result}")
+                return result
+            elif '下午' in time_text:
+                result = (yesterday_start.replace(hour=12), yesterday_start.replace(hour=18))
+                print(f"🔍 [时间解析] 匹配: 昨天下午 -> {result}")
+                return result
+            else:
+                result = (yesterday_start, yesterday_start.replace(hour=23, minute=59))
+                print(f"🔍 [时间解析] 匹配: 昨天全天 -> {result}")
+                return result
+
+        # YYYY年MM月DD日至YYYY年MM月DD日（自定义时间区间，最具体的格式先匹配）
+        date_range_match = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日至(\d{4})年(\d{1,2})月(\d{1,2})日', time_text)
+        if date_range_match:
+            start_year = int(date_range_match.group(1))
+            start_month = int(date_range_match.group(2))
+            start_day = int(date_range_match.group(3))
+            end_year = int(date_range_match.group(4))
+            end_month = int(date_range_match.group(5))
+            end_day = int(date_range_match.group(6))
+            try:
+                # 创建开始和结束时间
+                start_time = datetime(start_year, start_month, start_day, 0, 0, 0)
+                end_time = datetime(end_year, end_month, end_day, 23, 59, 59)
+                result = (start_time, end_time)
+                print(f"🔍 [时间解析] 匹配: {start_year}年{start_month}月{start_day}日至{end_year}年{end_month}月{end_day}日 -> {result}")
+                return result
+            except ValueError as e:
+                print(f"⚠️ [时间解析] 日期无效: {start_year}年{start_month}月{start_day}日至{end_year}年{end_month}月{end_day}日 - {e}")
+                return None
+
+        # 最近N天 或 近N天
+        days_match = re.search(r'(?:最近|近)(\d+)天', time_text)
+        if days_match:
+            days = int(days_match.group(1))
+            start_time = now - timedelta(days=days)
+            result = (start_time, now)
+            print(f"🔍 [时间解析] 匹配: 近{days}天 -> {result}")
+            return result
+
+        # 最近N个月 或 近N个月
+        months_match = re.search(r'(?:最近|近)(\d+)(?:个)?月', time_text)
+        if months_match:
+            months = int(months_match.group(1))
+            # 计算N个月前的日期（简化处理：1个月=30天）
+            days = months * 30
+            start_time = now - timedelta(days=days)
+            result = (start_time, now)
+            print(f"🔍 [时间解析] 匹配: 近{months}个月 -> {result}")
+            return result
+
+        # 最近N年 或 近N年
+        years_match = re.search(r'(?:最近|近)(\d+)年', time_text)
+        if years_match:
+            years = int(years_match.group(1))
+            # 计算N年前的日期（简化处理：1年=365天）
+            days = years * 365
+            start_time = now - timedelta(days=days)
+            result = (start_time, now)
+            print(f"🔍 [时间解析] 匹配: 近{years}年 -> {result}")
+            return result
+        # YYYY年MM月DD日以来（更具体的格式先匹配）
+        year_month_day_match = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日以来', time_text)
+        if year_month_day_match:
+            year = int(year_month_day_match.group(1))
+            month = int(year_month_day_match.group(2))
+            day = int(year_month_day_match.group(3))
+            try:
+                # 创建指定年月日的开始时间
+                start_time = datetime(year, month, day, 0, 0, 0)
+                result = (start_time, now)
+                print(f"🔍 [时间解析] 匹配: {year}年{month}月{day}日以来 -> {result}")
+                return result
+            except ValueError as e:
+                print(f"⚠️ [时间解析] 日期无效: {year}年{month}月{day}日 - {e}")
+                return None
+
+        # YYYY年MM月以来 或 YYYY年M月以来
+        year_month_match = re.search(r'(\d{4})年(\d{1,2})月以来', time_text)
+        if year_month_match:
+            year = int(year_month_match.group(1))
+            month = int(year_month_match.group(2))
+            try:
+                # 创建指定年月的第一天
+                start_time = datetime(year, month, 1, 0, 0, 0)
+                result = (start_time, now)
+                print(f"🔍 [时间解析] 匹配: {year}年{month}月以来 -> {result}")
+                return result
+            except ValueError as e:
+                print(f"⚠️ [时间解析] 日期无效: {year}年{month}月 - {e}")
+                return None
+
+        # 本周
+        if '本周' in time_text or '这周' in time_text:
+            # 获取本周一
+            weekday = now.weekday()
+            week_start = today_start - timedelta(days=weekday)
+            result = (week_start, now)
+            print(f"🔍 [时间解析] 匹配: 本周 -> {result}")
+            return result
+
+        # 上周
+        if '上周' in time_text:
+            weekday = now.weekday()
+            last_week_start = today_start - timedelta(days=weekday + 7)
+            last_week_end = last_week_start + timedelta(days=6, hours=23, minutes=59)
+            result = (last_week_start, last_week_end)
+            print(f"🔍 [时间解析] 匹配: 上周 -> {result}")
+            return result
+
+        print(f"🔍 [时间解析] 未匹配到任何时间模式")
+        return None
+
+    def process_query_intent(self, user_message, user_id):
+        """
+        智能查询意图识别和处理
+        识别"显示"、"查询"、"查看"等查询请求，直接执行数据库查询
+        """
+        # 查询关键词
+        query_keywords = ['显示', '查询', '查看', '列出', '给我看', '找一下', '搜索']
+
+        # 时间关键词
+        time_keywords = ['今天', '昨天', '前天', '本周', '上周', '最近', '这周']
+
+        # 检查是否包含查询关键词或时间关键词
+        has_query_keyword = any(keyword in user_message for keyword in query_keywords)
+        has_time_keyword = any(keyword in user_message for keyword in time_keywords)
+
+        # ✨ 改进：如果包含时间关键词，也触发查询
+        if not has_query_keyword and not has_time_keyword:
+            return None
+
+        print(f"🔍 [智能查询] 检测到查询意图: {user_message}")
+
+        # 识别查询目标
+        query_target = None
+        if any(word in user_message for word in ['对话', '聊天', '记录', '消息', '说过']):
+            query_target = 'messages'
+        elif any(word in user_message for word in ['工作', '任务', '计划']):
+            query_target = 'work'
+        elif any(word in user_message for word in ['提醒', '待办']):
+            query_target = 'reminders'
+
+        if not query_target:
+            # 默认查询对话记录
+            query_target = 'messages'
+
+        print(f"🔍 [智能查询] 查询目标: {query_target}")
+
+        # ✨ 提取查询关键词（去除查询动词）
+        keywords = self._extract_keywords_from_message(user_message)
+        print(f"🔍 [智能查询] 提取的关键词: {keywords}")
+
+        # 解析时间范围
+        time_range = self.parse_time_range(user_message, user_message)
+
+        # ✨ 改进：有关键词时搜索全部历史，无关键词时限制24小时
+        if time_range:
+            start_time, end_time = time_range
+            print(f"🔍 [智能查询] 时间范围: {start_time} 到 {end_time}")
+            use_time_filter = True
+        elif keywords:
+            # 有关键词：搜索全部历史数据
+            start_time = None
+            end_time = None
+            use_time_filter = False
+            print(f"🔍 [智能查询] 使用关键词搜索全部历史数据")
+        else:
+            # 无关键词：默认查询最近24小时
+            start_time = datetime.now() - timedelta(hours=24)
+            end_time = datetime.now()
+            use_time_filter = True
+            print(f"🔍 [智能查询] 使用默认时间范围（最近24小时）")
+
+        # 执行查询
+        try:
+            if query_target == 'messages':
+                # ✨ 改进：根据关键词查询对话记录（只查询用户消息）
+                if keywords:
+                    # 有关键词：使用关键词搜索
+                    all_results = []
+                    for keyword in keywords[:5]:  # 最多使用5个关键词
+                        if use_time_filter:
+                            keyword_results = self.db.query(
+                                "SELECT * FROM messages WHERE user_id = %s AND role = 'user' AND content LIKE %s AND timestamp >= %s AND timestamp <= %s ORDER BY timestamp DESC",
+                                (user_id, f'%{keyword}%', start_time, end_time)
+                            )
+                        else:
+                            # 不限制时间范围，搜索全部历史
+                            keyword_results = self.db.query(
+                                "SELECT * FROM messages WHERE user_id = %s AND role = 'user' AND content LIKE %s ORDER BY timestamp DESC LIMIT 100",
+                                (user_id, f'%{keyword}%')
+                            )
+                        all_results.extend(keyword_results)
+                        print(f"🔍 [智能查询] 关键词'{keyword}'找到{len(keyword_results)}条记录")
+
+                    # 去重（根据id）
+                    seen_ids = set()
+                    results = []
+                    for msg in all_results:
+                        msg_id = msg.get('id')
+                        if msg_id not in seen_ids:
+                            seen_ids.add(msg_id)
+                            results.append(msg)
+
+                    # 按时间排序
+                    results.sort(key=lambda x: x.get('timestamp', ''), reverse=False)
+                else:
+                    # 无关键词：查询时间范围内所有用户消息
+                    results = self.db.query(
+                        "SELECT * FROM messages WHERE user_id = %s AND role = 'user' AND timestamp >= %s AND timestamp <= %s ORDER BY timestamp ASC",
+                        (user_id, start_time, end_time)
+                    )
+
+                if not results:
+                    keyword_hint = f"关键词：{', '.join(keywords)}" if keywords else ""
+                    if use_time_filter:
+                        time_hint = f"\n时间范围：{start_time.strftime('%Y-%m-%d %H:%M')} 到 {end_time.strftime('%Y-%m-%d %H:%M')}"
+                    else:
+                        time_hint = "\n搜索范围：全部历史记录"
+                    return {
+                        'response': f'📭 没有找到匹配的对话记录。\n\n{keyword_hint}{time_hint}',
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': []
+                    }
+
+                # 格式化输出
+                response = f'📝 找到 {len(results)} 条对话记录：\n\n'
+                if use_time_filter:
+                    response += f'⏰ 时间范围：{start_time.strftime("%Y-%m-%d %H:%M")} 到 {end_time.strftime("%Y-%m-%d %H:%M")}\n\n'
+                else:
+                    response += f'🔍 搜索范围：全部历史记录（最多显示100条）\n\n'
+
+                for msg in results:
+                    timestamp = msg.get('timestamp', '')
+                    if isinstance(timestamp, datetime):
+                        time_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+                    else:
+                        time_str = str(timestamp)
+
+                    role = msg.get('role', '')
+                    content = msg.get('content', '')
+
+                    # ✨ 清理命令前缀
+                    content = self._clean_command_prefix(content)
+
+                    # ✨ 只显示用户消息，使用 👤 图标
+                    role_icon = '👤'
+                    response += f'{role_icon} [{time_str}] {content}\n\n'
+
+                return {
+                    'response': response,
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': []
+                }
+
+            elif query_target == 'work':
+                # 查询工作任务
+                pending_items = self.get_all_work_items(user_id, status_filter='pending')
+
+                # ✨ 应用时间范围过滤
+                if time_range:
+                    start_time, end_time = time_range
+                    filtered_items = []
+                    for item in pending_items:
+                        # 检查创建时间或更新时间是否在范围内
+                        created_at = item.get('created_at')
+                        updated_at = item.get('updated_at')
+
+                        # 转换为 datetime 对象
+                        item_time = None
+                        if updated_at:
+                            if isinstance(updated_at, str):
+                                try:
+                                    item_time = datetime.strptime(updated_at[:19], '%Y-%m-%d %H:%M:%S')
+                                except:
+                                    pass
+                            elif isinstance(updated_at, datetime):
+                                item_time = updated_at
+
+                        if not item_time and created_at:
+                            if isinstance(created_at, str):
+                                try:
+                                    item_time = datetime.strptime(created_at[:19], '%Y-%m-%d %H:%M:%S')
+                                except:
+                                    pass
+                            elif isinstance(created_at, datetime):
+                                item_time = created_at
+
+                        # 检查是否在时间范围内
+                        if item_time and start_time <= item_time <= end_time:
+                            filtered_items.append(item)
+
+                    pending_items = filtered_items
+                    print(f"🔍 [智能查询] 时间范围过滤后剩余 {len(pending_items)} 个工作任务")
+
+                if not pending_items:
+                    time_hint = ""
+                    if time_range:
+                        time_hint = f"\n⏰ 时间范围：{start_time.strftime('%Y-%m-%d %H:%M')} 到 {end_time.strftime('%Y-%m-%d %H:%M')}"
+                    return {
+                        'response': f'📭 没有找到未完成的工作任务。{time_hint}',
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': []
+                    }
+
+                response = f'📋 找到 {len(pending_items)} 个未完成的工作任务：\n\n'
+                if time_range:
+                    response += f'⏰ 时间范围：{start_time.strftime("%Y-%m-%d %H:%M")} 到 {end_time.strftime("%Y-%m-%d %H:%M")}\n\n'
+
+                for idx, item in enumerate(pending_items, 1):
+                    title = item.get('title', '')
+                    deadline = item.get('deadline', '')
+                    priority = item.get('priority', 'medium')
+
+                    priority_icon = '🔴' if priority == 'high' else '🟡' if priority == 'medium' else '🟢'
+                    response += f'{idx}. {priority_icon} {title}'
+                    if deadline:
+                        response += f' (截止: {deadline})'
+                    response += '\n'
+
+                return {
+                    'response': response,
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': []
+                }
+
+            elif query_target == 'reminders':
+                # 查询提醒
+                reminders = self.reminder.list_reminders(user_id=user_id)
+
+                if not reminders:
+                    return {
+                        'response': '📭 没有找到提醒。',
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': []
+                    }
+
+                response = f'⏰ 找到 {len(reminders)} 个提醒：\n\n'
+                for idx, reminder in enumerate(reminders, 1):
+                    content = reminder.get('content', '')
+                    remind_time = reminder.get('remind_time', '')
+                    response += f'{idx}. {content} (时间: {remind_time})\n'
+
+                return {
+                    'response': response,
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': []
+                }
+
+        except Exception as e:
+            print(f"❌ [智能查询] 查询失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'response': f'❌ 查询时出错：{str(e)}',
+                'detected_plans': [],
+                'detected_reminders': [],
+                'completed_plans': []
+            }
+
+        return None
+
+    def process_ai_name_query(self, user_message, ai_assistant_name='小助手'):
+        """处理询问AI名字的问题 - 直接回答，不交给AI模型"""
+        # 检测询问AI名字的模式
+        query_patterns = [
+            '你叫什么',
+            '你的名字',
+            '你叫啥',
+            '你是谁',
+            '叫什么名字',
+            '什么名字',
+        ]
+
+        # 检查是否是询问名字的问题
+        is_name_query = any(pattern in user_message for pattern in query_patterns)
+
+        if is_name_query:
+            print(f"🔍 [名字查询] 检测到询问名字的问题，直接回答")
+            print(f"🔍 [名字查询] ai_assistant_name = '{ai_assistant_name}'")
+            response = {
+                'response': f'我叫{ai_assistant_name}。',
+                'detected_plans': [],
+                'detected_reminders': [],
+                'completed_plans': []
+            }
+            print(f"🔍 [名字查询] 返回响应: {response['response']}")
+            return response
+
+        # ✨ 检测确认名字的模式（如"你不是叫小马吗？"）
+        confirm_patterns = [
+            f'你不是叫{ai_assistant_name}',
+            f'你是{ai_assistant_name}',
+            f'你叫{ai_assistant_name}',
+        ]
+
+        is_name_confirm = any(pattern in user_message for pattern in confirm_patterns)
+
+        if is_name_confirm:
+            print(f"🔍 [名字确认] 检测到确认名字的问题，直接回答")
+            print(f"🔍 [名字确认] ai_assistant_name = '{ai_assistant_name}'")
+            response = {
+                'response': f'是的，我叫{ai_assistant_name}。',
+                'detected_plans': [],
+                'detected_reminders': [],
+                'completed_plans': []
+            }
+            print(f"🔍 [名字确认] 返回响应: {response['response']}")
+            return response
+
+        return None
+
     def chat(self, user_message, user_id=None, file_id=None, token=None, session_id=None, ai_assistant_name='小助手'):
         """处理用户消息（✨新增session_id参数用于浏览器会话验证）"""
+        # ✨ 新增：智能查询意图识别（优先级最高，在其他处理之前）
+        query_result = self.process_query_intent(user_message, user_id)
+        if query_result:
+            return query_result
+
         # 检查是否是安全验证相关命令
         security_result = self.process_security_command(user_message, user_id, token, session_id)
         if security_result:
             return security_result
+
+        # ✨ 新增：检查是否是确认命令
+        confirmation_result = self.process_confirmation_command(user_message, user_id)
+        if confirmation_result:
+            return confirmation_result
+
+        # ✨ 新增：检查是否是设置AI助理名字的命令
+        ai_name_result = self.process_ai_name_command(user_message, user_id)
+        if ai_name_result:
+            return ai_name_result
+
+        # ✨ 新增：检查是否是询问AI名字的问题
+        ai_name_query_result = self.process_ai_name_query(user_message, ai_assistant_name)
+        if ai_name_query_result:
+            return ai_name_query_result
 
         # ✨ 上下文检查：优先检查用户输入是否引用了上一次显示的内容
         context_result = self.check_context_reference(user_message, user_id)
@@ -757,12 +1855,9 @@ class AIAssistant:
 
         # ✨ 新增：检查"X相关"、"X所有"和纯"X"模式
         if '相关' in user_message or '所有' in user_message:
-            # 检查是否是"X所有"模式（包含聊天记录的所有搜索）
-            if '所有' in user_message:
-                fuzzy_result = self._fuzzy_match_subcategory(user_message, user_id, include_chat=True)
-            else:
-                # "X相关"模式（不包含聊天记录的搜索）
-                fuzzy_result = self._fuzzy_match_subcategory(user_message, user_id, include_chat=False)
+            # ✨ 修复：无论是"相关"还是"所有"，都包含聊天记录，让搜索范围更广
+            # 之前的设计是"相关"不包含聊天记录，这导致"X相关"的搜索范围比纯"X"还窄
+            fuzzy_result = self._fuzzy_match_subcategory(user_message, user_id, include_chat=True)
 
             if fuzzy_result:
                 # 检查是否是全面搜索结果（字典格式）
@@ -830,8 +1925,8 @@ class AIAssistant:
                         self.last_response_context[user_id]['_latest'] = '工作'
                         print(f"🔍 保存工作列表上下文，共{len(pending_tasks)}个任务")
 
-                # ✨ 新增：检查是否是记录列表（如"未完成ai助理（共5个）："）
-                elif '未完成' in response_text and '（共' in response_text and '个）：' in response_text:
+                # ✨ 新增：检查是否是记录列表（如"未完成ai助理（共5项）："）
+                elif '未完成' in response_text and '（共' in response_text and '项）：' in response_text:
                     # ✨ 使用命令返回的 context 字段（包含 subcategory_name）
                     if 'context' in command_result:
                         context = command_result['context']
@@ -913,7 +2008,6 @@ class AIAssistant:
 
                 try:
                     self.memory.add_message('user', user_message, user_id=user_id, file_id=file_id)
-                    self.memory.add_message('assistant', response, user_id=user_id)
                 except Exception as e:
                     print(f"⚠️ 保存聊天记录失败: {e}")
 
@@ -930,7 +2024,7 @@ class AIAssistant:
             pending_items = self.get_all_work_items(user_id, status_filter='pending')
 
             if pending_items:
-                response = f"📋 未完成的工作（共{len(pending_items)}个）：\n\n"
+                response = f"📋 未完成的工作（共{len(pending_items)}项）：\n\n"
                 for idx, item in enumerate(pending_items, 1):
                     # 所有数据现在都来自 work_tasks 表
                     title = item['title']
@@ -960,7 +2054,6 @@ class AIAssistant:
             # 保存到对话历史
             try:
                 self.memory.add_message('user', user_message, user_id=user_id, file_id=file_id)
-                self.memory.add_message('assistant', response, user_id=user_id)
             except Exception as e:
                 print(f"⚠️ 保存聊天记录失败: {e}")
 
@@ -1072,7 +2165,6 @@ class AIAssistant:
             # 保存到对话历史
             try:
                 self.memory.add_message('user', user_message, user_id=user_id, file_id=file_id)
-                self.memory.add_message('assistant', response, user_id=user_id)
             except Exception as e:
                 print(f"⚠️ 保存聊天记录失败: {e}")
 
@@ -1132,16 +2224,70 @@ class AIAssistant:
         # 保存用户消息到数据库
         try:
             self.memory.add_message('user', user_message, user_id=user_id, file_id=file_id)
-            # 保存AI回复到数据库
-            self.memory.add_message('assistant', response, user_id=user_id)
         except Exception as e:
             print(f"⚠️ 保存聊天记录失败: {e}")
 
         # 从用户消息中提取计划信息
         detected_plans = self.extract_plans_from_message(user_message)
 
-        # 从用户消息中提取提醒信息并创建
-        detected_reminders = self.extract_and_create_reminders(user_message, user_id)
+        # 从用户消息中提取提醒信息（不直接创建）
+        detected_reminders = self.extract_reminders_from_message(user_message, user_id)
+
+        # ✨ 修改：直接保存提醒和计划，不需要用户确认
+        user_key = user_id or 'default'
+        if detected_plans or detected_reminders:
+            # 直接保存提醒到数据库
+            saved_reminders = []
+            if detected_reminders:
+                for reminder in detected_reminders:
+                    try:
+                        result = self.reminder.add_reminder(
+                            content=reminder['content'],
+                            remind_time=reminder['remind_time'],
+                            repeat_type=reminder.get('repeat_type', 'once'),
+                            user_id=user_id
+                        )
+                        saved_reminders.append(result)
+                        print(f"✅ 已自动保存提醒: {reminder['content']} at {reminder['remind_time']}")
+                    except Exception as e:
+                        print(f"❌ 保存提醒失败: {e}")
+
+            # 直接保存计划到数据库
+            saved_plans = []
+            if detected_plans:
+                for plan in detected_plans:
+                    try:
+                        result = self.planner.add_plan(
+                            title=plan['title'],
+                            content=plan.get('content', ''),
+                            priority=plan.get('priority', '中'),
+                            deadline=plan.get('deadline'),
+                            user_id=user_id
+                        )
+                        saved_plans.append(result)
+                        print(f"✅ 已自动保存计划: {plan['title']}")
+                    except Exception as e:
+                        print(f"❌ 保存计划失败: {e}")
+
+            # 构建保存成功的提示（不再询问确认）
+            save_response = response + "\n\n"
+
+            if saved_plans:
+                save_response += "✅ 已为您保存以下计划：\n"
+                for i, plan in enumerate(saved_plans, 1):
+                    deadline_str = f"截止:{plan.get('deadline', '无')}" if plan.get('deadline') else "无截止日期"
+                    save_response += f"{i}. {plan.get('title', '未命名')} ({deadline_str})\n"
+                save_response += "\n"
+
+            if saved_reminders:
+                save_response += "✅ 已为您设置以下提醒：\n"
+                start_idx = len(saved_plans) + 1
+                for i, reminder in enumerate(saved_reminders, start_idx):
+                    save_response += f"{i}. {reminder.get('content', '未命名')} (时间:{reminder.get('remind_time', '未知')})\n"
+                save_response += "\n"
+
+            # 更新response
+            response = save_response
 
         # 检测并完成工作计划
         completed_plans = self.detect_and_complete_plans(user_message, user_id)
@@ -1394,9 +2540,30 @@ class AIAssistant:
                         }
                         print(f"🔍 DEBUG: 验证成功，已存储到内存，session_id={session_id[:20]}")
 
-                    # 检查是否有待验证的查询
+                    # 检查是否有待验证的查询（先从内存，再从数据库）
+                    original_query = None
                     if user_id in self.pending_verification_queries:
                         original_query = self.pending_verification_queries.pop(user_id)
+                        print(f"🔍 DEBUG: 从内存中找到待验证查询: {original_query}")
+                    else:
+                        # ✨ 从数据库中读取待验证查询
+                        try:
+                            user_result = self.memory.db.query(
+                                "SELECT pending_query FROM users WHERE id = %s",
+                                (user_id,)
+                            )
+                            if user_result and user_result[0].get('pending_query'):
+                                original_query = user_result[0]['pending_query']
+                                print(f"🔍 DEBUG: 从数据库中找到待验证查询: {original_query}")
+                                # 清空数据库中的待验证查询
+                                self.memory.db.execute(
+                                    "UPDATE users SET pending_query = NULL WHERE id = %s",
+                                    (user_id,)
+                                )
+                        except Exception as e:
+                            print(f"⚠️ 从数据库读取待验证查询失败: {e}")
+
+                    if original_query:
                         print(f"🔍 DEBUG: 验证成功，自动执行原查询: {original_query}")
 
                         # ✨ 递归调用chat方法处理原查询（传递session_id）
@@ -1520,9 +2687,19 @@ class AIAssistant:
                 print(f"🔍 DEBUG: 用户 {user_id} 未设置验证码，使用默认验证码000000")
                 verification_prompt = '🔒 该查询涉及敏感信息，需要验证码验证\n\n您还未设置验证码，默认验证码为：000000\n\n请输入验证码（建议设置后输入自定义验证码）'
 
-            # 需要验证 - 保存原始查询
+            # 需要验证 - 保存原始查询（同时保存到内存和数据库）
             print(f"🔍 DEBUG: 准备返回拦截消息，保存原始查询: {user_message}")
             self.pending_verification_queries[user_id] = user_message
+
+            # ✨ 新增：同时保存到数据库，防止刷新页面后丢失
+            try:
+                self.memory.db.execute(
+                    "UPDATE users SET pending_query = %s WHERE id = %s",
+                    (user_message, user_id)
+                )
+            except Exception as e:
+                print(f"⚠️ 保存待验证查询到数据库失败: {e}")
+
             return {
                 'response': verification_prompt,
                 'detected_plans': [],
@@ -1627,16 +2804,16 @@ class AIAssistant:
         print(f"🔍 DEBUG: 未匹配到上下文引用模式")
         return None
 
-    def _fuzzy_match_subcategory(self, user_message, user_id, include_chat=False):
+    def _fuzzy_match_subcategory(self, user_message, user_id, include_chat=True):
         """模糊匹配子类别名称
 
         支持格式：
         - "ai" → 查找包含"ai"的子类别，返回该子类别的记录
-        - "ai相关" → 查找包含"ai"的所有记录（不包含聊天记录）
+        - "ai相关" → 查找包含"ai"的所有记录（包含聊天记录）
         - "ai所有" → 查找包含"ai"的所有记录（包含聊天记录）
 
         参数：
-        - include_chat: 是否包含聊天记录（"所有"模式为True，"相关"模式为False）
+        - include_chat: 是否包含聊天记录（默认True，让搜索范围更广）
 
         ✨ 新增逻辑：
         - 如果找到子类别，返回子类别命令
@@ -1703,14 +2880,14 @@ class AIAssistant:
             else:
                 return subcategory_name
 
-    def _comprehensive_search_related(self, keyword, user_id, include_chat=False):
+    def _comprehensive_search_related(self, keyword, user_id, include_chat=True):
         """
         ✨ 全面搜索相关数据
 
         参数：
-        - include_chat: 是否包含聊天记录
-          - False: 搜索daily_records + guestbook + work_plans（"X相关"模式）
-          - True: 搜索messages + daily_records + guestbook + work_plans（"X所有"模式）
+        - include_chat: 是否包含聊天记录（默认True）
+          - True: 搜索messages + daily_records + guestbook + work_plans（推荐）
+          - False: 搜索daily_records + guestbook + work_plans
         """
         print(f"🔍 开始全面搜索: keyword='{keyword}', user_id={user_id}, include_chat={include_chat}")
         all_results = []
@@ -1788,11 +2965,24 @@ class AIAssistant:
             print(f"❌ 搜索work_plans出错: {e}")
 
         print(f"🔍 全面搜索完成，共找到{len(all_results)}条结果")
+
+        # ✨ 新增：计算相关性评分并排序
+        for result in all_results:
+            result['relevance_score'] = self.calculate_relevance_score(
+                content=result.get('content', ''),
+                keyword=keyword,
+                timestamp=result.get('timestamp')
+            )
+
+        # 按相关性评分降序排序
+        all_results.sort(key=lambda x: x.get('relevance_score', 0), reverse=True)
+        print(f"🔍 已按相关性排序，最高分: {all_results[0]['relevance_score']:.2f}" if all_results else "")
+
         return all_results
 
     def _format_comprehensive_search_results(self, keyword, results):
         """
-        ✨ 格式化全面搜索结果
+        ✨ 格式化全面搜索结果（带关键词高亮）
         """
         if not results:
             return f"没有记录'{keyword}'相关信息"
@@ -1812,6 +3002,9 @@ class AIAssistant:
             response += f"📌 {result_type}（共{len(items)}条）：\n"
             for item in items:
                 content = item['content'][:80] if item['content'] else '（无内容）'  # 截断长内容
+
+                # ✨ 高亮关键词
+                content = self.highlight_keywords(content, [keyword])
 
                 # 处理timestamp，可能是datetime对象或字符串
                 timestamp = item['timestamp']
@@ -1912,7 +3105,6 @@ class AIAssistant:
 
             # 保存到聊天记录
             self.memory.add_message('user', '其他', user_id=user_id)
-            self.memory.add_message('assistant', response, user_id=user_id)
 
             return {
                 'response': response,
@@ -2007,7 +3199,6 @@ class AIAssistant:
 
             # 保存到聊天记录
             self.memory.add_message('user', f"{cmd}: {content}", user_id=user_id)
-            self.memory.add_message('assistant', f"✅ 已保存到'{display_name}'类别", user_id=user_id)
 
             response = f"✅ 已保存到'{display_name}'类别\n\n📝 标题：{title}"
             if len(content) > 50:
@@ -2572,6 +3763,153 @@ class AIAssistant:
 
         return plans
 
+    def extract_reminders_from_message(self, user_message, user_id=None):
+        """从用户消息中提取提醒信息（不创建提醒，仅返回提醒列表）"""
+        reminders = []
+
+        # 提醒关键词
+        reminder_keywords = ['提醒', '提示', '通知', '叫我', '告诉我']
+
+        # 检查是否包含提醒意图
+        has_reminder = any(kw in user_message for kw in reminder_keywords)
+
+        # 如果没有明确的提醒关键词,检查是否有"时间+动作"模式
+        # 例如: "15点开会"、"晚上9点打牌"、"下午3点半上厕所"
+        if not has_reminder:
+            action_patterns = [
+                r'(今天|明天|后天)?\s*(上午|下午|晚上|早上|中午|凌晨)?\s*(\d{1,2})[点:：](\d{1,2})?[分半]?\s*(.{1,10})',
+            ]
+            for pattern in action_patterns:
+                match = re.search(pattern, user_message)
+                if match:
+                    action = match.group(5) if len(match.groups()) >= 5 else None
+                    if action and len(action.strip()) > 0:
+                        if '?' not in user_message and '吗' not in user_message and '呢' not in user_message:
+                            has_reminder = True
+                            print(f"🔍 检测到时间+动作模式: {user_message}")
+                            break
+
+        if not has_reminder:
+            return reminders
+
+        # 完整的时间模式列表（支持所有格式）
+        time_patterns = [
+            r'(\d+)分钟后',
+            r'(\d+)分后',
+            r'(\d+)秒钟后',
+            r'(\d+)秒后',
+            r'(\d+)小时后',
+            r'(\d+)点钟后',
+            # 循环提醒格式
+            r'每年\s*(\d{1,2})月(\d{1,2})日\s*(\d{1,2})\s*:\s*(\d{1,2})',
+            r'每年\s*(\d{1,2})月(\d{1,2})日\s*(\d{1,2})点(\d{1,2})分',
+            r'每年\s*(\d{1,2})月(\d{1,2})日\s*(\d{1,2})点',
+            r'每年\s*(\d{1,2})月(\d{1,2})日',
+            r'每月\s*(\d{1,2})日\s*(\d{1,2})\s*:\s*(\d{1,2})',
+            r'每月\s*(\d{1,2})日\s*(\d{1,2})点(\d{1,2})分',
+            r'每月\s*(\d{1,2})日\s*(\d{1,2})点',
+            r'每月\s*(\d{1,2})日',
+            r'每周([一二三四五六日天])\s*(\d{1,2})\s*:\s*(\d{1,2})',
+            r'每周([一二三四五六日天])\s*(\d{1,2})点(\d{1,2})分',
+            r'每周([一二三四五六日天])\s*(\d{1,2})点',
+            r'每周([一二三四五六日天])',
+            r'每[天日]\s*(\d{1,2})\s*:\s*(\d{1,2})',
+            r'每[天日].*?(\d{1,2})点(\d{1,2})分',
+            r'每[天日].*?(\d{1,2})点',
+            r'每[天日]',
+            # 具体日期格式
+            r'(\d{4})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2})\s*:\s*(\d{1,2})',
+            r'(\d{4})-(\d{1,2})-(\d{1,2})\s*(\d{1,2})\s*:\s*(\d{1,2})',
+            r'(\d{1,2})月(\d{1,2})日.{0,4}?(上午|下午|晚上|早上|中午|凌晨)?\s*(\d{1,2})\s*:\s*(\d{1,2})',
+            r'(\d{1,2})月(\d{1,2})日.{0,4}?(上午|下午|晚上|早上|中午|凌晨)?\s*(\d{1,2})点(\d{1,2})分',
+            r'(\d{1,2})月(\d{1,2})日.{0,4}?(上午|下午|晚上|早上|中午|凌晨)?\s*(\d{1,2})点',
+            r'(\d{1,2})月(\d{1,2})日',
+            # 今天/明天/后天格式
+            r'今天.{0,4}?(\d{1,2})点(\d{1,2})分',
+            r'今天.{0,4}?(\d{1,2})点半',
+            r'今天.{0,4}?(\d{1,2})点',
+            r'明天.{0,4}?(\d{1,2})点(\d{1,2})分',
+            r'明天.{0,4}?(\d{1,2})点半',
+            r'明天.{0,4}?(\d{1,2})点',
+            r'后天.{0,4}?(\d{1,2})点(\d{1,2})分',
+            r'后天.{0,4}?(\d{1,2})点半',
+            r'后天.{0,4}?(\d{1,2})点',
+            r'今天\s*(\d{1,2})\s*:\s*(\d{1,2})',
+            r'明天\s*(\d{1,2})\s*:\s*(\d{1,2})',
+            r'后天\s*(\d{1,2})\s*:\s*(\d{1,2})',
+            r'今天',
+            r'明天',
+            r'后天',
+            # 单独时间格式（默认为今天）- 包含时间段词
+            r'(上午|下午|晚上|早上|中午|凌晨)?\s*(\d{1,2})点(\d{1,2})分',
+            r'(上午|下午|晚上|早上|中午|凌晨)?\s*(\d{1,2})点半',
+            r'(上午|下午|晚上|早上|中午|凌晨)?\s*(\d{1,2})点',
+            r'(\d{1,2})\s*:\s*(\d{1,2})',
+        ]
+
+        # 提取时间
+        remind_time_str = None
+        for pattern in time_patterns:
+            match = re.search(pattern, user_message)
+            if match:
+                remind_time_str = match.group(0)
+                break
+
+        if not remind_time_str:
+            print(f"⚠️ 未能提取时间信息: {user_message}")
+            return reminders
+
+        # 使用reminder_scheduler的parse_reminder_time方法解析时间
+        try:
+            from reminder_scheduler import get_global_scheduler
+            scheduler = get_global_scheduler(db_manager=self.db)
+
+            parse_result = scheduler.parse_reminder_time(remind_time_str)
+            if not parse_result:
+                print(f"⚠️ 无法解析时间: {remind_time_str}")
+                return reminders
+
+            # 处理返回值：可能是tuple(datetime, recurrence_type)或直接是datetime
+            if isinstance(parse_result, tuple):
+                parsed_time, recurrence_type = parse_result
+            else:
+                parsed_time = parse_result
+                recurrence_type = None
+
+            # 提取提醒内容
+            content = user_message
+            for kw in reminder_keywords:
+                content = content.replace(kw, '')
+            content = content.replace(remind_time_str, '')
+
+            # 清理内容
+            remove_words = ['我', '你', '的', '了', '吗', '呢', '吧', '啊', '一下', '我要', '要']
+            for word in remove_words:
+                content = content.replace(word, '')
+            content = content.strip('，。；！？、 ')
+
+            if not content:
+                content = "提醒"
+
+            # 将datetime对象转换为ISO格式字符串
+            iso_time = parsed_time.strftime('%Y-%m-%dT%H:%M:%S')
+
+            reminder_data = {
+                'content': content,
+                'remind_time': iso_time,
+                'repeat_type': recurrence_type if recurrence_type else 'once'
+            }
+
+            reminders.append(reminder_data)
+            print(f"✅ 提取到提醒: {content} - {remind_time_str} ({iso_time})")
+
+        except Exception as e:
+            print(f"❌ 提取提醒时出错: {e}")
+            import traceback
+            traceback.print_exc()
+
+        return reminders
+
     def extract_and_create_reminders(self, user_message, user_id=None):
         """从用户消息中提取提醒信息并创建系统提醒"""
         reminders = []
@@ -2780,7 +4118,7 @@ class AIAssistant:
         # 如果没有上下文，使用合并查询获取所有未完成的工作
         if not pending_plans:
             pending_plans = self.get_all_work_items(user_id, status_filter='pending')
-            print(f"🔍 使用合并查询获取未完成工作，共{len(pending_plans)}个")
+            print(f"🔍 使用合并查询获取未完成工作，共{len(pending_plans)}项")
 
         if not pending_plans:
             return []

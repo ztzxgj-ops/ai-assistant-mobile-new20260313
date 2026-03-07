@@ -125,19 +125,35 @@ class NotificationService:
             print(f"Windows 通知失败: {e}")
             return False
 
-    def play_sound(self, sound_type='default'):
-        """播放提醒音"""
+    def play_sound(self, sound_type='default', volume=0.5):
+        """
+        播放提醒音
+
+        Args:
+            sound_type: 声音类型 ('default', 'bell', 'alarm', 'beep', 'hero', 'submarine', 'tink')
+            volume: 音量 (0.0-1.0)
+        """
         try:
             if self.platform == 'darwin':
                 # macOS: 使用内置声音
                 sound_map = {
                     'default': 'Glass',
                     'bell': 'Ping',
-                    'alarm': 'Alarm',
-                    'beep': 'Beep'
+                    'alarm': 'Sosumi',
+                    'beep': 'Tink',
+                    'hero': 'Hero',
+                    'submarine': 'Submarine',
+                    'tink': 'Tink',
+                    'glass': 'Glass',
+                    'pop': 'Pop',
+                    'purr': 'Purr'
                 }
                 sound = sound_map.get(sound_type, 'Glass')
-                os.system(f"afplay /System/Library/Sounds/{sound}.aiff")
+                sound_path = f"/System/Library/Sounds/{sound}.aiff"
+
+                # 使用afplay的音量参数 (-v 0.0-1.0)
+                volume = max(0.0, min(1.0, volume))  # 确保音量在0-1之间
+                os.system(f"afplay -v {volume} {sound_path}")
                 return True
             elif self.platform == 'linux':
                 # Linux: 使用 paplay
@@ -166,14 +182,23 @@ class NotificationService:
             print(f"❌ 弹窗创建失败: {e}")
             return False
 
-    def toast_notification(self, title, message, timeout=5):
-        """组合通知：系统通知 + 弹窗 + 声音"""
+    def toast_notification(self, title, message, timeout=5, sound_type='default', volume=0.5):
+        """
+        组合通知：系统通知 + 弹窗 + 声音
+
+        Args:
+            title: 通知标题
+            message: 通知内容
+            timeout: 超时时间（秒）
+            sound_type: 声音类型
+            volume: 音量 (0.0-1.0)
+        """
         try:
             # 1. 系统通知
             self.notify(title, message, urgency='normal')
 
             # 2. 播放声音
-            self.play_sound('default')
+            self.play_sound(sound_type, volume)
 
             # 3. 弹窗显示
             self.create_popup_window(title, message, timeout)

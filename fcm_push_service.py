@@ -172,7 +172,7 @@ class FCMPushService:
                 'message': str(e)
             }
 
-    def send_reminder_notification(self, device_tokens, reminder_content, reminder_id=None):
+    def send_reminder_notification(self, device_tokens, reminder_content, reminder_id=None, title=None):
         """
         发送提醒通知（便捷方法）
 
@@ -180,11 +180,13 @@ class FCMPushService:
             device_tokens: 设备token（单个字符串或列表）
             reminder_content: 提醒内容
             reminder_id: 提醒ID（可选）
+            title: 通知标题（可选，默认为"📢 任务提醒"）
 
         Returns:
             dict: 发送结果
         """
-        title = "📢 任务提醒"
+        if title is None:
+            title = "📢 任务提醒"
         body = reminder_content
         data = {
             'type': 'reminder',

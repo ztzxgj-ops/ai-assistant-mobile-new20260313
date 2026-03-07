@@ -384,7 +384,15 @@ class DailyRecordManager(MySQLManager):
         query = f"""
             SELECT * FROM daily_records
             WHERE {' AND '.join(conditions)}
-            ORDER BY sort_order DESC, record_date DESC, created_at DESC
+            ORDER BY
+                CASE
+                    WHEN title LIKE '%%紧急%%' OR title LIKE '%%urgent%%' THEN 0
+                    WHEN title LIKE '%%重要%%' OR title LIKE '%%important%%' THEN 1
+                    ELSE 2
+                END,
+                sort_order DESC,
+                record_date DESC,
+                created_at DESC
         """
         print(f"🔍 DEBUG list_records: query={query}, params={tuple(params)}")
         result = self.query(query, tuple(params))

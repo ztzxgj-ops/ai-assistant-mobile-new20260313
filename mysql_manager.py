@@ -129,6 +129,14 @@ class MemoryManagerMySQL:
     
     def add_message(self, role, content, tags=None, image_url=None, user_id=None, file_id=None):
         """添加消息到数据库"""
+        # 检查用户的存储模式，如果是local则不保存到云端数据库
+        if user_id:
+            check_sql = "SELECT storage_mode FROM users WHERE id = %s"
+            user_result = self.db.query(check_sql, (user_id,))
+            if user_result and user_result[0].get('storage_mode') == 'local':
+                print(f"⚠️ 用户{user_id}使用本地存储模式，跳过云端消息保存")
+                return None
+
         sql = """
             INSERT INTO messages (user_id, role, content, tags, image_url, file_id, timestamp)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -402,6 +410,8 @@ class ReminderSystemMySQL:
         repeat_type_map = {
             '不重复': 'once',
             '单次': 'once',
+            '每10分钟': 'every_10_minutes',
+            '每小时': 'hourly',
             '每天': 'daily',
             '每周': 'weekly',
             '每月': 'monthly',
@@ -412,11 +422,20 @@ class ReminderSystemMySQL:
         if repeat_type == 'once' and repeat in repeat_type_map and repeat != '不重复':
             repeat_type = repeat_type_map[repeat]
 
+        # 调试日志
+        print(f"🔍 [MySQL] 准备插入提醒:")
+        print(f"  - user_id: {user_id}")
+        print(f"  - content: {content}")
+        print(f"  - repeat_type: {repeat_type}")
+        print(f"  - remind_time: {remind_time}")
+
         sql = """
             INSERT INTO reminders (user_id, content, remind_time, repeat_type, status, triggered)
             VALUES (%s, %s, %s, %s, 'pending', 0)
         """
         reminder_id = self.db.execute(sql, (user_id, content, remind_time, repeat_type))
+
+        print(f"✅ [MySQL] 提醒已插入，ID: {reminder_id}")
 
         # 返回兼容格式
         return {
@@ -472,13 +491,14 @@ class ReminderSystemMySQL:
         return formatted
 
     def list_reminders(self, user_id=None):
-        """获取提醒列表（只返回未完成的提醒）"""
+        """获取提醒列表（只返回未完成的提醒，排除已确认的好友提醒）"""
         sql = """
             SELECT id, content, remind_time, repeat_type, status, triggered, created_at
             FROM reminders
             WHERE user_id = %s
             AND status = 'pending'
             AND triggered = 0
+            AND (is_friend_reminder = 0 OR confirmed = 0)
             ORDER BY remind_time ASC
         """
         results = self.db.query(sql, (user_id,)) if user_id else []
@@ -577,7 +597,243 @@ class ReminderSystemMySQL:
         sql = "DELETE FROM reminders WHERE id = %s"
         self.db.execute(sql, (reminder_id,))
         return True
-    
+
+    def get_reminder_by_id(self, reminder_id, user_id=None):
+        """根据ID获取提醒信息"""
+        if user_id is not None:
+            # 检查权限
+            sql = "SELECT * FROM reminders WHERE id = %s AND user_id = %s"
+            return self.db.query_one(sql, (reminder_id, user_id))
+        else:
+            sql = "SELECT * FROM reminders WHERE id = %s"
+            return self.db.query_one(sql, (reminder_id,))
+
+    def add_friend_reminder(self, creator_id, friend_id, content, remind_time, repeat_type='once'):
+        """
+        给好友创建提醒
+
+        Args:
+            creator_id: 创建者ID
+            friend_id: 好友ID（接收者）
+            content: 提醒内容
+            remind_time: 提醒时间
+            repeat_type: 重复类型（默认once）
+
+        Returns:
+            {'success': bool, 'message': str, 'reminder_id': int}
+        """
+        try:
+            # 1. 验证好友关系
+            check_sql = """
+                SELECT id FROM friendships
+                WHERE ((user_id = %s AND friend_id = %s) OR (user_id = %s AND friend_id = %s))
+                AND status = 'accepted'
+            """
+            friendship = self.db.query_one(check_sql, (creator_id, friend_id, friend_id, creator_id))
+
+            if not friendship:
+                return {
+                    'success': False,
+                    'message': '只能给好友设置提醒',
+                    'reminder_id': None
+                }
+
+            # 2. 插入提醒记录
+            sql = """
+                INSERT INTO reminders (user_id, creator_id, is_friend_reminder, confirmed, content, remind_time, repeat_type, status, triggered)
+                VALUES (%s, %s, 1, 0, %s, %s, %s, 'pending', 0)
+            """
+            reminder_id = self.db.execute(sql, (friend_id, creator_id, content, remind_time, repeat_type))
+
+            return {
+                'success': True,
+                'message': '好友提醒已创建',
+                'reminder_id': reminder_id
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'创建失败: {str(e)}',
+                'reminder_id': None
+            }
+
+    def confirm_friend_reminder(self, reminder_id, user_id):
+        """
+        确认好友提醒（接收者点击确认按钮）
+
+        Args:
+            reminder_id: 提醒ID
+            user_id: 当前用户ID（必须是接收者）
+
+        Returns:
+            {'success': bool, 'message': str}
+        """
+        try:
+            # 1. 验证权限（user_id必须等于reminders.user_id）
+            check_sql = """
+                SELECT user_id, is_friend_reminder
+                FROM reminders
+                WHERE id = %s
+            """
+            reminder = self.db.query_one(check_sql, (reminder_id,))
+
+            if not reminder:
+                return {'success': False, 'message': '提醒不存在'}
+
+            if reminder['user_id'] != user_id:
+                return {'success': False, 'message': '无权限确认此提醒'}
+
+            if reminder['is_friend_reminder'] != 1:
+                return {'success': False, 'message': '这不是好友提醒'}
+
+            # 2. 更新confirmed=1
+            update_sql = """
+                UPDATE reminders
+                SET confirmed = 1
+                WHERE id = %s
+            """
+            self.db.execute(update_sql, (reminder_id,))
+
+            return {'success': True, 'message': '提醒已确认'}
+        except Exception as e:
+            return {'success': False, 'message': f'确认失败: {str(e)}'}
+
+    def get_unconfirmed_friend_reminders(self, user_id):
+        """
+        获取未确认的好友提醒（用于app显示）
+
+        Args:
+            user_id: 当前用户ID
+
+        Returns:
+            [{'id', 'creator_id', 'creator_name', 'creator_avatar', 'content', 'remind_time', 'triggered'}]
+        """
+        sql = """
+            SELECT
+                r.id,
+                r.creator_id,
+                u.username AS creator_name,
+                u.avatar_url AS creator_avatar,
+                r.content,
+                r.remind_time,
+                r.repeat_type,
+                r.triggered,
+                r.created_at
+            FROM reminders r
+            LEFT JOIN users u ON r.creator_id = u.id
+            WHERE r.user_id = %s
+            AND r.is_friend_reminder = 1
+            AND r.confirmed = 0
+            AND r.status = 'pending'
+            AND r.triggered = 1
+            ORDER BY r.remind_time ASC
+        """
+        results = self.db.query(sql, (user_id,))
+
+        # 格式化返回数据
+        formatted = []
+        for r in results:
+            formatted.append({
+                'id': r['id'],
+                'creator_id': r['creator_id'],
+                'creator_name': r['creator_name'],
+                'creator_avatar': r['creator_avatar'] or '',
+                'content': r['content'],
+                'remind_time': r['remind_time'].strftime('%Y-%m-%d %H:%M') if hasattr(r['remind_time'], 'strftime') else str(r['remind_time']),
+                'repeat_type': r['repeat_type'],
+                'triggered': r['triggered'],
+                'created_at': r['created_at'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(r['created_at'], 'strftime') else str(r['created_at'])
+            })
+        return formatted
+
+    def get_unconfirmed_personal_reminders(self, user_id):
+        """
+        获取未确认的个人提醒（用于app显示）
+        只返回已触发但未确认的个人提醒
+
+        Args:
+            user_id: 当前用户ID
+
+        Returns:
+            [{'id', 'content', 'remind_time', 'repeat_type', 'triggered'}]
+        """
+        sql = """
+            SELECT
+                id,
+                content,
+                remind_time,
+                repeat_type,
+                triggered,
+                created_at
+            FROM reminders
+            WHERE user_id = %s
+            AND (is_friend_reminder = 0 OR is_friend_reminder IS NULL)
+            AND (confirmed = 0 OR confirmed IS NULL)
+            AND status = 'pending'
+            AND triggered = 1
+            ORDER BY remind_time ASC
+        """
+        results = self.db.query(sql, (user_id,))
+
+        # 格式化返回数据
+        formatted = []
+        for r in results:
+            formatted.append({
+                'id': r['id'],
+                'content': r['content'],
+                'remind_time': r['remind_time'].strftime('%Y-%m-%d %H:%M') if hasattr(r['remind_time'], 'strftime') else str(r['remind_time']),
+                'repeat_type': r['repeat_type'],
+                'triggered': r['triggered'],
+                'created_at': r['created_at'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(r['created_at'], 'strftime') else str(r['created_at'])
+            })
+        return formatted
+
+    def confirm_personal_reminder(self, reminder_id, user_id):
+        """
+        确认个人提醒
+
+        Args:
+            reminder_id: 提醒ID
+            user_id: 用户ID
+
+        Returns:
+            {'success': bool, 'message': str}
+        """
+        try:
+            # 验证提醒属于该用户
+            check_sql = "SELECT id FROM reminders WHERE id = %s AND user_id = %s"
+            reminder = self.db.query_one(check_sql, (reminder_id, user_id))
+
+            if not reminder:
+                return {'success': False, 'message': '提醒不存在或无权限'}
+
+            # 标记为已确认
+            sql = "UPDATE reminders SET confirmed = 1 WHERE id = %s"
+            self.db.execute(sql, (reminder_id,))
+
+            return {'success': True, 'message': '已确认'}
+        except Exception as e:
+            return {'success': False, 'message': f'确认失败: {str(e)}'}
+
+    def cleanup_confirmed_reminders(self, days=7):
+        """
+        清理已确认的好友提醒（定期任务）
+
+        Args:
+            days: 保留天数（默认7天）
+
+        Returns:
+            删除的记录数
+        """
+        sql = """
+            DELETE FROM reminders
+            WHERE confirmed = 1
+            AND is_friend_reminder = 1
+            AND remind_time < DATE_SUB(NOW(), INTERVAL %s DAY)
+        """
+        affected_rows = self.db.execute(sql, (days,))
+        return affected_rows
+
     def start_monitoring(self):
         """启动提醒监控线程"""
         if not self.running:
@@ -956,10 +1212,17 @@ class WorkPlanManagerMySQL:
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
         sql = f"""
-            SELECT id, title, content as description, due_date as deadline, priority, status, sort_order, created_at, updated_at
+            SELECT id, title, content as description, due_date as deadline, priority, status, sort_order, created_at, updated_at, completed_at
             FROM work_tasks
             WHERE {where_clause}
-            ORDER BY sort_order DESC, created_at DESC
+            ORDER BY
+                sort_order DESC,
+                CASE
+                    WHEN priority = 'urgent' OR priority = '紧急' THEN 0
+                    WHEN priority = 'important' OR priority = '重要' THEN 1
+                    ELSE 2
+                END,
+                created_at DESC
         """
         plans = self.db.query(sql, params if params else None)
 
@@ -975,6 +1238,8 @@ class WorkPlanManagerMySQL:
                 plan['created_at'] = plan['created_at'].strftime('%Y-%m-%d %H:%M:%S')
             if plan.get('updated_at') and hasattr(plan['updated_at'], 'strftime'):
                 plan['updated_at'] = plan['updated_at'].strftime('%Y-%m-%d %H:%M:%S')
+            if plan.get('completed_at') and hasattr(plan['completed_at'], 'strftime'):
+                plan['completed_at'] = plan['completed_at'].strftime('%Y-%m-%d %H:%M:%S')
             # ✨ 添加 source 字段，标识数据来源
             plan['source'] = 'work_tasks'
 
