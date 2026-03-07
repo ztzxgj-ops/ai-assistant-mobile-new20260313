@@ -420,65 +420,201 @@ class AIAssistant:
             del self.state_context[user_key]
         print(f"🔄 用户{user_key}状态已清除")
 
+    def _parse_query_format(self, user_message):
+        """
+        解析用户查询格式，返回查询类型和参数
+
+        返回格式：
+        {
+            'type': 'format1' | 'format2' | 'format3' | 'format4' | None,
+            'keyword': str,  # 关键词（格式3和4）
+            'time_range': str,  # 时间范围（格式2）
+            'is_related': bool  # 是否是"相关"查询（格式4）
+        }
+        """
+        # 定义查询触发词
+        query_triggers = ['查询', '显示', '查看', '搜索', '列出']
+
+        # 检查是否以查询触发词开头
+        starts_with_trigger = False
+        trigger_word = None
+        for trigger in query_triggers:
+            if user_message.startswith(trigger):
+                starts_with_trigger = True
+                trigger_word = trigger
+                break
+
+        if not starts_with_trigger:
+            return None
+
+        # 移除触发词，获取剩余内容
+        remaining = user_message[len(trigger_word):].strip()
+
+        # 格式一：单独的查询词（无参数）
+        if not remaining or remaining in ['', ' ']:
+            return {
+                'type': 'format1',
+                'keyword': None,
+                'time_range': None,
+                'is_related': False
+            }
+
+        # 格式四：关键词 + "相关"
+        if remaining.endswith('相关'):
+            keyword = remaining[:-2].strip()
+            return {
+                'type': 'format4',
+                'keyword': keyword,
+                'time_range': None,
+                'is_related': True
+            }
+
+        # 格式二：时间范围
+        time_patterns = [
+            r'(\d+)天内', r'(\d+)天', r'近(\d+)天',
+            r'本周', r'本月', r'今天', r'昨天',
+            r'(\d{4}-\d{2}-\d{2})到(\d{4}-\d{2}-\d{2})',
+            r'(\d{4}-\d{2}-\d{2})'
+        ]
+
+        for pattern in time_patterns:
+            if re.search(pattern, remaining):
+                return {
+                    'type': 'format2',
+                    'keyword': None,
+                    'time_range': remaining,
+                    'is_related': False
+                }
+
+        # 格式三：主关键词
+        return {
+            'type': 'format3',
+            'keyword': remaining.strip(),
+            'time_range': None,
+            'is_related': False
+        }
+
+    def _calculate_time_range(self, time_str):
+        """
+        计算时间范围，返回 (start_time, end_time)
+        """
+        from datetime import datetime, timedelta
+
+        now = datetime.now()
+
+        # 匹配"N天内"或"近N天"
+        match = re.search(r'近?(\d+)天', time_str)
+        if match:
+            days = int(match.group(1))
+            start_time = now - timedelta(days=days)
+            return (start_time, now)
+
+        # 本周
+        if '本周' in time_str:
+            # 计算本周一
+            weekday = now.weekday()
+            start_time = now - timedelta(days=weekday)
+            start_time = start_time.replace(hour=0, minute=0, second=0, microsecond=0)
+            return (start_time, now)
+
+        # 本月
+        if '本月' in time_str:
+            start_time = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            return (start_time, now)
+
+        # 今天
+        if '今天' in time_str:
+            start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            return (start_time, now)
+
+        # 昨天
+        if '昨天' in time_str:
+            yesterday = now - timedelta(days=1)
+            start_time = yesterday.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_time = yesterday.replace(hour=23, minute=59, second=59, microsecond=999999)
+            return (start_time, end_time)
+
+        # 日期范围：YYYY-MM-DD到YYYY-MM-DD
+        match = re.search(r'(\d{4}-\d{2}-\d{2})到(\d{4}-\d{2}-\d{2})', time_str)
+        if match:
+            start_date = datetime.strptime(match.group(1), '%Y-%m-%d')
+            end_date = datetime.strptime(match.group(2), '%Y-%m-%d')
+            end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+            return (start_date, end_date)
+
+        # 单个日期：YYYY-MM-DD
+        match = re.search(r'(\d{4}-\d{2}-\d{2})', time_str)
+        if match:
+            target_date = datetime.strptime(match.group(1), '%Y-%m-%d')
+            start_time = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_time = target_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+            return (start_time, end_time)
+
+        # 默认返回24小时
+        return (now - timedelta(hours=24), now)
+
     def get_smart_context(self, user_message, user_id=None, ai_assistant_name='小助手'):
-        """✨ 改进的智能两阶段搜索：不依赖白名单，直接搜索用户输入的所有关键词"""
+        """
+        🔄 新版查询系统：严格按照4种查询格式执行
 
-        # ✨ 使用改进的关键词提取方法，替代旧的白名单机制
-        keywords = self._extract_keywords_from_message(user_message)
+        格式一：查询（显示24小时内保存/记录的数据）
+        格式二：查询 + 时间范围
+        格式三：查询 + 主关键词（匹配"关键词:"格式）
+        格式四：查询 + 关键词相关（完整匹配关键词）
 
-        # 智能日期扩展：如果用户输入日期相关的查询，扩展关键词
-        date_keywords = self._expand_date_keywords(user_message)
-        keywords.extend(date_keywords)
+        查询范围：messages表 + daily_records表
+        """
 
-        # 移除重复
-        keywords = list(set(keywords))
+        # 解析查询格式
+        query_info = self._parse_query_format(user_message)
+
+        # 如果不是查询格式，使用旧逻辑（保留对话功能）
+        if query_info is None:
+            # 非查询格式，返回最近对话记录用于AI对话
+            relevant_chats = self.memory.get_recent_conversations(10, user_id=user_id)
+            relevant_plans = []
+            all_items = self.get_all_work_items(user_id, status_filter=None)
+            pending_plans = [p for p in all_items if p.get('status') not in ['completed', '已完成']]
+
+            # 特殊处理：工作查询
+            if any(w in user_message for w in ['当前工作', '未完成工作', '未完成', '待办', '计划']) or (user_message == '工作'):
+                relevant_plans = pending_plans
+            else:
+                relevant_plans = [p for p in all_items if p['status'] not in ['已完成', '已取消']]
+
+            context = self._build_context(user_message, relevant_chats, relevant_plans, ai_assistant_name)
+            return context
+
+        # 执行新的查询逻辑
+        print(f"🔍 新查询系统: 格式={query_info['type']}, 关键词={query_info.get('keyword')}, 时间={query_info.get('time_range')}")
 
         relevant_chats = []
 
-        # ✨ 改进：直接使用提取的关键词搜索，不再过滤
-        if keywords:
-            for keyword in keywords[:5]:  # 增加到5个关键词以提高搜索覆盖率
-                results = self.memory.search_by_keyword(keyword, user_id=user_id)
-                relevant_chats.extend(results)
-                print(f"🔍 搜索关键词'{keyword}'，找到{len(results)}条结果")
+        # 格式一：查询最近24小时的保存/记录数据
+        if query_info['type'] == 'format1':
+            start_time, end_time = self._calculate_time_range('24小时')
+            relevant_chats = self._query_saved_records(user_id, start_time, end_time)
+            print(f"🔍 格式一查询: 24小时内找到{len(relevant_chats)}条记录")
 
-                # ✨ 新增：也搜索daily_records表（记录类别）
-                try:
-                    daily_results = self._search_daily_records(keyword, user_id)
-                    if daily_results:
-                        print(f"🔍 在daily_records中搜索'{keyword}'，找到{len(daily_results)}条结果")
-                        # 将daily_records转换为消息格式
-                        for record in daily_results:
-                            relevant_chats.append({
-                                'timestamp': record.get('created_at', ''),
-                                'content': f"[记录] {record.get('title', '')} - {record.get('content', '')[:100]}",
-                                'role': 'user',
-                                'source': 'daily_records',
-                                'record_id': record.get('id')
-                            })
-                except Exception as e:
-                    print(f"🔍 搜索daily_records出错: {e}")
+        # 格式二：查询指定时间范围的保存/记录数据
+        elif query_info['type'] == 'format2':
+            start_time, end_time = self._calculate_time_range(query_info['time_range'])
+            relevant_chats = self._query_saved_records(user_id, start_time, end_time)
+            print(f"🔍 格式二查询: {query_info['time_range']}内找到{len(relevant_chats)}条记录")
 
-                # ✨ 新增：也搜索guestbook_messages表（留言墙）
-                try:
-                    guestbook_results = self._search_guestbook(keyword, user_id)
-                    if guestbook_results:
-                        print(f"🔍 在guestbook中搜索'{keyword}'，找到{len(guestbook_results)}条结果")
-                        # 将guestbook转换为消息格式
-                        for record in guestbook_results:
-                            relevant_chats.append({
-                                'timestamp': record.get('created_at', ''),
-                                'content': f"[留言墙] {record.get('content', '')[:100]}",
-                                'role': 'user',
-                                'source': 'guestbook',
-                                'record_id': record.get('id')
-                            })
-                except Exception as e:
-                    print(f"🔍 搜索guestbook出错: {e}")
+        # 格式三：查询包含主关键词的记录（匹配"关键词:"格式）
+        elif query_info['type'] == 'format3':
+            keyword = query_info['keyword']
+            relevant_chats = self._query_by_main_keyword(user_id, keyword)
+            print(f"🔍 格式三查询: 主关键词'{keyword}'找到{len(relevant_chats)}条记录")
 
-        if not relevant_chats:
-            relevant_chats = self.memory.get_recent_conversations(10, user_id=user_id)
+        # 格式四：查询关键词相关的所有数据（完整匹配）
+        elif query_info['type'] == 'format4':
+            keyword = query_info['keyword']
+            relevant_chats = self._query_by_keyword_related(user_id, keyword)
+            print(f"🔍 格式四查询: 关键词'{keyword}'相关找到{len(relevant_chats)}条记录")
 
+        # 去重
         seen = set()
         unique_chats = []
         for chat in relevant_chats:
@@ -487,147 +623,221 @@ class AIAssistant:
                 seen.add(chat_id)
                 unique_chats.append(chat)
 
-        relevant_plans = []
-        all_items = self.get_all_work_items(user_id, status_filter=None)  # 获取所有工作（合并两表）
-        # 过滤掉已完成的任务
-        pending_plans = [p for p in all_items if p.get('status') not in ['completed', '已完成']]
-        # 获取已完成的任务
-        completed_plans = [p for p in all_items if p.get('status') in ['completed', '已完成']]
+        # 构建上下文
+        context = self._build_query_context(user_message, unique_chats, ai_assistant_name, query_info)
+        return context
 
-        print(f"🔍 DEBUG get_smart_context: user_message='{user_message}'")
-        print(f"🔍 DEBUG: all_items数量={len(all_items)}, pending_plans数量={len(pending_plans)}, completed_plans数量={len(completed_plans)}")
+    def _query_saved_records(self, user_id, start_time, end_time):
+        """
+        查询指定时间范围内的保存/记录数据
+        查询范围：messages表 + daily_records表
+        """
+        results = []
 
-        # 特殊处理：如果用户查询"已完成工作"，返回指定时间范围内已完成的计划
-        if any(w in user_message for w in ['已完成工作', '已完成', '完成的工作', '显示已完成']):
-            from datetime import timedelta
+        # 1. 查询messages表（只查询以"保存:"或"记录:"开头的用户消息）
+        try:
+            query = """
+                SELECT content, timestamp, 'messages' as source
+                FROM messages
+                WHERE user_id = %s
+                  AND role = 'user'
+                  AND (content LIKE '保存:%' OR content LIKE '记录:%'
+                       OR content LIKE '保存：%' OR content LIKE '记录：%')
+                  AND timestamp BETWEEN %s AND %s
+                ORDER BY timestamp DESC
+            """
+            messages_results = self.memory.query(query, (user_id, start_time, end_time))
+            for row in messages_results:
+                results.append({
+                    'timestamp': row['timestamp'],
+                    'content': row['content'],
+                    'role': 'user',
+                    'source': 'messages'
+                })
+        except Exception as e:
+            print(f"❌ 查询messages表失败: {e}")
 
-            # 提取时间范围（如"3个月"、"1周"、"30天"、"近2天"）
-            days = 30  # 默认1个月
-            if '3个月' in user_message or '三个月' in user_message:
-                days = 90
-            elif '2个月' in user_message or '两个月' in user_message:
-                days = 60
-            elif '1个月' in user_message or '一个月' in user_message:
-                days = 30
-            elif '1周' in user_message or '一周' in user_message:
-                days = 7
-            elif '今天' in user_message:
-                days = 1
-            else:
-                # 尝试提取"近X天"或"X天"格式
-                day_match = re.search(r'近?(\d+)天', user_message)
-                if day_match:
-                    days = int(day_match.group(1))
+        # 2. 查询daily_records表
+        try:
+            daily_results = self._search_daily_records_by_time(user_id, start_time, end_time)
+            for record in daily_results:
+                results.append({
+                    'timestamp': record.get('created_at', ''),
+                    'content': f"[记录] {record.get('title', '')} - {record.get('content', '')}",
+                    'role': 'user',
+                    'source': 'daily_records'
+                })
+        except Exception as e:
+            print(f"❌ 查询daily_records表失败: {e}")
 
-            time_ago = datetime.now() - timedelta(days=days)
-            time_ago_str = time_ago.strftime('%Y-%m-%d')
-            # 过滤指定时间范围内完成的工作
-            recent_completed = []
-            for p in completed_plans:
-                if p.get('updated_at'):
-                    # 统一转换为字符串进行比较
-                    updated_at = p['updated_at']
-                    if isinstance(updated_at, datetime):
-                        updated_at = updated_at.strftime('%Y-%m-%d')
-                    elif isinstance(updated_at, str):
-                        updated_at = updated_at[:10]  # 只取日期部分
-                    if updated_at >= time_ago_str:
-                        recent_completed.append(p)
-            relevant_plans = recent_completed
-            print(f"🔍 DEBUG: 触发已完成工作查询，时间范围={days}天，返回{len(relevant_plans)}个已完成计划")
-        # 特殊处理：如果用户查询的是"工作"、"当前工作"、"未完成工作"等，直接返回所有未完成计划
-        elif any(w in user_message for w in ['当前工作', '未完成工作', '未完成', '待办', '计划']) or (user_message == '工作'):
-            relevant_plans = pending_plans
-            print(f"🔍 DEBUG: 触发工作查询特殊处理，返回{len(relevant_plans)}个未完成计划")
-        elif keywords:
-            # ✨ 改进：使用改进的关键词搜索工作计划
-            for plan in all_items:  # 搜索所有计划（包括已完成的）
-                for keyword in keywords:
-                    # 模糊匹配：检查关键词是否在标题、描述或截止日期中
-                    if (str(keyword).lower() in str(plan.get('title', '')).lower() or
-                        str(keyword).lower() in str(plan.get('description', '')).lower() or
-                        str(keyword).lower() in str(plan.get('deadline', '')).lower()):
-                        relevant_plans.append(plan)
-                        print(f"🔍 工作计划匹配: 关键词='{keyword}' 匹配到计划='{plan.get('title', '')}'")
-                        break
+        return results
+
+    def _query_by_main_keyword(self, user_id, keyword):
+        """
+        查询包含主关键词的记录（匹配"关键词:"格式）
+        查询范围：messages表 + daily_records表
+        """
+        results = []
+
+        # 1. 查询messages表（匹配"关键词:"格式）
+        try:
+            query = """
+                SELECT content, timestamp, 'messages' as source
+                FROM messages
+                WHERE user_id = %s
+                  AND role = 'user'
+                  AND (content LIKE '保存:%' OR content LIKE '记录:%'
+                       OR content LIKE '保存：%' OR content LIKE '记录：%')
+                  AND (content LIKE %s OR content LIKE %s)
+                ORDER BY timestamp DESC
+            """
+            # 匹配"关键词:"或"关键词："
+            pattern1 = f'%{keyword}:%'
+            pattern2 = f'%{keyword}：%'
+            messages_results = self.memory.query(query, (user_id, pattern1, pattern2))
+            for row in messages_results:
+                results.append({
+                    'timestamp': row['timestamp'],
+                    'content': row['content'],
+                    'role': 'user',
+                    'source': 'messages'
+                })
+        except Exception as e:
+            print(f"❌ 查询messages表失败: {e}")
+
+        # 2. 查询daily_records表（完整匹配关键词）
+        try:
+            daily_results = self._search_daily_records(keyword, user_id)
+            for record in daily_results:
+                results.append({
+                    'timestamp': record.get('created_at', ''),
+                    'content': f"[记录] {record.get('title', '')} - {record.get('content', '')}",
+                    'role': 'user',
+                    'source': 'daily_records'
+                })
+        except Exception as e:
+            print(f"❌ 查询daily_records表失败: {e}")
+
+        return results
+
+    def _query_by_keyword_related(self, user_id, keyword):
+        """
+        查询关键词相关的所有数据（完整匹配关键词）
+        查询范围：messages表 + daily_records表
+        """
+        results = []
+
+        # 1. 查询messages表（完整匹配关键词，包含保存/记录开头的）
+        try:
+            query = """
+                SELECT content, timestamp, 'messages' as source
+                FROM messages
+                WHERE user_id = %s
+                  AND role = 'user'
+                  AND (content LIKE '保存:%' OR content LIKE '记录:%'
+                       OR content LIKE '保存：%' OR content LIKE '记录：%')
+                  AND content LIKE %s
+                ORDER BY timestamp DESC
+            """
+            pattern = f'%{keyword}%'
+            messages_results = self.memory.query(query, (user_id, pattern))
+            for row in messages_results:
+                results.append({
+                    'timestamp': row['timestamp'],
+                    'content': row['content'],
+                    'role': 'user',
+                    'source': 'messages'
+                })
+        except Exception as e:
+            print(f"❌ 查询messages表失败: {e}")
+
+        # 2. 查询daily_records表（完整匹配关键词）
+        try:
+            daily_results = self._search_daily_records(keyword, user_id)
+            for record in daily_results:
+                results.append({
+                    'timestamp': record.get('created_at', ''),
+                    'content': f"[记录] {record.get('title', '')} - {record.get('content', '')}",
+                    'role': 'user',
+                    'source': 'daily_records'
+                })
+        except Exception as e:
+            print(f"❌ 查询daily_records表失败: {e}")
+
+        return results
+
+    def _search_daily_records_by_time(self, user_id, start_time, end_time):
+        """按时间范围搜索daily_records表"""
+        try:
+            query = """
+                SELECT id, title, content, created_at
+                FROM daily_records
+                WHERE user_id = %s
+                  AND created_at BETWEEN %s AND %s
+                ORDER BY created_at DESC
+            """
+            return self.memory.query(query, (user_id, start_time, end_time))
+        except Exception as e:
+            print(f"❌ 按时间搜索daily_records失败: {e}")
+            return []
+
+    def _build_query_context(self, user_message, results, ai_assistant_name, query_info):
+        """构建查询结果的上下文"""
+        context = f"""你是{ai_assistant_name}，用户的个人助手AI。
+
+用户执行了查询操作：{user_message}
+查询类型：{query_info['type']}
+当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}
+
+查询结果（共{len(results)}条）：
+"""
+        if results:
+            for idx, item in enumerate(results, 1):
+                timestamp = item.get('timestamp', 'N/A')
+                if isinstance(timestamp, datetime):
+                    timestamp = timestamp.strftime('%Y-%m-%d %H:%M')
+                content = item.get('content', '')
+                source = item.get('source', 'unknown')
+                context += f"{idx}. [{timestamp}] [{source}] {content}\n"
         else:
-            relevant_plans = [p for p in all_items if p['status'] not in ['已完成', '已取消']]
-        
+            context += "未找到符合条件的记录。\n"
+
+        context += "\n请根据以上查询结果，简洁地总结并回答用户。\n"
+        return context
+
+    def _build_context(self, user_message, chats, plans, ai_assistant_name):
+        """构建普通对话的上下文（非查询模式）"""
         context = f"""你是{ai_assistant_name}，用户的个人助手AI，严格基于用户的记录和计划回答问题。
 
 重要规则：
 0. **你的名字是"{ai_assistant_name}"，在对话中请使用这个名字称呼自己，不要使用"Assistant"或其他名字**
 1. **必须基于下方的聊天记录和计划列表来回答问题**
 2. **当用户问"工作"、"当前工作"、"未完成工作"时，必须列出下方的所有未完成计划**
-3. **当用户问"已完成工作"、"显示已完成"时，必须列出下方的所有已完成计划**
-4. 如果下方有计划列表，你必须回答这些计划，不要说"没有找到"
-5. 当用户查询特定主题时，只返回与该主题直接相关的信息
-6. 不要推测、假设或编造任何信息
-7. 简洁准确地回答
-
-**提醒功能说明**：
-- 当用户说"提醒我..."、"X分钟后提醒我..."等时，你应该回复"好的，我将为您设置提醒"
-- 系统会自动提取提醒内容和时间，创建提醒任务
-
-**名字设置说明**：
-- 当用户想给你取名字时（如"叫你小马"、"以后就叫你小明"），系统会自动识别并设置
-- 你只需要自然地回应即可，不需要特殊处理
+3. 如果下方有计划列表，你必须回答这些计划，不要说"没有找到"
+4. 不要推测、假设或编造任何信息
+5. 简洁准确地回答
 
 用户查询的主题：{user_message}
 当前时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}
 
-        相关聊天记录({len(unique_chats)}条):
+相关聊天记录({len(chats)}条):
 """
-
-        # ✨ 调试：打印对话记录数量
-        print(f"🔍 DEBUG: unique_chats数量={len(unique_chats)}, relevant_plans数量={len(relevant_plans)}")
-        if unique_chats:
-            print(f"🔍 DEBUG: 前3条对话记录:")
-            for i, chat in enumerate(unique_chats[:3]):
-                print(f"  {i+1}. [{chat.get('timestamp', 'N/A')}] {chat.get('content', 'N/A')[:50]}")
-
-        for chat in unique_chats:
+        for chat in chats:
             context += f"[{chat['timestamp']}] {chat['content']}\n"
 
-        if relevant_plans:
-            # 检查是否是已完成工作查询
-            is_completed_query = any(w in user_message for w in ['已完成工作', '已完成', '完成的工作', '显示已完成'])
-
-            if is_completed_query:
-                # 提取时间范围提示
-                time_desc = "最近1个月"
-                if '3个月' in user_message or '三个月' in user_message:
-                    time_desc = "最近3个月"
-                elif '2个月' in user_message or '两个月' in user_message:
-                    time_desc = "最近2个月"
-                elif '1周' in user_message or '一周' in user_message:
-                    time_desc = "最近1周"
-                elif '今天' in user_message:
-                    time_desc = "今天"
-
-                context += f"\n**{time_desc}已完成的工作（共{len(relevant_plans)}个）：**\n"
-                for idx, plan in enumerate(relevant_plans, 1):  # 移除[:20]限制，显示所有
-                    # 显示完成时间
-                    completed_time = ""
-                    if plan.get('updated_at'):
-                        if isinstance(plan['updated_at'], str):
-                            completed_time = f" (完成于: {plan['updated_at'][:10]})"
-                        elif isinstance(plan['updated_at'], datetime):
-                            completed_time = f" (完成于: {plan['updated_at'].strftime('%Y-%m-%d')})"
-                    context += f"{idx}. {plan['title']}{completed_time}\n"
-            else:
-                context += f"\n**未完成的工作计划（共{len(relevant_plans)}项，请用序号列出，格式: 1. 标题）：**\n"
-                for idx, plan in enumerate(relevant_plans, 1):
-                    context += f"{idx}. {plan['title']}\n"
+        if plans:
+            context += f"\n**未完成的工作计划（共{len(plans)}项）：**\n"
+            for idx, plan in enumerate(plans, 1):
+                context += f"{idx}. {plan['title']}\n"
         else:
-            # 根据查询类型给出不同的提示
-            is_completed_query = any(w in user_message for w in ['已完成工作', '已完成', '完成的工作', '显示已完成'])
-            if is_completed_query:
-                context += "\n指定时间范围内没有已完成的工作。\n"
-            else:
-                context += "\n当前没有未完成的工作计划。\n"
+            context += "\n当前没有未完成的工作计划。\n"
 
         return context
+
+    # 保留旧代码的占位符，避免后续代码出错
+    def _old_search_logic_placeholder(self):
+        """旧的搜索逻辑已废弃"""
+        pass
 
     def _get_relative_time_desc(self, deadline_str):
         """将截止日期转换为相对时间描述（今天、明天、后天等）"""
