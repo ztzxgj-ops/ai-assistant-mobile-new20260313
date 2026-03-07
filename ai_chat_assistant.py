@@ -599,6 +599,8 @@ class AIAssistant:
         # 格式二：查询指定时间范围的保存/记录数据
         elif query_info['type'] == 'format2':
             start_time, end_time = self._calculate_time_range(query_info['time_range'])
+            print(f"🔍 格式二查询: 时间范围='{query_info['time_range']}'")
+            print(f"🔍 计算后的时间: {start_time} 到 {end_time}")
             relevant_chats = self._query_saved_records(user_id, start_time, end_time)
             print(f"🔍 格式二查询: {query_info['time_range']}内找到{len(relevant_chats)}条记录")
 
@@ -646,7 +648,10 @@ class AIAssistant:
                   AND timestamp BETWEEN %s AND %s
                 ORDER BY timestamp DESC
             """
+            print(f"🔍 SQL查询参数: user_id={user_id}, start={start_time}, end={end_time}")
             messages_results = self.memory.query(query, (user_id, start_time, end_time))
+            print(f"🔍 messages表返回: {len(messages_results)}条记录")
+
             for row in messages_results:
                 results.append({
                     'timestamp': row['timestamp'],
@@ -654,12 +659,16 @@ class AIAssistant:
                     'role': 'user',
                     'source': 'messages'
                 })
+                # 打印前3条记录用于调试
+                if len(results) <= 3:
+                    print(f"   [{row['timestamp']}] {row['content'][:50]}")
         except Exception as e:
             print(f"❌ 查询messages表失败: {e}")
 
         # 2. 查询daily_records表
         try:
             daily_results = self._search_daily_records_by_time(user_id, start_time, end_time)
+            print(f"🔍 daily_records表返回: {len(daily_results)}条记录")
             for record in daily_results:
                 results.append({
                     'timestamp': record.get('created_at', ''),
@@ -670,6 +679,7 @@ class AIAssistant:
         except Exception as e:
             print(f"❌ 查询daily_records表失败: {e}")
 
+        print(f"🔍 总共返回: {len(results)}条记录")
         return results
 
     def _query_by_main_keyword(self, user_id, keyword):
