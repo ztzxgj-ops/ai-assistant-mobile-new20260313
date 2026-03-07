@@ -629,20 +629,21 @@ class AIAssistant:
 
     def _query_saved_records(self, user_id, start_time, end_time):
         """
-        查询指定时间范围内的保存/记录数据
+        查询指定时间范围内的保存数据
         查询范围：messages表 + daily_records表
+
+        重要：只查询通过"保存"命令保存的数据，不包括"记录"命令的数据
         """
         results = []
 
-        # 1. 查询messages表（只查询以"保存:"或"记录:"开头的用户消息）
+        # 1. 查询messages表（只查询以"保存:"或"保存："开头的用户消息）
         try:
             query = """
                 SELECT content, timestamp, 'messages' as source
                 FROM messages
                 WHERE user_id = %s
                   AND role = 'user'
-                  AND (content LIKE '保存:%' OR content LIKE '记录:%'
-                       OR content LIKE '保存：%' OR content LIKE '记录：%')
+                  AND (content LIKE '保存:%' OR content LIKE '保存：%')
                   AND timestamp BETWEEN %s AND %s
                 ORDER BY timestamp DESC
             """
@@ -654,6 +655,7 @@ class AIAssistant:
                     'role': 'user',
                     'source': 'messages'
                 })
+            print(f"🔍 messages表查询: 找到{len(messages_results)}条'保存'数据")
         except Exception as e:
             print(f"❌ 查询messages表失败: {e}")
 
@@ -667,6 +669,7 @@ class AIAssistant:
                     'role': 'user',
                     'source': 'daily_records'
                 })
+            print(f"🔍 daily_records表查询: 找到{len(daily_results)}条记录")
         except Exception as e:
             print(f"❌ 查询daily_records表失败: {e}")
 
@@ -677,8 +680,9 @@ class AIAssistant:
         查询包含主关键词的记录（匹配"关键词:"格式）
         查询范围：仅messages表（不包括daily_records表）
 
-        主关键词定义：在"保存 关键词:内容"或"记录 关键词:内容"中，
-        冒号前面的词就是主关键词。
+        主关键词定义：在"保存 关键词:内容"中，冒号前面的词就是主关键词。
+
+        重要：只查询通过"保存"命令保存的数据，不包括"记录"命令的数据
 
         例如：
         - "保存 google:账号xxx" → 主关键词是"google"
@@ -686,15 +690,14 @@ class AIAssistant:
         """
         results = []
 
-        # 只查询messages表（匹配"关键词:"格式）
+        # 只查询messages表（匹配"关键词:"格式，且以"保存"开头）
         try:
             query = """
                 SELECT content, timestamp, 'messages' as source
                 FROM messages
                 WHERE user_id = %s
                   AND role = 'user'
-                  AND (content LIKE '保存:%' OR content LIKE '记录:%'
-                       OR content LIKE '保存：%' OR content LIKE '记录：%')
+                  AND (content LIKE '保存:%' OR content LIKE '保存：%')
                   AND (content LIKE %s OR content LIKE %s)
                 ORDER BY timestamp DESC
             """
@@ -710,7 +713,7 @@ class AIAssistant:
                     'source': 'messages'
                 })
 
-            print(f"🔍 格式三查询: 主关键词'{keyword}'在messages表中找到{len(results)}条记录")
+            print(f"🔍 格式三查询: 主关键词'{keyword}'在messages表中找到{len(results)}条'保存'记录")
         except Exception as e:
             print(f"❌ 查询messages表失败: {e}")
 
@@ -720,18 +723,19 @@ class AIAssistant:
         """
         查询关键词相关的所有数据（完整匹配关键词）
         查询范围：messages表 + daily_records表
+
+        重要：messages表只查询通过"保存"命令保存的数据，不包括"记录"命令的数据
         """
         results = []
 
-        # 1. 查询messages表（完整匹配关键词，包含保存/记录开头的）
+        # 1. 查询messages表（完整匹配关键词，只包含"保存"开头的）
         try:
             query = """
                 SELECT content, timestamp, 'messages' as source
                 FROM messages
                 WHERE user_id = %s
                   AND role = 'user'
-                  AND (content LIKE '保存:%' OR content LIKE '记录:%'
-                       OR content LIKE '保存：%' OR content LIKE '记录：%')
+                  AND (content LIKE '保存:%' OR content LIKE '保存：%')
                   AND content LIKE %s
                 ORDER BY timestamp DESC
             """
@@ -744,6 +748,7 @@ class AIAssistant:
                     'role': 'user',
                     'source': 'messages'
                 })
+            print(f"🔍 格式四查询: messages表找到{len(messages_results)}条'保存'记录")
         except Exception as e:
             print(f"❌ 查询messages表失败: {e}")
 
@@ -757,6 +762,7 @@ class AIAssistant:
                     'role': 'user',
                     'source': 'daily_records'
                 })
+            print(f"🔍 格式四查询: daily_records表找到{len(daily_results)}条记录")
         except Exception as e:
             print(f"❌ 查询daily_records表失败: {e}")
 
@@ -801,14 +807,14 @@ class AIAssistant:
                 # 格式三：主关键词查询
                 keyword = query_info.get('keyword', '')
                 context += f"未找到'{keyword}'主关键词的记录。\n"
-                context += f"提示：主关键词格式为'保存 {keyword}:内容'或'记录 {keyword}:内容'。\n"
+                context += f"提示：主关键词格式为'保存 {keyword}:内容'。\n"
             elif query_info['type'] == 'format2':
                 # 格式二：时间范围查询
                 time_range = query_info.get('time_range', '')
-                context += f"未找到{time_range}内的保存/记录数据。\n"
+                context += f"未找到{time_range}内通过'保存'命令保存的数据。\n"
             elif query_info['type'] == 'format1':
                 # 格式一：24小时查询
-                context += "未找到最近24小时内的保存/记录数据。\n"
+                context += "未找到最近24小时内通过'保存'命令保存的数据。\n"
             elif query_info['type'] == 'format4':
                 # 格式四：关键词相关查询
                 keyword = query_info.get('keyword', '')
