@@ -119,6 +119,9 @@ class UserManager:
                 'token': token,
                 'user_id': user['id'],
                 'username': user['username'],
+                'avatar_url': user.get('avatar_url', ''),
+                'ai_avatar_url': user.get('ai_avatar_url', ''),
+                'theme': user.get('theme', 'light'),
                 'storage_mode': user.get('storage_mode', 'cloud'),
                 'storage_mode_selected': bool(user.get('storage_mode_selected', 0))
             }
@@ -223,7 +226,7 @@ class UserManager:
         """
         try:
             sql = """
-                SELECT id, username, password_hash, phone, avatar_url, chat_background, theme, ai_avatar_url, ai_assistant_name, created_at, last_login,
+                SELECT id, username, password_hash, phone, email, avatar_url, chat_background, theme, ai_avatar_url, ai_assistant_name, created_at, last_login,
                        storage_mode, storage_mode_selected
                 FROM users
                 WHERE id = %s

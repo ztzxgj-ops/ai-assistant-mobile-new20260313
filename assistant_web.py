@@ -779,7 +779,9 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     'id': user['id'],
                     'username': user['username'],
                     'phone': user['phone'],
+                    'email': user.get('email', ''),
                     'avatar_url': user.get('avatar_url', ''),
+                    'ai_avatar_url': user.get('ai_avatar_url', ''),
                     'chat_background': user.get('chat_background', ''),
                     'theme': user.get('theme', 'light'),
                     'storage_mode': user.get('storage_mode', 'cloud'),
@@ -1681,6 +1683,18 @@ class AssistantHandler(BaseHTTPRequestHandler):
                         'detected_reminders': chat_result.get('detected_reminders', []),
                         'completed_plans': chat_result.get('completed_plans', [])
                     }
+
+                    # ✨ 传递验证码菜单相关字段
+                    if 'show_security_menu' in chat_result:
+                        response_data['show_security_menu'] = chat_result['show_security_menu']
+                    if 'has_security_code' in chat_result:
+                        response_data['has_security_code'] = chat_result['has_security_code']
+
+                    # ✨ 传递输入提示相关字段
+                    if 'show_input_prompt' in chat_result:
+                        response_data['show_input_prompt'] = chat_result['show_input_prompt']
+                    if 'input_type' in chat_result:
+                        response_data['input_type'] = chat_result['input_type']
 
                     # 如果有完成的计划，在响应中添加提示
                     if response_data['completed_plans']:

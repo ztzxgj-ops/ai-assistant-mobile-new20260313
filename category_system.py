@@ -347,6 +347,14 @@ class DailyRecordManager(MySQLManager):
             print(f"⚠️ 警告：尝试创建空记录，已拒绝")
             return None
 
+        # ✨ 检查用户的存储模式，如果是local则不保存到云端数据库
+        if user_id:
+            check_sql = "SELECT storage_mode FROM users WHERE id = %s"
+            user_result = self.query(check_sql, (user_id,))
+            if user_result and user_result[0].get('storage_mode') == 'local':
+                print(f"⚠️ 用户{user_id}使用本地存储模式，跳过云端记录保存")
+                return None
+
         if not record_date:
             from datetime import datetime
             record_date = datetime.now().strftime('%Y-%m-%d')

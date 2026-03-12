@@ -1,5 +1,100 @@
 [
   {
+    "id": 112,
+    "timestamp": "2026-03-12 13:48:21",
+    "backup_dir": "backup-20260312-134552",
+    "status": "success",
+    "notes": "切换本地和云端，对话保存和查阅功能总算可以了",
+    "error": "",
+    "git_commit": "f477575dffd1df48175b585bb1e4396d026e7d11",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260312-134552.tar.gz",
+        "size": 213789963
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260312-134552.sql",
+        "size": 1352372
+      }
+    }
+  },
+  {
+    "id": 111,
+    "timestamp": "2026-03-09 21:59:29",
+    "backup_dir": "backup-20260309-215753",
+    "status": "success",
+    "notes": "修复本地储存数据不能查询问题前的备份。",
+    "error": "",
+    "git_commit": "f477575dffd1df48175b585bb1e4396d026e7d11",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260309-215753.tar.gz",
+        "size": 213784322
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260309-215753.sql",
+        "size": 1349235
+      }
+    }
+  },
+  {
+    "id": 110,
+    "timestamp": "2026-03-09 09:33:32",
+    "backup_dir": "backup-20260309-092830",
+    "status": "failed",
+    "notes": "⚠️ 有 10 个文件修改，请点击'编辑备注'添加功能说明",
+    "error": "\u001b[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\n\n正在打包备份目录...\n\u001b[0;32m✓\u001b[0m 打包完成: 217M\n正在上传 (可能需要几分钟)...",
+    "git_commit": "f477575dffd1df48175b585bb1e4396d026e7d11",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260309-092830.tar.gz",
+        "size": 213783776
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260309-092830.sql",
+        "size": 1348113
+      }
+    }
+  },
+  {
+    "id": 109,
+    "timestamp": "2026-03-09 00:25:00",
+    "backup_dir": "backup-20260309-002321",
+    "status": "success",
+    "notes": "新用户储存方式选择提示、对话框上传图片ai回复修改前的备份。",
+    "error": "",
+    "git_commit": "f477575dffd1df48175b585bb1e4396d026e7d11",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260309-002321.tar.gz",
+        "size": 213784173
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260309-002321.sql",
+        "size": 1346520
+      }
+    }
+  },
+  {
+    "id": 108,
+    "timestamp": "2026-03-08 22:46:15",
+    "backup_dir": "backup-20260308-224436",
+    "status": "success",
+    "notes": "完成查询与验证码整个流程开发和修改。",
+    "error": "",
+    "git_commit": "f477575dffd1df48175b585bb1e4396d026e7d11",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260308-224436.tar.gz",
+        "size": 213783506
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260308-224436.sql",
+        "size": 1340712
+      }
+    }
+  },
+  {
     "id": 107,
     "timestamp": "2026-02-02 00:22:12",
     "backup_dir": "backup-20260202-002156",

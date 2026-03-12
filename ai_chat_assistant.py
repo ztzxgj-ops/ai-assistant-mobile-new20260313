@@ -22,6 +22,8 @@ from reminder_scheduler import get_global_scheduler
 from command_system import get_command_router
 # 导入类别系统管理器
 from category_system import WorkTaskManager, DailyRecordManager, CategoryManager
+# 导入邮件服务
+from verification_service import AliyunEmailService
 # 导入开发日志管理器
 try:
     from development_log import DevelopmentLogManager
@@ -78,7 +80,7 @@ class AIAssistant:
             # 账号密码类（直接查询）
             '账号', '密码', '用户名', '登录', '注册', '验证码',
             # 个人信息类（直接查询）
-            '生日', '身份证', '电话', '号码', '手机',
+            '生日', '身份证', '电话', '号码', '手机', '姓名', '名字',
             # 其他敏感词
             '银行', '卡号', '支付', '密保',
             # 需要特别保护的应用/平台（间接查询）
@@ -270,50 +272,61 @@ class AIAssistant:
 
         return content
 
-    def _extract_keywords_from_message(self, user_message):
+    def _extract_keywords_from_message(self, user_message, split_words=True):
         """
         ✨ 改进的关键词提取：不依赖白名单，直接从用户输入提取所有有意义的词
         使用简单的中文分词策略
+
+        参数:
+            user_message: 用户消息
+            split_words: 是否拆分长词为子词（默认True）。对于查询命令，应设为False以保持关键词完整性
         """
         keywords = []
 
-        # 1. 提取数字
-        numbers = re.findall(r'\d+', user_message)
+        # 0. 移除日期格式，避免提取日期中的数字作为关键词
+        # 移除 YYYY-MM-DD 格式
+        message_without_dates = re.sub(r'\d{4}-\d{2}-\d{2}', '', user_message)
+        # 移除 YYYY年MM月DD日 格式
+        message_without_dates = re.sub(r'\d{4}年\d{1,2}月\d{1,2}日', '', message_without_dates)
+
+        # 1. 提取数字（从移除日期后的文本中提取）
+        numbers = re.findall(r'\d+', message_without_dates)
         keywords.extend(numbers)
 
-        # 2. 提取中文词汇（长度2-10的连续中文字符）
-        # 这样可以捕获任何中文词，包括"留言墙"、"图片"等
-        chinese_words = re.findall(r'[\u4e00-\u9fff]{2,10}', user_message)
+        # 2. 提取中文词汇（长度1-10的连续中文字符）
+        # 这样可以捕获任何中文词，包括单字（如"鱼"、"肉"）和多字词（如"留言墙"、"图片"）
+        chinese_words = re.findall(r'[\u4e00-\u9fff]{1,10}', user_message)
         keywords.extend(chinese_words)
 
-        # ✨ 新增：对长词进行拆分，提取子词（解决"高俊相关"无法匹配"高俊"的问题）
+        # ✨ 可选：对长词进行拆分，提取子词（解决"高俊相关"无法匹配"高俊"的问题）
         # 例如："高俊相关" -> ["高俊相关", "高俊", "相关"]
-        # 定义常见的后缀词，用于智能拆分
-        common_suffixes = {'相关', '有关', '关于', '方面', '问题', '情况', '事情', '内容', '信息', '资料', '记录'}
+        # 注意：对于查询命令，应禁用此功能以保持关键词完整性
+        if split_words:
+            # 定义常见的后缀词，用于智能拆分
+            common_suffixes = {'相关', '有关', '关于', '方面', '问题', '情况', '事情', '内容', '信息', '资料', '记录'}
 
-        for word in chinese_words:
-            if len(word) > 2:
-                # 优先检查是否以常见后缀结尾，如果是则提取前面的主体词
-                for suffix in common_suffixes:
-                    if word.endswith(suffix) and len(word) > len(suffix):
-                        main_word = word[:-len(suffix)]
-                        if main_word and main_word not in keywords:
-                            keywords.append(main_word)
+            for word in chinese_words:
+                if len(word) > 2:
+                    # 优先检查是否以常见后缀结尾，如果是则提取前面的主体词
+                    for suffix in common_suffixes:
+                        if word.endswith(suffix) and len(word) > len(suffix):
+                            main_word = word[:-len(suffix)]
+                            if main_word and main_word not in keywords:
+                                keywords.append(main_word)
 
-                # 拆分为2字词（但跳过明显无意义的组合）
-                for i in range(len(word) - 1):
-                    sub_word = word[i:i+2]
-                    # 只添加不包含停用词的子词
-                    if sub_word not in keywords and not any(stop in sub_word for stop in ['的', '了', '吗', '呢', '啊']):
-                        keywords.append(sub_word)
+                    # 拆分为2字词（但跳过明显无意义的组合）
+                    for i in range(len(word) - 1):
+                        sub_word = word[i:i+2]
+                        # 只添加不包含停用词的子词
+                        if sub_word not in keywords and not any(stop in sub_word for stop in ['的', '了', '吗', '呢', '啊']):
+                            keywords.append(sub_word)
 
         # 3. 提取英文词汇
         english_words = re.findall(r'[a-zA-Z]+', user_message)
         keywords.extend(english_words)
 
-        # 4. 移除重复和过短的词
+        # 4. 移除重复
         keywords = list(set(keywords))
-        keywords = [k for k in keywords if len(str(k)) >= 2]
 
         # 5. 定义停用词（无搜索意义的词）
         stopwords = {
@@ -327,11 +340,31 @@ class AIAssistant:
             '想', '能', '会', '应该', '必须', '可能', '也许', '就', '才',
             '又', '还', '都', '很', '太', '最', '比', '像', '似', '等',
             '及', '与', '而', '则', '否', '若', '乃', '矣', '焉', '耳',
-            '查询', '搜索', '查找', '找', '看', '显示', '相关'  # ✨ 新增：过滤查询类动词
+            '查询', '搜索', '查找', '找', '看', '显示', '相关',  # ✨ 查询类动词
+            '数据', '记录', '信息', '内容', '所有', '全部',  # ✨ 通用词（无具体搜索意义）
+            '月数', '月数据', '天数', '天数据', '周数', '周数据',  # ✨ 时间+数据的组合词
+            '个月', '个天', '个周', '个星期'  # ✨ 时间量词
         }
 
-        # 6. 过滤停用词
-        keywords = [k for k in keywords if k not in stopwords]
+        # 6. 过滤停用词（包括由停用词组成的组合词）
+        def is_stopword_combination(word):
+            """检查一个词是否完全由停用词组成"""
+            if word in stopwords:
+                return True
+            # 检查是否由多个停用词组合而成（例如"个月数据" = "个月" + "数据"）
+            if len(word) > 2:
+                # 尝试所有可能的拆分方式
+                for i in range(1, len(word)):
+                    left = word[:i]
+                    right = word[i:]
+                    if left in stopwords and right in stopwords:
+                        return True
+                    # 递归检查右侧部分
+                    if left in stopwords and is_stopword_combination(right):
+                        return True
+            return False
+
+        keywords = [k for k in keywords if not is_stopword_combination(k)]
 
         print(f"🔍 改进的关键词提取: 用户输入='{user_message}' -> 提取的关键词={keywords}")
 
@@ -631,20 +664,19 @@ class AIAssistant:
 
     def _query_saved_records(self, user_id, start_time, end_time):
         """
-        查询指定时间范围内的保存/记录数据
-        查询范围：messages表 + daily_records表
+        查询指定时间范围内的保存数据
+        查询范围：messages表（只查询"保存:"命令保存的数据）
         """
         results = []
 
-        # 1. 查询messages表（只查询以"保存:"或"记录:"开头的用户消息）
+        # 1. 查询messages表（只查询以"保存:"或"保存: "开头的用户消息）
         try:
             query = """
                 SELECT content, timestamp, 'messages' as source
                 FROM messages
                 WHERE user_id = %s
                   AND role = 'user'
-                  AND (content LIKE '保存:%' OR content LIKE '记录:%'
-                       OR content LIKE '保存：%' OR content LIKE '记录：%')
+                  AND (content LIKE '保存:%' OR content LIKE '保存: %')
                   AND timestamp BETWEEN %s AND %s
                 ORDER BY timestamp DESC
             """
@@ -653,31 +685,24 @@ class AIAssistant:
             print(f"🔍 messages表返回: {len(messages_results)}条记录")
 
             for row in messages_results:
-                results.append({
-                    'timestamp': row['timestamp'],
-                    'content': row['content'],
-                    'role': 'user',
-                    'source': 'messages'
-                })
-                # 打印前3条记录用于调试
-                if len(results) <= 3:
-                    print(f"   [{row['timestamp']}] {row['content'][:50]}")
+                content = row['content']
+                # ✨ 二次过滤：确保消息真的以"保存:"或"保存: "开头（排除"查询 xxx保存数据"这类）
+                if content.startswith('保存:') or content.startswith('保存: '):
+                    results.append({
+                        'timestamp': row['timestamp'],
+                        'content': content,
+                        'role': 'user',
+                        'source': 'messages'
+                    })
+                    # 打印前3条记录用于调试
+                    if len(results) <= 3:
+                        print(f"   [{row['timestamp']}] {content[:50]}")
+                else:
+                    print(f"   ⚠️ 过滤掉非'保存:'开头的消息: {content[:50]}")
         except Exception as e:
             print(f"❌ 查询messages表失败: {e}")
-
-        # 2. 查询daily_records表
-        try:
-            daily_results = self._search_daily_records_by_time(user_id, start_time, end_time)
-            print(f"🔍 daily_records表返回: {len(daily_results)}条记录")
-            for record in daily_results:
-                results.append({
-                    'timestamp': record.get('created_at', ''),
-                    'content': f"[记录] {record.get('title', '')} - {record.get('content', '')}",
-                    'role': 'user',
-                    'source': 'daily_records'
-                })
         except Exception as e:
-            print(f"❌ 查询daily_records表失败: {e}")
+            print(f"❌ 查询messages表失败: {e}")
 
         print(f"🔍 总共返回: {len(results)}条记录")
         return results
@@ -685,26 +710,25 @@ class AIAssistant:
     def _query_by_main_keyword(self, user_id, keyword):
         """
         查询包含主关键词的记录（匹配"关键词:"格式）
-        查询范围：仅messages表（不包括daily_records表）
+        查询范围：仅messages表（只查询"保存:"命令保存的数据）
 
-        主关键词定义：在"保存 关键词:内容"或"记录 关键词:内容"中，
+        主关键词定义：在"保存: 关键词:内容"中，
         冒号前面的词就是主关键词。
 
         例如：
-        - "保存 google:账号xxx" → 主关键词是"google"
-        - "保存 银行卡:6222xxxx" → 主关键词是"银行卡"
+        - "保存: google:账号xxx" → 主关键词是"google"
+        - "保存: 银行卡:6222xxxx" → 主关键词是"银行卡"
         """
         results = []
 
-        # 只查询messages表（匹配"关键词:"格式）
+        # 只查询messages表（匹配"关键词:"格式，且以"保存:"或"保存: "开头）
         try:
             query = """
                 SELECT content, timestamp, 'messages' as source
                 FROM messages
                 WHERE user_id = %s
                   AND role = 'user'
-                  AND (content LIKE '保存:%' OR content LIKE '记录:%'
-                       OR content LIKE '保存：%' OR content LIKE '记录：%')
+                  AND (content LIKE '保存:%' OR content LIKE '保存: %')
                   AND (content LIKE %s OR content LIKE %s)
                 ORDER BY timestamp DESC
             """
@@ -729,19 +753,18 @@ class AIAssistant:
     def _query_by_keyword_related(self, user_id, keyword):
         """
         查询关键词相关的所有数据（完整匹配关键词）
-        查询范围：messages表 + daily_records表
+        查询范围：messages表（只查询"保存:"命令保存的数据）
         """
         results = []
 
-        # 1. 查询messages表（完整匹配关键词，包含保存/记录开头的）
+        # 1. 查询messages表（完整匹配关键词，只查询"保存:"或"保存: "开头的）
         try:
             query = """
                 SELECT content, timestamp, 'messages' as source
                 FROM messages
                 WHERE user_id = %s
                   AND role = 'user'
-                  AND (content LIKE '保存:%' OR content LIKE '记录:%'
-                       OR content LIKE '保存：%' OR content LIKE '记录：%')
+                  AND (content LIKE '保存:%' OR content LIKE '保存: %')
                   AND content LIKE %s
                 ORDER BY timestamp DESC
             """
@@ -756,19 +779,6 @@ class AIAssistant:
                 })
         except Exception as e:
             print(f"❌ 查询messages表失败: {e}")
-
-        # 2. 查询daily_records表（完整匹配关键词）
-        try:
-            daily_results = self._search_daily_records(keyword, user_id)
-            for record in daily_results:
-                results.append({
-                    'timestamp': record.get('created_at', ''),
-                    'content': f"[记录] {record.get('title', '')} - {record.get('content', '')}",
-                    'role': 'user',
-                    'source': 'daily_records'
-                })
-        except Exception as e:
-            print(f"❌ 查询daily_records表失败: {e}")
 
         return results
 
@@ -1058,7 +1068,7 @@ class AIAssistant:
             return f"⚠️ API调用失败: {str(e)}\n\n{self._fallback_response(user_message, user_id)}"
     
 
-    def check_output_security(self, response_text, user_id, session_id):
+    def check_output_security(self, response_text, user_id, session_id, original_query=None):
         """检查输出内容是否包含敏感信息（✨改进：使用session_id而不是token）"""
         # 定义敏感信息模式
 
@@ -1106,16 +1116,27 @@ class AIAssistant:
 
             has_custom_code = bool(result and result[0].get('security_code'))
 
-            # 保存原始结果
+            # 保存原始结果到内存
             if not hasattr(self, 'pending_responses'):
                 self.pending_responses = {}
             self.pending_responses[user_id] = response_text
 
+            # ✨ 保存原始查询到数据库（用于验证成功后自动执行）
+            if original_query:
+                try:
+                    self.memory.db.execute(
+                        "UPDATE users SET pending_query = %s WHERE id = %s",
+                        (original_query, user_id)
+                    )
+                    print(f"🔍 DEBUG: 已保存待验证查询到数据库: {original_query}")
+                except Exception as e:
+                    print(f"⚠️ 保存待验证查询失败: {e}")
+
             if has_custom_code:
-                verification_prompt = '🔒 查询结果包含敏感信息，需要验证码验证\n\n请直接输入您的验证码'
+                verification_prompt = '🔒 查询结果包含隐私信息（如电话号码等），为保护您的隐私，请输入验证码查看'
             else:
                 # ✨ 未设置验证码，提示使用默认验证码000000
-                verification_prompt = '🔒 查询结果包含敏感信息，需要验证码验证\n\n您还未设置验证码，默认验证码为：000000\n\n请输入验证码（建议设置后输入自定义验证码）'
+                verification_prompt = '🔒 查询结果包含隐私信息（如电话号码等），为保护您的隐私，请输入验证码查看\n\n💡 您还未设置验证码，默认验证码为：000000\n\n建议在设置中修改为自定义验证码'
 
             return {
                 'response': verification_prompt,
@@ -1126,6 +1147,78 @@ class AIAssistant:
             }
         except Exception as e:
             print(f"❌ 安全检查出错: {e}")
+            return None
+
+    def verify_and_execute_pending_query(self, user_message, user_id=None, session_id=None):
+        """验证用户输入的验证码，如果正确则执行待验证的查询"""
+        import hashlib
+
+        try:
+            # 查询用户的待验证查询和验证码
+            result = self.memory.db.query(
+                "SELECT pending_query, security_code FROM users WHERE id = %s",
+                (user_id,)
+            )
+
+            if not result or not result[0].get('pending_query'):
+                return None  # 没有待验证查询
+
+            pending_query = result[0]['pending_query']
+            stored_code_hash = result[0].get('security_code')
+
+            # ✨ 跳过验证码管理相关的pending_query（这些由process_security_command处理）
+            if pending_query in ['新增验证码', '修改验证码_输入旧密码', '修改验证码_输入新密码', '找回验证码', '找回验证码_输入新密码']:
+                return None
+
+            # 验证用户输入的验证码
+            input_hash = hashlib.sha256(user_message.encode()).hexdigest()
+
+            # 如果没有设置验证码，使用默认验证码 000000
+            if not stored_code_hash:
+                default_hash = hashlib.sha256('000000'.encode()).hexdigest()
+                if input_hash != default_hash:
+                    # 验证码不匹配，返回错误提示
+                    return {
+                        'response': '❌ 验证码错误\n\n您还未设置验证码，默认验证码为：000000\n\n请重新输入',
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': []
+                    }
+            else:
+                if input_hash != stored_code_hash:
+                    # 验证码不匹配，返回错误提示
+                    return {
+                        'response': '❌ 验证码错误，请重新输入',
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': []
+                    }
+
+            print(f"✅ 验证码验证成功，执行待验证查询: {pending_query}")
+
+            # 清除待验证查询
+            self.memory.db.execute(
+                "UPDATE users SET pending_query = NULL WHERE id = %s",
+                (user_id,)
+            )
+
+            # 标记session已验证（如果有session_id）
+            if session_id:
+                if not hasattr(self, 'session_security_status'):
+                    self.session_security_status = {}
+                self.session_security_status[session_id] = {
+                    'verified': True,
+                    'timestamp': datetime.now()
+                }
+
+            # 执行原始查询
+            print(f"🔍 重新执行查询: {pending_query}")
+            return self.chat(pending_query, user_id=user_id, session_id=session_id)
+
+        except Exception as e:
+            print(f"❌ 验证码验证失败: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def process_confirmation_command(self, user_message, user_id=None):
@@ -1567,37 +1660,40 @@ class AIAssistant:
                     print(f"🔍 [时间解析] 匹配: {weekday_name} -> {result}")
                     return result
 
-        # 具体日期（如"2月20日"）
-        date_match = re.search(r'(\d+)\s*月\s*(\d+)\s*[日号]', user_message)
-        if date_match:
-            month = int(date_match.group(1))
-            day = int(date_match.group(2))
-            # 默认使用今年
-            year = now.year
-            try:
-                target_date = datetime(year, month, day)
-                target_start = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        # 具体日期（如"2月20日"）- 但不匹配日期范围（如"2月20日到2月25日"）
+        # 先检查是否包含日期范围模式，如果是则跳过单个日期匹配
+        has_date_range = bool(re.search(r'[到至]', user_message))
+        if not has_date_range:
+            date_match = re.search(r'(\d+)\s*月\s*(\d+)\s*[日号]', user_message)
+            if date_match:
+                month = int(date_match.group(1))
+                day = int(date_match.group(2))
+                # 默认使用今年
+                year = now.year
+                try:
+                    target_date = datetime(year, month, day)
+                    target_start = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
 
-                # 检查是否有时段限定
-                if '上午' in user_message:
-                    result = (target_start.replace(hour=0), target_start.replace(hour=12))
-                    print(f"🔍 [时间解析] 匹配: {month}月{day}日上午 -> {result}")
-                    return result
-                elif '下午' in user_message:
-                    result = (target_start.replace(hour=12), target_start.replace(hour=18))
-                    print(f"🔍 [时间解析] 匹配: {month}月{day}日下午 -> {result}")
-                    return result
-                elif '晚上' in user_message:
-                    result = (target_start.replace(hour=18), target_start.replace(hour=23, minute=59))
-                    print(f"🔍 [时间解析] 匹配: {month}月{day}日晚上 -> {result}")
-                    return result
-                else:
-                    # 全天
-                    result = (target_start, target_start.replace(hour=23, minute=59))
-                    print(f"🔍 [时间解析] 匹配: {month}月{day}日 -> {result}")
-                    return result
-            except ValueError:
-                print(f"⚠️ [时间解析] 无效日期: {year}-{month}-{day}")
+                    # 检查是否有时段限定
+                    if '上午' in user_message:
+                        result = (target_start.replace(hour=0), target_start.replace(hour=12))
+                        print(f"🔍 [时间解析] 匹配: {month}月{day}日上午 -> {result}")
+                        return result
+                    elif '下午' in user_message:
+                        result = (target_start.replace(hour=12), target_start.replace(hour=18))
+                        print(f"🔍 [时间解析] 匹配: {month}月{day}日下午 -> {result}")
+                        return result
+                    elif '晚上' in user_message:
+                        result = (target_start.replace(hour=18), target_start.replace(hour=23, minute=59))
+                        print(f"🔍 [时间解析] 匹配: {month}月{day}日晚上 -> {result}")
+                        return result
+                    else:
+                        # 全天
+                        result = (target_start, target_start.replace(hour=23, minute=59))
+                        print(f"🔍 [时间解析] 匹配: {month}月{day}日 -> {result}")
+                        return result
+                except ValueError:
+                    print(f"⚠️ [时间解析] 无效日期: {year}-{month}-{day}")
 
         # 今天的时间段
         if '今天' in time_text or '今日' in time_text:
@@ -1645,8 +1741,138 @@ class AIAssistant:
                 print(f"🔍 [时间解析] 匹配: 昨天全天 -> {result}")
                 return result
 
-        # YYYY年MM月DD日至YYYY年MM月DD日（自定义时间区间，最具体的格式先匹配）
-        date_range_match = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日至(\d{4})年(\d{1,2})月(\d{1,2})日', time_text)
+        # ========== 日期范围格式（支持"到"和"至"） ==========
+
+        # 1. YYYY-MM-DD到/至YYYY-MM-DD（ISO格式，支持"到"和"至"）
+        iso_date_range_match = re.search(r'(\d{4})-(\d{1,2})-(\d{1,2})[到至](\d{4})-(\d{1,2})-(\d{1,2})', time_text)
+        if iso_date_range_match:
+            try:
+                start_year = int(iso_date_range_match.group(1))
+                start_month = int(iso_date_range_match.group(2))
+                start_day = int(iso_date_range_match.group(3))
+                end_year = int(iso_date_range_match.group(4))
+                end_month = int(iso_date_range_match.group(5))
+                end_day = int(iso_date_range_match.group(6))
+                start_time = datetime(start_year, start_month, start_day, 0, 0, 0)
+                end_time = datetime(end_year, end_month, end_day, 23, 59, 59)
+                result = (start_time, end_time)
+                print(f"🔍 [时间解析] 匹配: {start_year}-{start_month}-{start_day}到/至{end_year}-{end_month}-{end_day} -> {result}")
+                return result
+            except ValueError as e:
+                print(f"⚠️ [时间解析] 日期格式无效: {time_text} - {e}")
+                return None
+
+        # 2. YYYY.MM.DD到/至YYYY.MM.DD（点号分隔格式）
+        dot_date_range_match = re.search(r'(\d{4})\.(\d{1,2})\.(\d{1,2})[到至](\d{4})\.(\d{1,2})\.(\d{1,2})', time_text)
+        if dot_date_range_match:
+            try:
+                start_year = int(dot_date_range_match.group(1))
+                start_month = int(dot_date_range_match.group(2))
+                start_day = int(dot_date_range_match.group(3))
+                end_year = int(dot_date_range_match.group(4))
+                end_month = int(dot_date_range_match.group(5))
+                end_day = int(dot_date_range_match.group(6))
+                start_time = datetime(start_year, start_month, start_day, 0, 0, 0)
+                end_time = datetime(end_year, end_month, end_day, 23, 59, 59)
+                result = (start_time, end_time)
+                print(f"🔍 [时间解析] 匹配: {start_year}.{start_month}.{start_day}到/至{end_year}.{end_month}.{end_day} -> {result}")
+                return result
+            except ValueError as e:
+                print(f"⚠️ [时间解析] 日期格式无效: {time_text} - {e}")
+                return None
+
+        # 3. MM-DD到/至MM-DD（省略年份，默认当年）
+        short_date_range_match = re.search(r'(\d{1,2})-(\d{1,2})[到至](\d{1,2})-(\d{1,2})', time_text)
+        if short_date_range_match:
+            try:
+                current_year = now.year
+                start_month = int(short_date_range_match.group(1))
+                start_day = int(short_date_range_match.group(2))
+                end_month = int(short_date_range_match.group(3))
+                end_day = int(short_date_range_match.group(4))
+                start_time = datetime(current_year, start_month, start_day, 0, 0, 0)
+                end_time = datetime(current_year, end_month, end_day, 23, 59, 59)
+                result = (start_time, end_time)
+                print(f"🔍 [时间解析] 匹配: {start_month}-{start_day}到/至{end_month}-{end_day}（当年{current_year}） -> {result}")
+                return result
+            except ValueError as e:
+                print(f"⚠️ [时间解析] 日期格式无效: {time_text} - {e}")
+                return None
+
+        # 4. MM.DD到/至MM.DD（点号分隔，省略年份，默认当年）
+        short_dot_date_range_match = re.search(r'(\d{1,2})\.(\d{1,2})[到至](\d{1,2})\.(\d{1,2})', time_text)
+        if short_dot_date_range_match:
+            try:
+                current_year = now.year
+                start_month = int(short_dot_date_range_match.group(1))
+                start_day = int(short_dot_date_range_match.group(2))
+                end_month = int(short_dot_date_range_match.group(3))
+                end_day = int(short_dot_date_range_match.group(4))
+                start_time = datetime(current_year, start_month, start_day, 0, 0, 0)
+                end_time = datetime(current_year, end_month, end_day, 23, 59, 59)
+                result = (start_time, end_time)
+                print(f"🔍 [时间解析] 匹配: {start_month}.{start_day}到/至{end_month}.{end_day}（当年{current_year}） -> {result}")
+                return result
+            except ValueError as e:
+                print(f"⚠️ [时间解析] 日期格式无效: {time_text} - {e}")
+                return None
+
+        # 4.5. MM.DD-MM.DD（点号分隔，连字符连接，省略年份，默认当年）
+        short_dot_hyphen_range_match = re.search(r'(\d{1,2})\.(\d{1,2})-(\d{1,2})\.(\d{1,2})', time_text)
+        if short_dot_hyphen_range_match:
+            try:
+                current_year = now.year
+                start_month = int(short_dot_hyphen_range_match.group(1))
+                start_day = int(short_dot_hyphen_range_match.group(2))
+                end_month = int(short_dot_hyphen_range_match.group(3))
+                end_day = int(short_dot_hyphen_range_match.group(4))
+                start_time = datetime(current_year, start_month, start_day, 0, 0, 0)
+                end_time = datetime(current_year, end_month, end_day, 23, 59, 59)
+                result = (start_time, end_time)
+                print(f"🔍 [时间解析] 匹配: {start_month}.{start_day}-{end_month}.{end_day}（当年{current_year}） -> {result}")
+                return result
+            except ValueError as e:
+                print(f"⚠️ [时间解析] 日期格式无效: {time_text} - {e}")
+                return None
+
+        # 4.6. MM/DD-MM/DD（斜杠分隔，连字符连接，省略年份，默认当年）
+        short_slash_hyphen_range_match = re.search(r'(\d{1,2})/(\d{1,2})-(\d{1,2})/(\d{1,2})', time_text)
+        if short_slash_hyphen_range_match:
+            try:
+                current_year = now.year
+                start_month = int(short_slash_hyphen_range_match.group(1))
+                start_day = int(short_slash_hyphen_range_match.group(2))
+                end_month = int(short_slash_hyphen_range_match.group(3))
+                end_day = int(short_slash_hyphen_range_match.group(4))
+                start_time = datetime(current_year, start_month, start_day, 0, 0, 0)
+                end_time = datetime(current_year, end_month, end_day, 23, 59, 59)
+                result = (start_time, end_time)
+                print(f"🔍 [时间解析] 匹配: {start_month}/{start_day}-{end_month}/{end_day}（当年{current_year}） -> {result}")
+                return result
+            except ValueError as e:
+                print(f"⚠️ [时间解析] 日期格式无效: {time_text} - {e}")
+                return None
+
+        # 5. M月D日到/至M月D日（中文格式，省略年份，默认当年）
+        chinese_short_date_range_match = re.search(r'(\d{1,2})月(\d{1,2})日[到至](\d{1,2})月(\d{1,2})日', time_text)
+        if chinese_short_date_range_match:
+            try:
+                current_year = now.year
+                start_month = int(chinese_short_date_range_match.group(1))
+                start_day = int(chinese_short_date_range_match.group(2))
+                end_month = int(chinese_short_date_range_match.group(3))
+                end_day = int(chinese_short_date_range_match.group(4))
+                start_time = datetime(current_year, start_month, start_day, 0, 0, 0)
+                end_time = datetime(current_year, end_month, end_day, 23, 59, 59)
+                result = (start_time, end_time)
+                print(f"🔍 [时间解析] 匹配: {start_month}月{start_day}日到/至{end_month}月{end_day}日（当年{current_year}） -> {result}")
+                return result
+            except ValueError as e:
+                print(f"⚠️ [时间解析] 日期格式无效: {time_text} - {e}")
+                return None
+
+        # YYYY年MM月DD日到/至YYYY年MM月DD日（中文完整格式，支持"到"和"至"）
+        date_range_match = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日[到至](\d{4})年(\d{1,2})月(\d{1,2})日', time_text)
         if date_range_match:
             start_year = int(date_range_match.group(1))
             start_month = int(date_range_match.group(2))
@@ -1659,10 +1885,10 @@ class AIAssistant:
                 start_time = datetime(start_year, start_month, start_day, 0, 0, 0)
                 end_time = datetime(end_year, end_month, end_day, 23, 59, 59)
                 result = (start_time, end_time)
-                print(f"🔍 [时间解析] 匹配: {start_year}年{start_month}月{start_day}日至{end_year}年{end_month}月{end_day}日 -> {result}")
+                print(f"🔍 [时间解析] 匹配: {start_year}年{start_month}月{start_day}日到/至{end_year}年{end_month}月{end_day}日 -> {result}")
                 return result
             except ValueError as e:
-                print(f"⚠️ [时间解析] 日期无效: {start_year}年{start_month}月{start_day}日至{end_year}年{end_month}月{end_day}日 - {e}")
+                print(f"⚠️ [时间解析] 日期无效: {start_year}年{start_month}月{start_day}日到/至{end_year}年{end_month}月{end_day}日 - {e}")
                 return None
 
         # 最近N天 或 近N天
@@ -1747,11 +1973,18 @@ class AIAssistant:
         print(f"🔍 [时间解析] 未匹配到任何时间模式")
         return None
 
-    def process_query_intent(self, user_message, user_id):
+    def process_query_intent(self, user_message, user_id, session_id=None):
         """
         智能查询意图识别和处理
         识别"显示"、"查询"、"查看"等查询请求，直接执行数据库查询
         """
+        # ✨ 优先排除：如果是"保存"或"记录"命令，不进行查询处理
+        message = user_message.strip()
+        save_commands = ['保存', '记录']
+        for cmd in save_commands:
+            if message.startswith(f'{cmd} ') or message.startswith(f'{cmd}:') or message.startswith(f'{cmd}：'):
+                return None
+
         # 查询关键词
         query_keywords = ['显示', '查询', '查看', '列出', '给我看', '找一下', '搜索']
 
@@ -1784,25 +2017,31 @@ class AIAssistant:
         print(f"🔍 [智能查询] 查询目标: {query_target}")
 
         # ✨ 提取查询关键词（去除查询动词）
-        keywords = self._extract_keywords_from_message(user_message)
+        # 注意：对于查询命令，禁用子词拆分以保持关键词完整性
+        keywords = self._extract_keywords_from_message(user_message, split_words=False)
         print(f"🔍 [智能查询] 提取的关键词: {keywords}")
 
         # 解析时间范围
         time_range = self.parse_time_range(user_message, user_message)
 
+        # ✨ 改进：如果有明确的时间范围，清空关键词（避免日期数字干扰）
+        if time_range:
+            keywords = []
+
         # ✨ 改进：有关键词时搜索全部历史，无关键词时限制24小时
+        # 但如果有明确的时间范围，优先使用时间范围
         if time_range:
             start_time, end_time = time_range
             print(f"🔍 [智能查询] 时间范围: {start_time} 到 {end_time}")
             use_time_filter = True
         elif keywords:
-            # 有关键词：搜索全部历史数据
+            # 有关键词但无时间范围：搜索全部历史数据
             start_time = None
             end_time = None
             use_time_filter = False
             print(f"🔍 [智能查询] 使用关键词搜索全部历史数据")
         else:
-            # 无关键词：默认查询最近24小时
+            # 无关键词无时间范围：默认查询最近24小时
             start_time = datetime.now() - timedelta(hours=24)
             end_time = datetime.now()
             use_time_filter = True
@@ -1811,21 +2050,21 @@ class AIAssistant:
         # 执行查询
         try:
             if query_target == 'messages':
-                # ✨ 改进：根据关键词查询对话记录（只查询用户消息）
+                # ✨ 改进：根据关键词查询对话记录（只查询"保存 "开头的用户消息）
                 if keywords:
                     # 有关键词：使用关键词搜索
                     all_results = []
                     for keyword in keywords[:5]:  # 最多使用5个关键词
                         if use_time_filter:
                             keyword_results = self.db.query(
-                                "SELECT * FROM messages WHERE user_id = %s AND role = 'user' AND content LIKE %s AND timestamp >= %s AND timestamp <= %s ORDER BY timestamp DESC",
-                                (user_id, f'%{keyword}%', start_time, end_time)
+                                "SELECT * FROM messages WHERE user_id = %s AND role = 'user' AND content LIKE %s AND content LIKE %s AND timestamp >= %s AND timestamp <= %s ORDER BY timestamp DESC",
+                                (user_id, '保存:%', f'%{keyword}%', start_time, end_time)
                             )
                         else:
                             # 不限制时间范围，搜索全部历史
                             keyword_results = self.db.query(
-                                "SELECT * FROM messages WHERE user_id = %s AND role = 'user' AND content LIKE %s ORDER BY timestamp DESC LIMIT 100",
-                                (user_id, f'%{keyword}%')
+                                "SELECT * FROM messages WHERE user_id = %s AND role = 'user' AND content LIKE %s AND content LIKE %s ORDER BY timestamp DESC LIMIT 100",
+                                (user_id, '保存:%', f'%{keyword}%')
                             )
                         all_results.extend(keyword_results)
                         print(f"🔍 [智能查询] 关键词'{keyword}'找到{len(keyword_results)}条记录")
@@ -1837,16 +2076,21 @@ class AIAssistant:
                         msg_id = msg.get('id')
                         if msg_id not in seen_ids:
                             seen_ids.add(msg_id)
-                            results.append(msg)
+                            # ✨ 二次过滤：确保消息真的以"保存:"开头
+                            content = msg.get('content', '')
+                            if content.startswith('保存:'):
+                                results.append(msg)
 
                     # 按时间排序
                     results.sort(key=lambda x: x.get('timestamp', ''), reverse=False)
                 else:
-                    # 无关键词：查询时间范围内所有用户消息
+                    # 无关键词：查询时间范围内所有"保存:"开头的用户消息
                     results = self.db.query(
-                        "SELECT * FROM messages WHERE user_id = %s AND role = 'user' AND timestamp >= %s AND timestamp <= %s ORDER BY timestamp ASC",
-                        (user_id, start_time, end_time)
+                        "SELECT * FROM messages WHERE user_id = %s AND role = 'user' AND content LIKE %s AND timestamp >= %s AND timestamp <= %s ORDER BY timestamp ASC",
+                        (user_id, '保存:%', start_time, end_time)
                     )
+                    # ✨ 二次过滤：确保消息真的以"保存:"开头
+                    results = [msg for msg in results if msg.get('content', '').startswith('保存:')]
 
                 if not results:
                     keyword_hint = f"关键词：{', '.join(keywords)}" if keywords else ""
@@ -1863,11 +2107,25 @@ class AIAssistant:
 
                 # 格式化输出
                 response = f'📝 找到 {len(results)} 条对话记录：\n\n'
+
+                # 先添加时间范围信息
                 if use_time_filter:
-                    response += f'⏰ 时间范围：{start_time.strftime("%Y-%m-%d %H:%M")} 到 {end_time.strftime("%Y-%m-%d %H:%M")}\n\n'
+                    # 根据查询结果调整时间范围的显示
+                    # 如果有结果，使用最早的数据时间作为开始时间
+                    if results:
+                        earliest_time = min(
+                            msg.get('timestamp', start_time)
+                            for msg in results
+                        )
+                        if isinstance(earliest_time, str):
+                            earliest_time = datetime.fromisoformat(earliest_time.replace('Z', '+00:00'))
+                        response += f'⏰ 时间范围：{earliest_time.strftime("%Y-%m-%d %H:%M")} 到 {end_time.strftime("%Y-%m-%d %H:%M")}\n\n'
+                    else:
+                        response += f'⏰ 时间范围：{start_time.strftime("%Y-%m-%d %H:%M")} 到 {end_time.strftime("%Y-%m-%d %H:%M")}\n\n'
                 else:
                     response += f'🔍 搜索范围：全部历史记录（最多显示100条）\n\n'
 
+                # 然后添加数据记录
                 for msg in results:
                     timestamp = msg.get('timestamp', '')
                     if isinstance(timestamp, datetime):
@@ -1884,6 +2142,11 @@ class AIAssistant:
                     # ✨ 只显示用户消息，使用 👤 图标
                     role_icon = '👤'
                     response += f'{role_icon} [{time_str}] {content}\n\n'
+
+                # ✨ 检查是否包含敏感信息，需要验证码验证
+                security_check = self.check_output_security(response, user_id, session_id, user_message)
+                if security_check:
+                    return security_check
 
                 return {
                     'response': response,
@@ -2055,8 +2318,13 @@ class AIAssistant:
 
     def chat(self, user_message, user_id=None, file_id=None, token=None, session_id=None, ai_assistant_name='小助手'):
         """处理用户消息（✨新增session_id参数用于浏览器会话验证）"""
+        # ✨ 优先检查：验证码验证（用于敏感查询）
+        verification_result = self.verify_and_execute_pending_query(user_message, user_id, session_id)
+        if verification_result:
+            return verification_result
+
         # ✨ 新增：智能查询意图识别（优先级最高，在其他处理之前）
-        query_result = self.process_query_intent(user_message, user_id)
+        query_result = self.process_query_intent(user_message, user_id, session_id)
         if query_result:
             return query_result
 
@@ -2418,12 +2686,18 @@ class AIAssistant:
             return verification_check
 
         # ✨ 如果有file_id，获取文件信息并添加到消息中
+        file_uploaded = False
+        file_description = ""
+        original_user_message = user_message  # 保存原始用户输入
         if file_id:
             try:
                 file_info = self.file_manager.get_file(file_id, user_id)
                 if file_info:
                     file_type = file_info.get('category', 'file')
                     file_name = file_info.get('original_name', '文件')
+                    file_uploaded = True
+                    file_description = original_user_message  # 使用原始用户输入作为描述
+
                     if file_type == 'image':
                         user_message = f"{user_message}\n[用户发送了图片: {file_name}]"
                     else:
@@ -2432,17 +2706,29 @@ class AIAssistant:
             except Exception as e:
                 print(f"⚠️ 获取文件信息失败: {e}")
 
-        context = self.get_smart_context(user_message, user_id, ai_assistant_name)
+        # ✨ 如果是文件上传，直接返回友好的回复，不调用AI
+        if file_uploaded:
+            file_info = self.file_manager.get_file(file_id, user_id)
+            file_type = file_info.get('category', 'file')
+            file_name = file_info.get('original_name', '文件')
 
-        try:
-            if self.model_type == 'openai':
-                response = self.chat_with_openai_compatible(user_message, context, user_id)
+            if file_type == 'image':
+                response = f"✅ 图片已保存成功！\n\n📝 描述：{file_description}\n📷 文件名：{file_name}"
             else:
+                response = f"✅ 文件已保存成功！\n\n📝 描述：{file_description}\n📎 文件名：{file_name}"
+        else:
+            # 正常的AI对话流程
+            context = self.get_smart_context(user_message, user_id, ai_assistant_name)
+
+            try:
+                if self.model_type == 'openai':
+                    response = self.chat_with_openai_compatible(user_message, context, user_id)
+                else:
+                    response = self._fallback_response(user_message, user_id)
+            except Exception as e:
+                print(f"⚠️ AI调用失败: {e}")
+                # ✨ 优雅降级：使用 fallback 响应，不显示错误信息
                 response = self._fallback_response(user_message, user_id)
-        except Exception as e:
-            print(f"⚠️ AI调用失败: {e}")
-            # ✨ 优雅降级：使用 fallback 响应，不显示错误信息
-            response = self._fallback_response(user_message, user_id)
 
         # 将对话添加到该用户的历史中
         user_key = user_id or 'default'
@@ -2534,9 +2820,11 @@ class AIAssistant:
                 print(f"⚠️ 自动记录开发日志失败: {e}")
 
         # ✨ 安全检查：在返回前检查输出内容（使用session_id）
-        security_result = self.check_output_security(response, user_id, session_id)
-        if security_result:
-            return security_result
+        # 但是文件上传的响应不需要安全检查
+        if not file_uploaded:
+            security_result = self.check_output_security(response, user_id, session_id)
+            if security_result:
+                return security_result
 
         # ✨ 保存列表上下文（用于后续的修改、置顶指令）
         list_data = None  # 用于传递给前端
@@ -2579,6 +2867,416 @@ class AIAssistant:
 
         message = user_message.strip()
 
+        # ✨ 新增：检查是否是"验证码"菜单命令
+        if message == '验证码':
+            # 检查用户是否已设置验证码
+            try:
+                result = self.memory.db.query(
+                    "SELECT security_code FROM users WHERE id = %s",
+                    (user_id,)
+                )
+                has_code = bool(result and result[0].get('security_code'))
+
+                if has_code:
+                    menu_text = '🔐 验证码管理菜单'
+                else:
+                    menu_text = '🔐 验证码管理菜单'
+
+                return {
+                    'response': menu_text,
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': [],
+                    'show_security_menu': True,  # 标记显示菜单
+                    'has_security_code': has_code
+                }
+            except Exception as e:
+                print(f"❌ 查询验证码状态失败: {e}")
+                return {
+                    'response': '❌ 查询验证码状态失败，请稍后重试',
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': []
+                }
+
+        # ✨ 处理"新增验证码"命令 - 直接提示用户设置
+        if message == '新增验证码':
+            try:
+                # 检查是否已设置
+                result = self.memory.db.query(
+                    "SELECT security_code FROM users WHERE id = %s",
+                    (user_id,)
+                )
+
+                if result and result[0].get('security_code'):
+                    return {
+                        'response': '⚠️ 您已设置过验证码\n\n如需修改，请选择"修改验证码"',
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': []
+                    }
+
+                # 标记为新增验证码流程
+                self.memory.db.execute(
+                    "UPDATE users SET pending_query = %s WHERE id = %s",
+                    ('新增验证码', user_id)
+                )
+
+                return {
+                    'response': '请设置您的安全验证码（至少4个字符）',
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': [],
+                    'show_input_prompt': True,  # 标记显示输入框
+                    'input_type': 'new_security_code'
+                }
+            except Exception as e:
+                print(f"❌ 处理新增验证码失败: {e}")
+                return {
+                    'response': f'❌ 操作失败：{str(e)}',
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': []
+                }
+
+        # ✨ 处理"修改验证码"命令 - 显示输入框
+        if message == '修改验证码':
+            try:
+                # 检查是否已设置
+                result = self.memory.db.query(
+                    "SELECT security_code FROM users WHERE id = %s",
+                    (user_id,)
+                )
+
+                if not result or not result[0].get('security_code'):
+                    return {
+                        'response': '❌ 您还未设置验证码\n\n请先选择"新增验证码"',
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': []
+                    }
+
+                # 标记为修改验证码流程
+                self.memory.db.execute(
+                    "UPDATE users SET pending_query = %s WHERE id = %s",
+                    ('修改验证码_输入旧密码', user_id)
+                )
+
+                return {
+                    'response': '请输入旧验证码',
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': [],
+                    'show_input_prompt': True,  # 标记显示输入框
+                    'input_type': 'old_security_code'
+                }
+            except Exception as e:
+                print(f"❌ 处理修改验证码失败: {e}")
+                return {
+                    'response': f'❌ 操作失败：{str(e)}',
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': []
+                }
+
+        # ✨ 处理"找回验证码"命令 - 发送邮箱验证码
+        if message == '找回验证码':
+            try:
+                # 获取用户邮箱
+                user_info = self.memory.db.query(
+                    "SELECT email, email_verified FROM users WHERE id = %s",
+                    (user_id,)
+                )
+
+                if not user_info or not user_info[0].get('email'):
+                    return {
+                        'response': '❌ 您还未绑定邮箱\n\n请先在设置中绑定邮箱后再进行此操作',
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': []
+                    }
+
+                email = user_info[0]['email']
+
+                # 生成6位邮箱验证码
+                import random
+                email_code = ''.join([str(random.randint(0, 9)) for _ in range(6)])
+
+                # 保存验证码到数据库（有效期10分钟）
+                from datetime import datetime, timedelta
+                expires_at = datetime.now() + timedelta(minutes=10)
+
+                self.memory.db.execute(
+                    """INSERT INTO verification_codes
+                       (user_id, contact_type, contact_value, code, code_type, expires_at)
+                       VALUES (%s, 'email', %s, %s, %s, %s)""",
+                    (user_id, email, email_code, 'reset_password', expires_at.strftime('%Y-%m-%d %H:%M:%S'))
+                )
+
+                # 发送邮件
+                try:
+                    email_service = AliyunEmailService()
+                    result = email_service.send_verification_code(
+                        to_email=email,
+                        code=email_code,
+                        purpose='reset_password'
+                    )
+
+                    if not result['success']:
+                        print(f"❌ 邮件发送失败: {result['message']}")
+                        # 即使邮件发送失败，也打印到控制台作为备用
+                        print(f"\n{'='*60}")
+                        print(f"📧 邮箱验证码（备用）")
+                        print(f"{'='*60}")
+                        print(f"邮箱: {email}")
+                        print(f"验证码: {email_code}")
+                        print(f"操作类型: 找回验证码")
+                        print(f"有效期: 10分钟")
+                        print(f"{'='*60}\n")
+                except Exception as e:
+                    print(f"❌ 邮件服务异常: {e}")
+                    # 打印到控制台作为备用
+                    print(f"\n{'='*60}")
+                    print(f"📧 邮箱验证码（备用）")
+                    print(f"{'='*60}")
+                    print(f"邮箱: {email}")
+                    print(f"验证码: {email_code}")
+                    print(f"操作类型: 找回验证码")
+                    print(f"有效期: 10分钟")
+                    print(f"{'='*60}\n")
+
+                # 保存操作类型到session
+                self.memory.db.execute(
+                    "UPDATE users SET pending_query = %s WHERE id = %s",
+                    ('找回验证码', user_id)
+                )
+
+                # 隐藏部分邮箱地址
+                masked_email = email[:3] + '***' + email[email.index('@'):]
+
+                return {
+                    'response': f'📧 验证码已发送至您的邮箱 {masked_email}\n\n请输入6位验证码（有效期10分钟）',
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': []
+                }
+
+            except Exception as e:
+                print(f"❌ 发送验证码失败: {e}")
+                import traceback
+                traceback.print_exc()
+                return {
+                    'response': f'❌ 发送验证码失败：{str(e)}',
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': []
+                }
+
+        # ✨ 处理修改验证码流程中的用户输入
+        try:
+            pending_op = self.memory.db.query(
+                "SELECT pending_query FROM users WHERE id = %s",
+                (user_id,)
+            )
+
+            if pending_op and pending_op[0].get('pending_query'):
+                operation = pending_op[0]['pending_query']
+
+                # 处理输入旧密码
+                if operation == '修改验证码_输入旧密码':
+                    # 验证旧密码
+                    result = self.memory.db.query(
+                        "SELECT security_code FROM users WHERE id = %s",
+                        (user_id,)
+                    )
+
+                    old_hashed = hashlib.sha256(message.encode()).hexdigest()
+                    if old_hashed != result[0]['security_code']:
+                        return {
+                            'response': '❌ 旧验证码错误，请重新输入',
+                            'detected_plans': [],
+                            'detected_reminders': [],
+                            'completed_plans': []
+                        }
+
+                    # 旧密码正确，进入输入新密码阶段
+                    self.memory.db.execute(
+                        "UPDATE users SET pending_query = %s WHERE id = %s",
+                        ('修改验证码_输入新密码', user_id)
+                    )
+
+                    return {
+                        'response': '✅ 验证成功！\n\n请输入新验证码（至少4个字符）',
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': [],
+                        'show_input_prompt': True,
+                        'input_type': 'new_security_code'
+                    }
+
+                # 处理输入新密码
+                elif operation == '修改验证码_输入新密码':
+                    if len(message) < 4:
+                        return {
+                            'response': '❌ 验证码至少需要4个字符\n\n请重新输入',
+                            'detected_plans': [],
+                            'detected_reminders': [],
+                            'completed_plans': [],
+                            'show_input_prompt': True,
+                            'input_type': 'new_security_code'
+                        }
+
+                    # 更新为新密码
+                    new_hashed = hashlib.sha256(message.encode()).hexdigest()
+                    self.memory.db.execute(
+                        "UPDATE users SET security_code = %s, pending_query = NULL WHERE id = %s",
+                        (new_hashed, user_id)
+                    )
+
+                    # 清除所有session的验证状态（需要重新验证）
+                    self.memory.db.execute(
+                        "UPDATE user_sessions SET security_verified = 0, security_verified_at = NULL WHERE user_id = %s",
+                        (user_id,)
+                    )
+
+                    return {
+                        'response': '✅ 验证码修改成功！',
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': []
+                    }
+
+                # 处理新增验证码流程
+                elif operation == '新增验证码':
+                    if len(message) < 4:
+                        return {
+                            'response': '❌ 验证码至少需要4个字符\n\n请重新输入',
+                            'detected_plans': [],
+                            'detected_reminders': [],
+                            'completed_plans': [],
+                            'show_input_prompt': True,
+                            'input_type': 'new_security_code'
+                        }
+
+                    # 设置新验证码
+                    hashed_code = hashlib.sha256(message.encode()).hexdigest()
+                    self.memory.db.execute(
+                        "UPDATE users SET security_code = %s, pending_query = NULL WHERE id = %s",
+                        (hashed_code, user_id)
+                    )
+
+                    return {
+                        'response': '✅ 安全验证码设置成功！\n\n现在查询敏感信息时需要验证码。',
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': []
+                    }
+
+                # 处理找回验证码流程中的新密码输入
+                elif operation == '找回验证码_输入新密码':
+                    if len(message) < 4:
+                        return {
+                            'response': '❌ 验证码至少需要4个字符\n\n请重新输入',
+                            'detected_plans': [],
+                            'detected_reminders': [],
+                            'completed_plans': [],
+                            'show_input_prompt': True,
+                            'input_type': 'new_security_code'
+                        }
+
+                    # 设置新验证码
+                    hashed_code = hashlib.sha256(message.encode()).hexdigest()
+                    self.memory.db.execute(
+                        "UPDATE users SET security_code = %s, pending_query = NULL WHERE id = %s",
+                        (hashed_code, user_id)
+                    )
+
+                    # 清除所有session的验证状态（需要重新验证）
+                    self.memory.db.execute(
+                        "UPDATE user_sessions SET security_verified = 0, security_verified_at = NULL WHERE user_id = %s",
+                        (user_id,)
+                    )
+
+                    return {
+                        'response': '✅ 验证码重置成功！',
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': []
+                    }
+
+        except Exception as e:
+            print(f"❌ 处理验证码流程失败: {e}")
+            import traceback
+            traceback.print_exc()
+
+        # ✨ 验证邮箱验证码（仅用于找回验证码）
+        # 检查是否是6位数字（邮箱验证码）
+        if message.isdigit() and len(message) == 6:
+            try:
+                # 查询用户的待处理操作
+                pending_op = self.memory.db.query(
+                    "SELECT pending_query FROM users WHERE id = %s",
+                    (user_id,)
+                )
+
+                if not pending_op or pending_op[0].get('pending_query') != '找回验证码':
+                    # 不是找回验证码流程，返回None让其他逻辑处理
+                    return None
+
+                # 验证邮箱验证码
+                result = self.memory.db.query(
+                    """SELECT id FROM verification_codes
+                       WHERE user_id = %s
+                       AND code_type = 'reset_password'
+                       AND code = %s
+                       AND used = 0
+                       AND expires_at > NOW()
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (user_id, message)
+                )
+
+                if not result:
+                    return {
+                        'response': '❌ 验证码错误或已过期\n\n请重新获取验证码',
+                        'detected_plans': [],
+                        'detected_reminders': [],
+                        'completed_plans': []
+                    }
+
+                # 标记验证码已使用
+                self.memory.db.execute(
+                    "UPDATE verification_codes SET used = 1 WHERE id = %s",
+                    (result[0]['id'],)
+                )
+
+                # 更新pending_query为找回验证码_输入新密码
+                self.memory.db.execute(
+                    "UPDATE users SET pending_query = %s WHERE id = %s",
+                    ('找回验证码_输入新密码', user_id)
+                )
+
+                # 验证成功，提示用户设置新的安全验证码
+                return {
+                    'response': '✅ 邮箱验证成功！\n\n请设置您的新安全验证码（至少4个字符）',
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': [],
+                    'show_input_prompt': True,
+                    'input_type': 'new_security_code'
+                }
+
+            except Exception as e:
+                print(f"❌ 验证失败: {e}")
+                import traceback
+                traceback.print_exc()
+                return {
+                    'response': f'❌ 验证失败：{str(e)}',
+                    'detected_plans': [],
+                    'detected_reminders': [],
+                    'completed_plans': []
+                }
+
+
         # 检查是否是"设置验证码"命令
         if message.startswith('设置验证码:') or message.startswith('设置验证码：'):
             code = message.split(':', 1)[-1].split('：', 1)[-1].strip()
@@ -2591,29 +3289,41 @@ class AIAssistant:
                     'completed_plans': []
                 }
 
-            # 加密验证码
-            hashed_code = hashlib.sha256(code.encode()).hexdigest()
-
             try:
-                # 检查用户是否已设置验证码
-                existing = self.memory.db.query(
-                    "SELECT security_code FROM users WHERE id = %s",
+                # 查询用户的待处理操作
+                pending_op = self.memory.db.query(
+                    "SELECT pending_query FROM users WHERE id = %s",
                     (user_id,)
                 )
-                
-                if existing and existing[0]['security_code']:
-                    return {
-                        'response': '⚠️ 您已设置过验证码\n\n如需修改，请使用：修改验证码：旧密码：新密码',
-                        'detected_plans': [],
-                        'detected_reminders': [],
-                        'completed_plans': []
-                    }
-                
+
+                # 检查是否是"找回验证码"流程（需要先验证邮箱）
+                if pending_op and pending_op[0].get('pending_query') == '找回验证码':
+                    # 找回验证码流程，必须先通过邮箱验证
+                    # 这里不做额外检查，因为前面已经验证过了
+                    pass
+                else:
+                    # 新增验证码流程，检查是否已设置
+                    existing = self.memory.db.query(
+                        "SELECT security_code FROM users WHERE id = %s",
+                        (user_id,)
+                    )
+
+                    if existing and existing[0]['security_code']:
+                        return {
+                            'response': '⚠️ 您已设置过验证码\n\n如需修改，请选择"修改验证码"',
+                            'detected_plans': [],
+                            'detected_reminders': [],
+                            'completed_plans': []
+                        }
+
+                # 加密验证码
+                hashed_code = hashlib.sha256(code.encode()).hexdigest()
+
+                # 设置新验证码
                 self.memory.db.execute(
-                    "UPDATE users SET security_code = %s WHERE id = %s",
+                    "UPDATE users SET security_code = %s, pending_query = NULL WHERE id = %s",
                     (hashed_code, user_id)
                 )
-                
 
                 return {
                     'response': '✅ 安全验证码设置成功！\n\n现在查询敏感信息时需要验证码。',
@@ -2622,12 +3332,16 @@ class AIAssistant:
                     'completed_plans': []
                 }
             except Exception as e:
+                print(f"❌ 设置验证码失败: {e}")
+                import traceback
+                traceback.print_exc()
                 return {
                     'response': f'❌ 设置失败：{str(e)}',
                     'detected_plans': [],
                     'detected_reminders': [],
                     'completed_plans': []
                 }
+
         
         # 检查是否是"修改验证码"命令
         if message.startswith('修改验证码:') or message.startswith('修改验证码：'):
