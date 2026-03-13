@@ -1,0 +1,81 @@
+{
+  "name": "ai-assistant-desktop",
+  "version": "1.0.0",
+  "description": "AI Assistant Desktop Client for macOS",
+  "main": "public/electron.js",
+  "homepage": "./",
+  "author": "AI Assistant Team",
+  "license": "MIT",
+  "scripts": {
+    "react-start": "react-scripts start",
+    "react-build": "react-scripts build",
+    "react-test": "react-scripts test",
+    "react-eject": "react-scripts eject",
+    "electron-start": "wait-on http://localhost:3000 && electron .",
+    "start": "concurrently \"npm run react-start\" \"wait-on http://localhost:3000 && sleep 5 && npm run electron-start\"",
+    "build": "npm run react-build && electron-builder",
+    "build-mac": "npm run react-build && electron-builder --mac",
+    "build-dmg": "npm run react-build && electron-builder --mac dmg",
+    "dev": "concurrently \"npm run react-start\" \"wait-on http://localhost:3000 && sleep 5 && electron .\"",
+    "eject": "react-scripts eject"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.20.0",
+    "react-scripts": "5.0.1"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "electron": "^27.0.0",
+    "electron-builder": "^24.6.4",
+    "wait-on": "^7.0.1"
+  },
+  "build": {
+    "appId": "com.ai-assistant.desktop",
+    "productName": "AI Assistant",
+    "files": [
+      "build/**/*",
+      "public/electron.js",
+      "node_modules/**/*"
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "public/icon.icns"
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    }
+  },
+  "eslintConfig": {
+    "extends": "react-app"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
