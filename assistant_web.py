@@ -66,7 +66,11 @@ account_manager = AccountManager()
 daily_record_manager = DailyRecordManager()
 
 # 初始化数据库查询管理器
-db_query_manager = DatabaseQueryManager()
+try:
+    db_query_manager = DatabaseQueryManager()
+except Exception as e:
+    print(f"⚠️ 数据库查询管理器初始化失败: {e}")
+    db_query_manager = None
 
 def extract_video_thumbnail(video_path, thumbnail_path, size="200x200"):
     """提取视频第一帧作为缩略图
@@ -1311,6 +1315,10 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
     def handle_db_query(self, user_id):
         """处理数据库查询请求"""
+        if not db_query_manager:
+            self.send_json({'success': False, 'error': '数据库查询管理器未初始化，请检查数据库连接'})
+            return
+
         from urllib.parse import urlparse, parse_qs
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query) if parsed.query else {}
@@ -1353,6 +1361,10 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
     def handle_db_compare(self, user_id):
         """处理数据对比请求"""
+        if not db_query_manager:
+            self.send_json({'success': False, 'error': '数据库查询管理器未初始化，请检查数据库连接'})
+            return
+
         from urllib.parse import urlparse, parse_qs
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query) if parsed.query else {}
@@ -1405,6 +1417,10 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
     def handle_db_stats(self, user_id):
         """处理统计信息请求"""
+        if not db_query_manager:
+            self.send_json({'success': False, 'error': '数据库查询管理器未初始化，请检查数据库连接'})
+            return
+
         try:
             stats = db_query_manager.get_statistics(user_id)
             self.send_json({

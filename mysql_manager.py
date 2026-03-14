@@ -54,7 +54,8 @@ class MySQLManager:
             print(f"✅ MySQL connected: {self.config['database']}")
         except Exception as e:
             print(f"❌ MySQL connection failed: {e}")
-            raise
+            self.connection = None
+            # 不抛出异常，允许程序继续运行
     
     def ensure_connection(self):
         """确保数据库连接有效"""

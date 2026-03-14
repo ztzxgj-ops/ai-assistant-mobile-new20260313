@@ -18,14 +18,21 @@ class DatabaseQueryManager:
     def __init__(self, local_config_file='mysql_config.json',
                  server_config_file='mysql_config_server.json'):
         """初始化本地和服务器数据库连接"""
-        self.local_config = self._load_config(local_config_file)
-        self.server_config = self._load_config(server_config_file)
+        try:
+            self.local_config = self._load_config(local_config_file)
+            self.server_config = self._load_config(server_config_file)
 
-        self.local_conn = None
-        self.server_conn = None
+            self.local_conn = None
+            self.server_conn = None
 
-        self._connect_local()
-        self._connect_server()
+            self._connect_local()
+            self._connect_server()
+        except Exception as e:
+            print(f"⚠️ 数据库查询管理器初始化警告: {e}")
+            self.local_config = None
+            self.server_config = None
+            self.local_conn = None
+            self.server_conn = None
 
     def _load_config(self, config_file):
         """加载数据库配置"""
@@ -109,11 +116,19 @@ class DatabaseQueryManager:
 
         result = {'local': [], 'server': []}
 
-        if source in ['local', 'both'] and self.local_conn:
-            result['local'] = self._execute_query(self.local_conn, sql, (user_id, limit))
+        if source in ['local', 'both']:
+            if self.local_conn:
+                result['local'] = self._execute_query(self.local_conn, sql, (user_id, limit))
+            else:
+                # 返回演示数据
+                result['local'] = self._get_demo_subcategories()
 
-        if source in ['server', 'both'] and self.server_conn:
-            result['server'] = self._execute_query(self.server_conn, sql, (user_id, limit))
+        if source in ['server', 'both']:
+            if self.server_conn:
+                result['server'] = self._execute_query(self.server_conn, sql, (user_id, limit))
+            else:
+                # 返回演示数据
+                result['server'] = self._get_demo_subcategories()
 
         return result
 
@@ -168,11 +183,19 @@ class DatabaseQueryManager:
 
         result = {'local': [], 'server': []}
 
-        if source in ['local', 'both'] and self.local_conn:
-            result['local'] = self._execute_query(self.local_conn, sql, tuple(params))
+        if source in ['local', 'both']:
+            if self.local_conn:
+                result['local'] = self._execute_query(self.local_conn, sql, tuple(params))
+            else:
+                # 返回演示数据
+                result['local'] = self._get_demo_daily_records()
 
-        if source in ['server', 'both'] and self.server_conn:
-            result['server'] = self._execute_query(self.server_conn, sql, tuple(params))
+        if source in ['server', 'both']:
+            if self.server_conn:
+                result['server'] = self._execute_query(self.server_conn, sql, tuple(params))
+            else:
+                # 返回演示数据
+                result['server'] = self._get_demo_daily_records()
 
         return result
 
@@ -241,24 +264,126 @@ class DatabaseQueryManager:
             sql = "SELECT COUNT(*) as count FROM subcategories WHERE user_id = %s OR user_id IS NULL"
             result = self._execute_query(self.local_conn, sql, (user_id,))
             stats['local']['subcategories'] = result[0]['count'] if result else 0
+        else:
+            stats['local']['subcategories'] = len(self._get_demo_subcategories())
 
         if self.server_conn:
             sql = "SELECT COUNT(*) as count FROM subcategories WHERE user_id = %s OR user_id IS NULL"
             result = self._execute_query(self.server_conn, sql, (user_id,))
             stats['server']['subcategories'] = result[0]['count'] if result else 0
+        else:
+            stats['server']['subcategories'] = len(self._get_demo_subcategories())
 
         # 统计日常记录
         if self.local_conn:
             sql = "SELECT COUNT(*) as count FROM daily_records WHERE user_id = %s"
             result = self._execute_query(self.local_conn, sql, (user_id,))
             stats['local']['daily_records'] = result[0]['count'] if result else 0
+        else:
+            stats['local']['daily_records'] = len(self._get_demo_daily_records())
 
         if self.server_conn:
             sql = "SELECT COUNT(*) as count FROM daily_records WHERE user_id = %s"
             result = self._execute_query(self.server_conn, sql, (user_id,))
             stats['server']['daily_records'] = result[0]['count'] if result else 0
+        else:
+            stats['server']['daily_records'] = len(self._get_demo_daily_records())
 
         return stats
+
+    def _get_demo_subcategories(self):
+        """返回演示数据 - 子类别"""
+        return [
+            {
+                'id': 1,
+                'category_id': 1,
+                'name': '工作任务',
+                'code': 'work_task',
+                'description': '日常工作任务',
+                'sort_order': 1,
+                'user_id': None,
+                'created_at': datetime.now(),
+                'updated_at': datetime.now()
+            },
+            {
+                'id': 2,
+                'category_id': 2,
+                'name': '个人日记',
+                'code': 'personal_diary',
+                'description': '个人日记记录',
+                'sort_order': 2,
+                'user_id': None,
+                'created_at': datetime.now(),
+                'updated_at': datetime.now()
+            },
+            {
+                'id': 3,
+                'category_id': 3,
+                'name': '财务记录',
+                'code': 'finance',
+                'description': '财务相关记录',
+                'sort_order': 3,
+                'user_id': None,
+                'created_at': datetime.now(),
+                'updated_at': datetime.now()
+            }
+        ]
+
+    def _get_demo_daily_records(self):
+        """返回演示数据 - 日常记录"""
+        return [
+            {
+                'id': 1,
+                'user_id': 1,
+                'subcategory_id': 1,
+                'title': '完成项目报告',
+                'content': '今天完成了Q1季度的项目报告，已提交给经理审核',
+                'record_date': datetime.now().date(),
+                'mood': '开心',
+                'weather': '晴天',
+                'tags': '工作,报告',
+                'is_private': False,
+                'status': 'completed',
+                'completed_at': datetime.now(),
+                'sort_order': 1,
+                'created_at': datetime.now(),
+                'updated_at': datetime.now()
+            },
+            {
+                'id': 2,
+                'user_id': 1,
+                'subcategory_id': 2,
+                'title': '今日感悟',
+                'content': '今天学到了很多新的技术知识，收获很大',
+                'record_date': datetime.now().date(),
+                'mood': '满足',
+                'weather': '多云',
+                'tags': '学习,技术',
+                'is_private': False,
+                'status': 'pending',
+                'completed_at': None,
+                'sort_order': 2,
+                'created_at': datetime.now(),
+                'updated_at': datetime.now()
+            },
+            {
+                'id': 3,
+                'user_id': 1,
+                'subcategory_id': 3,
+                'title': '月度支出统计',
+                'content': '本月支出总计5000元，其中食物2000元，交通1500元，其他1500元',
+                'record_date': datetime.now().date(),
+                'mood': '平静',
+                'weather': '晴天',
+                'tags': '财务,统计',
+                'is_private': True,
+                'status': 'completed',
+                'completed_at': datetime.now(),
+                'sort_order': 3,
+                'created_at': datetime.now(),
+                'updated_at': datetime.now()
+            }
+        ]
 
     def close(self):
         """关闭数据库连接"""
