@@ -1,5 +1,24 @@
 [
   {
+    "id": 113,
+    "timestamp": "2026-03-14 09:58:27",
+    "backup_dir": "backup-20260314-095645",
+    "status": "success",
+    "notes": "变更: 添加系统架构分析文档：数据存储模式规则执行情况评估; 更新 Flutter 子模块：修复列表显示中的多个标题行问题; 更新 Flutter 子模块：修复编辑窗口保存功能 (共18个提交)",
+    "error": "",
+    "git_commit": "d157d8c548f7b479eb9f81feb1b308419bf9eea5",
+    "files": {
+      "code": {
+        "name": "ai-assistant-backup-20260314-095645.tar.gz",
+        "size": 215682896
+      },
+      "database": {
+        "name": "ai_assistant_db_backup_20260314-095645.sql",
+        "size": 1354576
+      }
+    }
+  },
+  {
     "id": 112,
     "timestamp": "2026-03-12 13:48:21",
     "backup_dir": "backup-20260312-134552",
