@@ -1,5 +1,6 @@
 # 敏感配置文件（保留示例文件）
 mysql_config.json
+mysql_config_server.json
 ai_config.json
 reminder_config.json
 aliyun_email_config.json

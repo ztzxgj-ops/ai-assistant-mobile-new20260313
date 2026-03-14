@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据库查询工具</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .card-title {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #333;
+        }
+
+        .query-form {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-group label {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .form-group select,
+        .form-group input {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+        }
+
+        .btn-secondary {
+            background: #48bb78;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #38a169;
+        }
+
+        .btn-info {
+            background: #4299e1;
+            color: white;
+        }
+
+        .btn-info:hover {
+            background: #3182ce;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+        }
+
+        .stat-card h3 {
+            font-size: 14px;
+            opacity: 0.9;
+            margin-bottom: 10px;
+        }
+
+        .stat-card .value {
+            font-size: 32px;
+            font-weight: 600;
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            font-size: 13px;
+        }
+
+        .data-table th,
+        .data-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+
+        .data-table th {
+            background: #f7fafc;
+            font-weight: 600;
+            color: #4a5568;
+        }
+
+        .data-table tr:hover {
+            background: #f7fafc;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .badge-local {
+            background: #bee3f8;
+            color: #2c5282;
+        }
+
+        .badge-server {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+
+        .badge-both {
+            background: #feebc8;
+            color: #7c2d12;
+        }
+
+        .badge-diff {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .empty {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+
+        .comparison-summary {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .summary-item {
+            text-align: center;
+            padding: 15px;
+            background: #f7fafc;
+            border-radius: 8px;
+        }
+
+        .summary-item .label {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .summary-item .value {
+            font-size: 24px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .table-container {
+            overflow-x: auto;
+        }
+
+        .diff-highlight {
+            background: #fff5f5;
+            color: #c53030;
+            font-weight: 500;
+        }
+
+        .text-truncate {
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        @media (max-width: 768px) {
+            .comparison-summary {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .query-form {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 数据库查询工具</h1>
+            <p>查询和对比本地与服务器数据库</p>
+        </div>
+
+        <!-- 统计信息 -->
+        <div class="card">
+            <div class="card-title">📊 数据统计</div>
+            <div class="stats-grid" id="statsGrid">
+                <div class="stat-card">
+                    <h3>本地 - 子类别</h3>
+                    <div class="value" id="localSubcategories">-</div>
+                </div>
+                <div class="stat-card">
+                    <h3>本地 - 日常记录</h3>
+                    <div class="value" id="localRecords">-</div>
+                </div>
+                <div class="stat-card">
+                    <h3>服务器 - 子类别</h3>
+                    <div class="value" id="serverSubcategories">-</div>
+                </div>
+                <div class="stat-card">
+                    <h3>服务器 - 日常记录</h3>
+                    <div class="value" id="serverRecords">-</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 查询表单 -->
+        <div class="card">
+            <div class="card-title">🔎 查询条件</div>
+            <div class="query-form">
+                <div class="form-group">
+                    <label>数据表</label>
+                    <select id="tableSelect">
+                        <option value="subcategories">子类别 (subcategories)</option>
+                        <option value="daily_records">日常记录 (daily_records)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>数据源</label>
+                    <select id="sourceSelect">
+                        <option value="both">本地 + 服务器</option>
+                        <option value="local">仅本地</option>
+                        <option value="server">仅服务器</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>时间范围</label>
+                    <select id="timeRangeSelect">
+                        <option value="all">全部</option>
+                        <option value="24h">最近24小时</option>
+                        <option value="7d">最近7天</option>
+                        <option value="30d">最近30天</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>查询条数</label>
+                    <select id="limitSelect">
+                        <option value="10">10条</option>
+                        <option value="50">50条</option>
+                        <option value="100" selected>100条</option>
+                        <option value="500">500条</option>
+                    </select>
+                </div>
+            </div>
+            <div class="button-group">
+                <button class="btn btn-primary" onclick="queryData()">🔍 查询数据</button>
+                <button class="btn btn-secondary" onclick="compareData()">⚖️ 对比数据</button>
+                <button class="btn btn-info" onclick="loadStats()">📊 刷新统计</button>
+            </div>
+        </div>
+
+        <!-- 对比结果摘要 -->
+        <div class="card" id="comparisonCard" style="display: none;">
+            <div class="card-title">⚖️ 对比结果</div>
+            <div class="comparison-summary">
+                <div class="summary-item">
+                    <div class="label">仅本地</div>
+                    <div class="value" id="onlyLocalCount">0</div>
+                </div>
+                <div class="summary-item">
+                    <div class="label">仅服务器</div>
+                    <div class="value" id="onlyServerCount">0</div>
+                </div>
+                <div class="summary-item">
+                    <div class="label">两边一致</div>
+                    <div class="value" id="bothCount">0</div>
+                </div>
+                <div class="summary-item">
+                    <div class="label">内容不同</div>
+                    <div class="value" id="differentCount">0</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 数据展示 -->
+        <div class="card">
+            <div class="card-title">📋 查询结果</div>
+            <div class="table-container" id="resultContainer">
+                <div class="empty">请选择查询条件并点击"查询数据"</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 获取Token
+        function getToken() {
+            return localStorage.getItem('token');
+        }
+
+        // 检查登录状态
+        function checkLogin() {
+            const token = getToken();
+            if (!token) {
+                alert('请先登录');
+                window.location.href = '/login';
+                return false;
+            }
+            return true;
+        }
+
+        // API请求
+        async function apiRequest(url, options = {}) {
+            const token = getToken();
+            const headers = {
+                'Authorization': `Bearer ${token}`,
+                ...options.headers
+            };
+
+            const response = await fetch(url, {
+                ...options,
+                headers
+            });
+
+            if (response.status === 401) {
+                alert('登录已过期，请重新登录');
+                window.location.href = '/login';
+                return null;
+            }
+
+            return await response.json();
+        }
+
+        // 加载统计信息
+        async function loadStats() {
+            if (!checkLogin()) return;
+
+            document.getElementById('localSubcategories').textContent = '加载中...';
+            document.getElementById('localRecords').textContent = '加载中...';
+            document.getElementById('serverSubcategories').textContent = '加载中...';
+            document.getElementById('serverRecords').textContent = '加载中...';
+
+            const result = await apiRequest('/api/db/stats');
+            if (!result || !result.success) {
+                alert('加载统计信息失败');
+                return;
+            }
+
+            const stats = result.stats;
+            document.getElementById('localSubcategories').textContent = stats.local.subcategories;
+            document.getElementById('localRecords').textContent = stats.local.daily_records;
+            document.getElementById('serverSubcategories').textContent = stats.server.subcategories;
+            document.getElementById('serverRecords').textContent = stats.server.daily_records;
+        }
+
+        // 查询数据
+        async function queryData() {
+            if (!checkLogin()) return;
+
+            const table = document.getElementById('tableSelect').value;
+            const source = document.getElementById('sourceSelect').value;
+            const timeRange = document.getElementById('timeRangeSelect').value;
+            const limit = document.getElementById('limitSelect').value;
+
+            const container = document.getElementById('resultContainer');
+            container.innerHTML = '<div class="loading">加载中...</div>';
+
+            let url = `/api/db/query?table=${table}&source=${source}&limit=${limit}`;
+            if (table === 'daily_records') {
+                url += `&time_range=${timeRange}`;
+            }
+
+            const result = await apiRequest(url);
+            if (!result || !result.success) {
+                container.innerHTML = `<div class="empty">查询失败: ${result?.error || '未知错误'}</div>`;
+                return;
+            }
+
+            displayQueryResults(result.data, table);
+        }
+
+        // 对比数据
+        async function compareData() {
+            if (!checkLogin()) return;
+
+            const table = document.getElementById('tableSelect').value;
+            const limit = document.getElementById('limitSelect').value;
+
+            const container = document.getElementById('resultContainer');
+            container.innerHTML = '<div class="loading">对比中...</div>';
+
+            const url = `/api/db/compare?table=${table}&limit=${limit}`;
+
+            const result = await apiRequest(url);
+            if (!result || !result.success) {
+                container.innerHTML = `<div class="empty">对比失败: ${result?.error || '未知错误'}</div>`;
+                return;
+            }
+
+            displayComparisonResults(result.comparison, result.summary, table);
+        }
+
+        // 显示查询结果
+        function displayQueryResults(data, table) {
+            const container = document.getElementById('resultContainer');
+            let html = '';
+
+            // 本地数据
+            if (data.local && data.local.length > 0) {
+                html += `<h3 style="margin-top: 20px; margin-bottom: 10px;">📍 本地数据 (${data.local.length}条)</h3>`;
+                html += createDataTable(data.local, table, 'local');
+            } else if (data.local) {
+                html += '<div class="empty">本地无数据</div>';
+            }
+
+            // 服务器数据
+            if (data.server && data.server.length > 0) {
+                html += `<h3 style="margin-top: 20px; margin-bottom: 10px;">☁️ 服务器数据 (${data.server.length}条)</h3>`;
+                html += createDataTable(data.server, table, 'server');
+            } else if (data.server) {
+                html += '<div class="empty">服务器无数据</div>';
+            }
+
+            if (!data.local?.length && !data.server?.length) {
+                html = '<div class="empty">暂无数据</div>';
+            }
+
+            container.innerHTML = html;
+        }
+
+        // 显示对比结果
+        function displayComparisonResults(comparison, summary, table) {
+            const container = document.getElementById('resultContainer');
+            document.getElementById('comparisonCard').style.display = 'block';
+            document.getElementById('onlyLocalCount').textContent = summary.only_local;
+            document.getElementById('onlyServerCount').textContent = summary.only_server;
+            document.getElementById('bothCount').textContent = summary.both;
+            document.getElementById('differentCount').textContent = summary.different;
+
+            let html = '';
+
+            // 仅本地
+            if (comparison.only_local && comparison.only_local.length > 0) {
+                html += `<h3 style="margin-top: 20px; margin-bottom: 10px; color: #2c5282;">📍 仅本地 (${comparison.only_local.length}条)</h3>`;
+                html += createDataTable(comparison.only_local, table, 'local');
+            }
+
+            // 仅服务器
+            if (comparison.only_server && comparison.only_server.length > 0) {
+                html += `<h3 style="margin-top: 20px; margin-bottom: 10px; color: #22543d;">☁️ 仅服务器 (${comparison.only_server.length}条)</h3>`;
+                html += createDataTable(comparison.only_server, table, 'server');
+            }
+
+            // 内容不同
+            if (comparison.different && comparison.different.length > 0) {
+                html += `<h3 style="margin-top: 20px; margin-bottom: 10px; color: #742a2a;">⚠️ 内容不同 (${comparison.different.length}条)</h3>`;
+                html += createDifferenceTable(comparison.different, table);
+            }
+
+            // 两边一致
+            if (comparison.both && comparison.both.length > 0) {
+                html += `<h3 style="margin-top: 20px; margin-bottom: 10px; color: #7c2d12;">✅ 两边一致 (${comparison.both.length}条)</h3>`;
+                html += createDataTable(comparison.both, table, 'both');
+            }
+
+            if (!html) {
+                html = '<div class="empty">暂无对比数据</div>';
+            }
+
+            container.innerHTML = html;
+        }
+
+        // 创建数据表格
+        function createDataTable(data, table, source) {
+            if (!data || data.length === 0) return '';
+
+            const keys = Object.keys(data[0]);
+            let html = `<table class="data-table"><thead><tr>`;
+
+            // 表头
+            html += '<th>源</th>';
+            keys.forEach(key => {
+                if (!['created_at', 'updated_at'].includes(key)) {
+                    html += `<th>${key}</th>`;
+                }
+            });
+            html += '</tr></thead><tbody>';
+
+            // 数据行
+            data.forEach(row => {
+                html += '<tr>';
+                const badge = source === 'local' ? '<span class="badge badge-local">本地</span>' :
+                             source === 'server' ? '<span class="badge badge-server">服务器</span>' :
+                             '<span class="badge badge-both">一致</span>';
+                html += `<td>${badge}</td>`;
+
+                keys.forEach(key => {
+                    if (!['created_at', 'updated_at'].includes(key)) {
+                        let value = row[key];
+                        if (value === null) value = '-';
+                        if (typeof value === 'object') value = JSON.stringify(value);
+                        if (String(value).length > 50) {
+                            html += `<td class="text-truncate" title="${value}">${value}</td>`;
+                        } else {
+                            html += `<td>${value}</td>`;
+                        }
+                    }
+                });
+                html += '</tr>';
+            });
+
+            html += '</tbody></table>';
+            return html;
+        }
+
+        // 创建差异表格
+        function createDifferenceTable(data, table) {
+            if (!data || data.length === 0) return '';
+
+            let html = '<table class="data-table"><thead><tr>';
+            html += '<th>ID</th><th>不同字段</th><th>本地值</th><th>服务器值</th>';
+            html += '</tr></thead><tbody>';
+
+            data.forEach(item => {
+                html += '<tr>';
+                html += `<td>${item.id}</td>`;
+                html += `<td>${item.diff_fields.join(', ')}</td>`;
+
+                const diffField = item.diff_fields[0];
+                const localVal = item.local[diffField];
+                const serverVal = item.server[diffField];
+
+                html += `<td class="diff-highlight">${localVal}</td>`;
+                html += `<td class="diff-highlight">${serverVal}</td>`;
+                html += '</tr>';
+            });
+
+            html += '</tbody></table>';
+            return html;
+        }
+
+        // 页面加载时检查登录并加载统计
+        window.addEventListener('load', () => {
+            if (checkLogin()) {
+                loadStats();
+            }
+        });
+    </script>
+</body>
+</html>

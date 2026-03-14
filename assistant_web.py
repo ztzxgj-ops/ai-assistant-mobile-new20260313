@@ -24,6 +24,7 @@ from notification_service import get_notification_service, get_notification_queu
 from reminder_scheduler import get_global_scheduler
 from verification_service import get_verification_manager
 from fcm_push_service import get_fcm_service
+from db_query_manager import DatabaseQueryManager
 from category_system import (
     CategoryManager,
     WorkTaskManager,
@@ -63,6 +64,9 @@ work_task_manager = WorkTaskManager()
 finance_manager = FinanceManager()
 account_manager = AccountManager()
 daily_record_manager = DailyRecordManager()
+
+# 初始化数据库查询管理器
+db_query_manager = DatabaseQueryManager()
 
 def extract_video_thumbnail(video_path, thumbnail_path, size="200x200"):
     """提取视频第一帧作为缩略图
@@ -407,20 +411,11 @@ class AssistantHandler(BaseHTTPRequestHandler):
                     self.send_json({'success': False, 'error': '缺少subcategory_name参数'})
                     return
 
-                # 查找子类别ID（必须加上user_id条件，避免查到其他用户的同名子类别）
-                query = "SELECT id FROM subcategories WHERE name = %s AND user_id = %s LIMIT 1"
-                result = db_manager.query(query, (subcategory_name, user_id))
-                if not result:
-                    self.send_json([])  # 子类别不存在，返回空列表
-                    return
-
-                subcategory_id = result[0]['id']
-
-                # 获取记录列表
-                # 当status不指定时，返回所有记录（已完成+未完成），前端自行过滤
-                records = daily_record_manager.list_records(
+                # 直接按“当前用户的记录 + 子类别名称”查询。
+                # 这样既能查到当前用户自己的子类别，也能兼容历史上写入到错误同名子类别的数据。
+                records = daily_record_manager.list_records_by_subcategory_name(
                     user_id=user_id,
-                    subcategory_id=subcategory_id,
+                    subcategory_name=subcategory_name,
                     status=status
                 )
 
@@ -1272,9 +1267,154 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 print(f"❌ 获取设备列表失败: {e}")
                 self.send_json({'status': 'error', 'message': str(e)}, status=500)
 
+        # ========== 数据库查询工具相关API ==========
+        elif self.path == '/db_query':
+            # 返回数据库查询页面
+            self.send_db_query_html()
+
+        elif self.path.startswith('/api/db/query'):
+            # 查询数据库
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+            self.handle_db_query(user_id)
+
+        elif self.path.startswith('/api/db/compare'):
+            # 对比数据
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+            self.handle_db_compare(user_id)
+
+        elif self.path.startswith('/api/db/stats'):
+            # 获取统计信息
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+            self.handle_db_stats(user_id)
+
         else:
             self.send_error(404)
-    
+
+    def send_db_query_html(self):
+        """返回数据库查询页面"""
+        html_file = 'db_query.html'
+        try:
+            with open(html_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(content.encode('utf-8'))
+        except Exception as e:
+            self.send_error(500, f"Error loading page: {e}")
+
+    def handle_db_query(self, user_id):
+        """处理数据库查询请求"""
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query) if parsed.query else {}
+
+        table = params.get('table', ['subcategories'])[0]
+        source = params.get('source', ['both'])[0]
+        limit = int(params.get('limit', ['100'])[0])
+        time_range = params.get('time_range', ['all'])[0]
+        status = params.get('status', [None])[0]
+
+        try:
+            if table == 'subcategories':
+                result = db_query_manager.query_subcategories(user_id, source, limit)
+            elif table == 'daily_records':
+                result = db_query_manager.query_daily_records(
+                    user_id, source, limit, time_range, status
+                )
+            else:
+                self.send_json({'success': False, 'error': '不支持的表名'})
+                return
+
+            # 转换datetime为字符串
+            for source_key in ['local', 'server']:
+                for item in result[source_key]:
+                    for key, value in item.items():
+                        if isinstance(value, datetime):
+                            item[key] = value.strftime('%Y-%m-%d %H:%M:%S')
+
+            self.send_json({
+                'success': True,
+                'data': result,
+                'count': {
+                    'local': len(result['local']),
+                    'server': len(result['server'])
+                }
+            })
+        except Exception as e:
+            print(f"❌ 数据库查询失败: {e}")
+            self.send_json({'success': False, 'error': str(e)})
+
+    def handle_db_compare(self, user_id):
+        """处理数据对比请求"""
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query) if parsed.query else {}
+
+        table = params.get('table', ['subcategories'])[0]
+        limit = int(params.get('limit', ['100'])[0])
+
+        try:
+            # 查询两边数据
+            if table == 'subcategories':
+                data = db_query_manager.query_subcategories(user_id, 'both', limit)
+            elif table == 'daily_records':
+                data = db_query_manager.query_daily_records(user_id, 'both', limit)
+            else:
+                self.send_json({'success': False, 'error': '不支持的表名'})
+                return
+
+            # 对比数据
+            comparison = db_query_manager.compare_data(
+                data['local'],
+                data['server']
+            )
+
+            # 转换datetime为字符串
+            for key in comparison.keys():
+                if isinstance(comparison[key], list):
+                    for item in comparison[key]:
+                        if isinstance(item, dict):
+                            for k, v in item.items():
+                                if isinstance(v, datetime):
+                                    item[k] = v.strftime('%Y-%m-%d %H:%M:%S')
+                                elif isinstance(v, dict):
+                                    for k2, v2 in v.items():
+                                        if isinstance(v2, datetime):
+                                            v[k2] = v2.strftime('%Y-%m-%d %H:%M:%S')
+
+            self.send_json({
+                'success': True,
+                'comparison': comparison,
+                'summary': {
+                    'only_local': len(comparison['only_local']),
+                    'only_server': len(comparison['only_server']),
+                    'both': len(comparison['both']),
+                    'different': len(comparison['different'])
+                }
+            })
+        except Exception as e:
+            print(f"❌ 数据对比失败: {e}")
+            self.send_json({'success': False, 'error': str(e)})
+
+    def handle_db_stats(self, user_id):
+        """处理统计信息请求"""
+        try:
+            stats = db_query_manager.get_statistics(user_id)
+            self.send_json({
+                'success': True,
+                'stats': stats
+            })
+        except Exception as e:
+            print(f"❌ 获取统计信息失败: {e}")
+            self.send_json({'success': False, 'error': str(e)})
+
     def do_POST(self):
         """处理POST请求"""
         content_type = self.headers.get('Content-Type', '')
@@ -1631,10 +1771,15 @@ class AssistantHandler(BaseHTTPRequestHandler):
 
                 # 获取用户消息
                 user_message = data.get('message', '')
+                persist_to_cloud = data.get('persist_to_cloud', True)
+                if isinstance(persist_to_cloud, str):
+                    persist_to_cloud = persist_to_cloud.lower() not in ['false', '0', 'no']
 
-                # ✨ 优先检查是否是命令系统的命令
-                command_router = get_command_router()
-                command_result = command_router.execute(user_message, user_id)
+                command_result = None
+                if persist_to_cloud:
+                    # ✨ 优先检查是否是命令系统的命令
+                    command_router = get_command_router()
+                    command_result = command_router.execute(user_message, user_id)
 
                 if command_result and command_result.get('is_command'):
                     # ✨ 如果命令返回了上下文信息，保存到AI系统
@@ -1673,7 +1818,15 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 user_info = user_manager.get_user_by_id(user_id)
                 ai_assistant_name = user_info.get('ai_assistant_name', '小助手') if user_info else '小助手'
 
-                chat_result = ai_assistant.chat(user_message, user_id=user_id, file_id=data.get('file_id'), token=token, session_id=session_id, ai_assistant_name=ai_assistant_name)  # ✨ 传递session_id和ai_assistant_name
+                chat_result = ai_assistant.chat(
+                    user_message,
+                    user_id=user_id,
+                    file_id=data.get('file_id'),
+                    token=token,
+                    session_id=session_id,
+                    ai_assistant_name=ai_assistant_name,
+                    persist_to_db=persist_to_cloud,
+                )  # ✨ 传递session_id、ai_assistant_name 和持久化策略
                 print(f"🔍 AI处理完成，返回结果类型: {type(chat_result)}")
                 # 处理新的返回格式（包含response、detected_plans、detected_reminders和completed_plans）
                 if isinstance(chat_result, dict):
@@ -2039,13 +2192,16 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                # 如果提供了子类别名称，查找子类别ID（子类别是全局的，不限用户）
+                # 如果提供了子类别名称，优先匹配当前用户自己的同名子类别，
+                # 找不到时再回退到系统同名子类别，避免写入到其他用户的类别。
                 subcategory_id = None
                 if subcategory_name:
-                    query = "SELECT id FROM subcategories WHERE name = %s LIMIT 1"
-                    result = db_manager.query(query, (subcategory_name,))
-                    if result:
-                        subcategory_id = result[0]['id']
+                    matched_subcategory = category_manager.find_subcategory_by_name(
+                        subcategory_name,
+                        user_id=user_id,
+                    )
+                    if matched_subcategory:
+                        subcategory_id = matched_subcategory['id']
 
                 # 添加记录到daily_records表
                 # title字段限制500字符，content字段存储完整内容
