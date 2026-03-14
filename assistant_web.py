@@ -24,7 +24,7 @@ from notification_service import get_notification_service, get_notification_queu
 from reminder_scheduler import get_global_scheduler
 from verification_service import get_verification_manager
 from fcm_push_service import get_fcm_service
-from db_query_manager import DatabaseQueryManager
+from sqlite_query_manager import SQLiteQueryManager
 from category_system import (
     CategoryManager,
     WorkTaskManager,
@@ -65,11 +65,11 @@ finance_manager = FinanceManager()
 account_manager = AccountManager()
 daily_record_manager = DailyRecordManager()
 
-# 初始化数据库查询管理器
+# 初始化SQLite查询管理器
 try:
-    db_query_manager = DatabaseQueryManager()
+    db_query_manager = SQLiteQueryManager('data.db')
 except Exception as e:
-    print(f"⚠️ 数据库查询管理器初始化失败: {e}")
+    print(f"⚠️ SQLite查询管理器初始化失败: {e}")
     db_query_manager = None
 
 def extract_video_thumbnail(video_path, thumbnail_path, size="200x200"):
@@ -2447,6 +2447,49 @@ class AssistantHandler(BaseHTTPRequestHandler):
                 self.send_json({'success': True, 'message': '提醒已更新'})
             else:
                 self.send_json({'success': False, 'message': '更新失败或权限不足'}, status=403)
+
+        elif self.path == '/api/reminder/status':
+            user_id = self.require_auth()
+            if user_id is None:
+                return
+
+            reminder_id = data.get('id') or data.get('reminder_id')
+            status = data.get('status')
+
+            if not reminder_id or not status:
+                self.send_json({'success': False, 'message': '缺少提醒ID或状态'}, status=400)
+                return
+
+            valid_status = {'pending', 'completed', '活跃', 'active'}
+            if status not in valid_status:
+                self.send_json({'success': False, 'message': f'无效状态: {status}'}, status=400)
+                return
+
+            try:
+                normalized_status = '活跃' if status == 'active' else status
+                triggered = 1 if normalized_status == 'completed' else 0
+                update_sql = """
+                    UPDATE reminders
+                    SET status = %s, triggered = %s
+                    WHERE id = %s AND user_id = %s
+                """
+                affected = db_manager.execute(
+                    update_sql,
+                    (normalized_status, triggered, reminder_id, user_id)
+                )
+
+                if affected:
+                    self.send_json({'success': True, 'message': '提醒状态已更新'})
+                else:
+                    exists_sql = "SELECT id FROM reminders WHERE id = %s AND user_id = %s"
+                    exists = db_manager.query(exists_sql, (reminder_id, user_id))
+                    if exists:
+                        self.send_json({'success': True, 'message': '提醒状态未变化'})
+                    else:
+                        self.send_json({'success': False, 'message': '更新失败或权限不足'}, status=403)
+            except Exception as e:
+                print(f"❌ 更新提醒状态失败: {e}")
+                self.send_json({'success': False, 'message': f'更新失败: {str(e)}'}, status=500)
 
         elif self.path == '/api/reminder/delete':
             user_id = self.require_auth()
